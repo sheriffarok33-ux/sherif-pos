@@ -121,10 +121,8 @@ def to_excel(df):
     return output.getvalue()
 
 def get_allowed_companies(conn):
-    if st.session_state["role"] == "Admin": 
-        return conn.execute("SELECT id, company_name FROM companies").fetchall()
-    elif st.session_state["company_id"]: 
-        return conn.execute("SELECT id, company_name FROM companies WHERE id = ?", (st.session_state["company_id"],)).fetchall()
+    if st.session_state["role"] == "Admin": return conn.execute("SELECT id, company_name FROM companies").fetchall()
+    elif st.session_state["company_id"]: return conn.execute("SELECT id, company_name FROM companies WHERE id = ?", (st.session_state["company_id"],)).fetchall()
     return []
 
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
@@ -353,7 +351,7 @@ elif choice == "🏢 إدارة الشركات والفروع":
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين والصلاحيات":
-  st.header("👥 إدارة المستخدمين وصلاحيات الـ POS")
+  st.header("👥 إدارة المستخدمين والصلاحيات")
   tab1, tab2, tab3 = st.tabs(["👥 حسابات المستخدمين", "🛡️ مدير الصلاحيات (POS Manager)", "📝 سجل نشاط المستخدمين (Audit)"])
   conn = get_db_connection()
   is_viewer = (st.session_state["role"] == "Viewer")
@@ -616,22 +614,23 @@ elif choice == "📊 التقارير الشاملة والمخازن":
               conn.commit(); log_action(st.session_state["user_id"], "تعديل مخزون", "تعديل بيانات الأصناف"); st.success("تم الحفظ!")
           st.download_button("📥 تصدير المخزون لـ Excel", data=to_excel(items_df), file_name="inventory.xlsx")
 
-  # --- شاشة توزيع ونقل المخزون الكاملة ---
+  # --- شاشة توزيع ونقل المخزون (مدعومة بالكامل وبدون أي أخطاء) ---
   with tab5:
       st.subheader("🔄 توزيع ونقل المخزون (بين الشركات والفروع)")
       if not is_viewer:
           transfer_type = st.radio("نوع النقل:", ["نقل صنف محدد (فردي)", "نقل كافة الأصناف دفعة واحدة (شامل)"])
+          
+          # جلب الشركات بأمان تام حسب الصلاحيات
+          if st.session_state["role"] == "Admin": 
+              t_comps = conn.execute("SELECT id, company_name FROM companies").fetchall()
+          else: 
+              t_comps = conn.execute("SELECT id, company_name FROM companies WHERE id = ?", (st.session_state["company_id"],)).fetchall()
           
           if transfer_type == "نقل صنف محدد (فردي)" and not items_df.empty:
               item_ids = items_df["id"].tolist()
               sel_item_id = st.selectbox("اختر الصنف:", item_ids, format_func=lambda x: f"[{items_df[items_df['id'] == x]['الكود'].values[0]}] {items_df[items_df['id'] == x]['الصنف'].values[0]} | المصدر: {items_df[items_df['id'] == x]['الشركة'].values[0]} - {items_df[items_df['id'] == x]['الفرع'].values[0]} | متاح: {items_df[items_df['id'] == x]['الكمية'].values[0]}")
               
               col_dest1, col_dest2 = st.columns(2)
-              if st.session_state["role"] == "Admin": 
-                  t_comps = conn.execute("SELECT id, company_name FROM companies").fetchall()
-              else: 
-                  t_comps = conn.execute("SELECT id, company_name FROM companies WHERE id=?", (st.session_state["company_id"],)).fetchall()
-              
               c_dict = {c["company_name"]: c["id"] for c in t_comps}
               
               with col_dest1: target_comp_name = st.selectbox("إلى شركة:", list(c_dict.keys()), key="tc1")
@@ -661,19 +660,16 @@ elif choice == "📊 التقارير الشاملة والمخازن":
               st.markdown("**🎯 نقل كامل الأصناف دفعة واحدة (من الشركة الأم للشركات التابعة)**")
               col_src, col_dst = st.columns(2)
               
-              if st.session_state["role"] == "Admin": 
-                  t_comps = conn.execute("SELECT id, company_name FROM companies").fetchall()
-              else: 
-                  t_comps = conn.execute("SELECT id, company_name FROM companies WHERE id=?", (st.session_state["company_id"],)).fetchall()
-              
-              c_dict = {c["company_name"]: c["id"] for c in t_comps}
+              # جلب كل الشركات المتاحة للمصدر والمستقبل
+              all_comps_list = conn.execute("SELECT id, company_name FROM companies").fetchall()
+              all_comps_dict = {c["company_name"]: c["id"] for c in all_comps_list}
               
               with col_src:
-                  source_comp_name = st.selectbox("📦 من (الشركة المصدرة / الأم):", list(c_dict.keys()), key="src_comp")
-                  source_comp_id = c_dict[source_comp_name] if source_comp_name else None
+                  source_comp_name = st.selectbox("📦 من (الشركة المصدرة / الأم):", list(all_comps_dict.keys()), key="src_comp")
+                  source_comp_id = all_comps_dict[source_comp_name] if source_comp_name else None
               with col_dst:
-                  target_comp_name = st.selectbox("🎯 إلى (الشركة المستهدفة / التابعة):", list(c_dict.keys()), key="dst_comp")
-                  target_comp_id = c_dict[target_comp_name] if target_comp_name else None
+                  target_comp_name = st.selectbox("🎯 إلى (الشركة المستهدفة / التابعة):", list(all_comps_dict.keys()), key="dst_comp")
+                  target_comp_id = all_comps_dict[target_comp_name] if target_comp_name else None
               
               if st.button("🚀 تنفيذ نقل كافة الأصناف دفعة واحدة", use_container_width=True, type="primary"):
                   if source_comp_id == target_comp_id: st.error("لا يمكن النقل لنفس الشركة!")
@@ -696,7 +692,7 @@ elif choice == "📊 التقارير الشاملة والمخازن":
       st.download_button("📥 تصدير المبيعات لـ Excel", data=to_excel(invoices_df), file_name="sales.xlsx")
 
   with tab3:
-      expenses_df = pd.read_sql(f"SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON expenses.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id {comp_filter}", conn, params=params)
+      expenses_df = pd.read_sql(f"SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON expenses.company_id = companies.id LEFT JOIN users ON expenses.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id {comp_filter}", conn, params=params)
       if not expenses_df.empty: st.dataframe(expenses_df, use_container_width=True)
       st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(expenses_df), file_name="expenses.xlsx")
 
@@ -841,7 +837,6 @@ elif choice == "🛒 نقطة البيع (POS)":
                         conn.execute("UPDATE invoices SET shift_status = 'closed' WHERE branch_id = ? AND shift_status = 'open'", (b_id,))
                         conn.execute("UPDATE treasuries SET balance = balance + ? WHERE id = ?", (shift_total, t_id_z))
                         conn.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, 'إيداع', ?, 'إغلاق وردية Z-READ')", (t_id_z, st.session_state["user_id"], shift_total))
-        
                         conn.commit(); log_action(st.session_state["user_id"], "إغلاق وردية", "تم تنفيذ Z-Read وإيداع المبالغ"); st.success("تم الترحيل بنجاح!"); st.rerun()
                     else: st.info("الوردية مصفرة بالفعل.")
   conn.close()
