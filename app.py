@@ -49,9 +49,8 @@ def initialize_database():
   cursor.execute("CREATE TABLE IF NOT EXISTS companies (id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT UNIQUE NOT NULL, company_title TEXT NOT NULL, logo_path TEXT)")
   cursor.execute("CREATE TABLE IF NOT EXISTS branches (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_name TEXT NOT NULL, FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE)")
   
-  # جدول المستخدمين (مع إعادة هندسة الجدول لوقف قيود الـ CHECK القديمة وضمان مرونة الرتب)
   cursor.execute("""
-      CREATE TABLE IF NOT EXISTS users_new (
+      CREATE TABLE IF NOT EXISTS users (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           username TEXT NOT NULL,
           phone TEXT,
@@ -65,38 +64,6 @@ def initialize_database():
       )
   """)
   
-  # نقل البيانات القديمة إن وجدت للجدول الجديد
-  cursor.execute("PRAGMA table_info(users)")
-  existing_table = cursor.fetchall()
-  if existing_table:
-      try:
-          cursor.execute("""
-              INSERT INTO users_new (id, username, phone, password, role, branch_id, company_id, is_active)
-              SELECT id, username, phone, password, role, branch_id, company_id, 
-              COALESCE((SELECT is_active FROM users u2 WHERE u2.id = users.id), 1)
-              FROM users
-          """)
-          cursor.execute("DROP TABLE users")
-          cursor.execute("ALTER TABLE users_new RENAME TO users")
-      except Exception:
-          pass
-  else:
-      cursor.execute("DROP TABLE IF EXISTS users_new")
-      cursor.execute("""
-          CREATE TABLE users (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              username TEXT NOT NULL,
-              phone TEXT,
-              password TEXT NOT NULL,
-              role TEXT NOT NULL,
-              branch_id INTEGER,
-              company_id INTEGER,
-              is_active INTEGER DEFAULT 1,
-              FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL,
-              FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL
-          )
-      """)
-
   cursor.execute("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_id INTEGER DEFAULT NULL, item_code TEXT, item_name TEXT NOT NULL, quantity REAL DEFAULT 0.0, buy_price REAL DEFAULT 0.0, sale_price REAL NOT NULL, FOREIGN KEY (company_id) REFERENCES companies(id), FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE)")
   cursor.execute("CREATE TABLE IF NOT EXISTS invoices (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, total_amount REAL, shift_status TEXT DEFAULT 'open', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
   cursor.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_id INTEGER, user_id INTEGER, treasury_id INTEGER, amount REAL NOT NULL, description TEXT NOT NULL, expense_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (company_id) REFERENCES companies(id), FOREIGN KEY (branch_id) REFERENCES branches(id))")
@@ -125,6 +92,11 @@ def initialize_database():
   try: cursor.execute("INSERT OR IGNORE INTO dict_expenses (name) VALUES ('رواتب وأجور'), ('إيجار الفرع'), ('كهرباء ومياه'), ('ضيافة ونثريات'), ('صيانة ومعدات'), ('مصروفات تسويق')")
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO dict_transactions (name) VALUES ('إيداع مبيعات الكاشير'), ('تغذية رصيد الخزينة/الدرج'), ('سحب أرباح للإدارة'), ('تحويل نقدية بين الفروع')")
+  except: pass
+  
+  try: cursor.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+  except: pass
+  try: cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
   except: pass
 
   conn.commit(); conn.close()
@@ -493,7 +465,7 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
   comps_dict = {c["company_name"]: c["id"] for c in comps}
   
   if comps_dict and not is_viewer:
-    sel_comp = st.selectbox("اختر الشركة", list(comps_dict.keys()))
+    sel_comp = st.selectbox("اختر الشركة (سينزل المخزون في المستودع الرئيسي لهذه الشركة)", list(comps_dict.keys()))
     import_mode = st.radio("طريقة الاستيراد:", ["🔄 تحديث وإضافة", "🚨 مسح كامل واستيراد جديد"])
     up_file = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
     if up_file and st.button("📥 تنفيذ استيراد الأصناف"):
@@ -669,6 +641,33 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                       if existing: conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (transfer_qty, existing["id"]))
                       else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)", (target_comp_id, target_branch_id, curr_item["item_code"], curr_item["item_name"], transfer_qty, curr_item["buy_price"], curr_item["sale_price"]))
                       conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون", f"نقل {transfer_qty}"); st.success("تم!"); st.rerun()
+
+          elif transfer_type == "نقل كافة الأصناف دفعة واحدة (شامل)":
+              st.markdown("**🎯 نقل كامل الأصناف دفعة واحدة (من الشركة الأم للشركات التابعة)**")
+              col_src, col_dst = st.columns(2)
+              t_comps = conn.execute("SELECT id, company_name FROM companies" if st.session_state["role"]=="Admin" else "SELECT id, company_name FROM companies WHERE id=?", (None if st.session_state["role"]=="Admin" else st.session_state["company_id"],)).fetchall()
+              c_dict = {c["company_name"]: c["id"] for c in t_comps}
+              with col_src:
+                  source_comp_name = st.selectbox("📦 من (الشركة المصدرة / الأم):", list(c_dict.keys()), key="src_comp")
+                  source_comp_id = c_dict[source_comp_name] if source_comp_name else None
+              with col_dst:
+                  target_comp_name = st.selectbox("🎯 إلى (الشركة المستهدفة / التابعة):", list(c_dict.keys()), key="dst_comp")
+                  target_comp_id = c_dict[target_comp_name] if target_comp_name else None
+              
+              if st.button("🚀 تنفيذ نقل كافة الأصناف دفعة واحدة", use_container_width=True, type="primary"):
+                  if source_comp_id == target_comp_id: st.error("لا يمكن النقل لنفس الشركة!")
+                  else:
+                      source_items = conn.execute("SELECT * FROM items WHERE company_id = ? AND branch_id IS NULL AND quantity > 0", (source_comp_id,)).fetchall()
+                      if not source_items: st.warning("لا توجد أصناف بكميات متاحة في المخزن الرئيسي لهذه الشركة.")
+                      else:
+                          transferred_count = 0
+                          for s_item in source_items:
+                              existing = conn.execute("SELECT id FROM items WHERE company_id=? AND branch_id IS NULL AND item_code=? AND item_name=?", (target_comp_id, s_item["item_code"], s_item["item_name"])).fetchone()
+                              if existing: conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (s_item["quantity"], existing["id"]))
+                              else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, NULL, ?, ?, ?, ?, ?)", (target_comp_id, s_item["item_code"], s_item["item_name"], s_item["quantity"], s_item["buy_price"], s_item["sale_price"]))
+                              conn.execute("UPDATE items SET quantity = 0 WHERE id = ?", (s_item["id"],))
+                              transferred_count += 1
+                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف من {source_comp_name} إلى {target_comp_name}"); st.success(f"تم نقل ({transferred_count}) صنف بنجاح إلى مخزن {target_comp_name}!"); st.rerun()
 
   with tab2:
       invoices_df = pd.read_sql(f"SELECT invoices.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', users.username AS 'الكاشير', invoices.total_amount AS 'المبلغ', invoices.shift_status AS 'الحالة', invoices.created_at AS 'التاريخ' FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id {comp_filter}", conn, params=params)
