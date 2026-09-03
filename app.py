@@ -134,7 +134,7 @@ def process_barcode():
             })
     st.session_state.barcode_scan = ""
 
-# --- تسجيل الدخول ---
+# --- تسجيل الدخول (بدون حساب ادمن افتراضي) ---
 if not st.session_state["logged_in"]:
   col1, col2, col3 = st.columns([1, 2, 1])
   with col2:
@@ -146,11 +146,6 @@ if not st.session_state["logged_in"]:
       u_pass = st.text_input("كلمة المرور", type="password")
       submit = st.form_submit_button("🚀 دخول للنظام (Enter)", use_container_width=True)
       if submit:
-        if u_name == "admin" and u_pass == "admin":
-          st.session_state["logged_in"] = True; st.session_state["username"] = "المدير العام"; st.session_state["role"] = "Admin"; st.session_state["user_id"] = 0; st.session_state["company_id"] = None; st.session_state["branch_verified"] = True; st.session_state["allowed_menus"] = ALL_MENUS
-          log_action(0, "تسجيل دخول", "تم تسجيل دخول المدير العام (Admin)")
-          st.rerun()
-        else:
           conn = get_db_connection()
           user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
           if user:
@@ -175,7 +170,8 @@ if not st.session_state["logged_in"]:
               
               log_action(user["id"], "تسجيل دخول", f"تم دخول المستخدم {user['username']}")
               conn.close(); st.rerun()
-          else: conn.close(); st.error("خطأ في اسم المستخدم أو كلمة المرور!")
+          else: 
+              conn.close(); st.error("خطأ في اسم المستخدم أو كلمة المرور!")
   st.stop()
 
 # --- التحقق من الفرع ---
@@ -213,7 +209,7 @@ else: logo_row = conn.execute("SELECT logo_path FROM companies WHERE id = ? AND 
 conn.close()
 
 if logo_row and os.path.exists(logo_row["logo_path"]): st.sidebar.image(logo_row["logo_path"], use_container_width=True)
-else: st.sidebar.markdown("<h2 style='text-align: center;'>🏢 أبو زيد (القابضة)</h2>", unsafe_allow_html=True)
+else: st.sidebar.markdown("<h2 style='text-align: center;'>🏢 مجموعة أبو زيد (القابضة)</h2>", unsafe_allow_html=True)
 
 st.sidebar.markdown(f"**👤 {st.session_state['username']} | `{st.session_state['role']}`**")
 st.sidebar.markdown("---")
@@ -254,12 +250,13 @@ if choice == "🏠 الرئيسية واللوحة":
           st.markdown("<br>", unsafe_allow_html=True)
 
 elif choice == "🏢 إدارة الشركات والفروع":
-  st.header("🏢 إدارة الشركات والفروع")
+  st.header("🏢 إدارة الشركات والفروع (الهيكل التنظيمي للمجموعة)")
   conn = get_db_connection()
+  
   if st.session_state["role"] == "Admin":
-      with st.expander("➕ إضافة شركة جديدة (صلاحية الأدمن)", expanded=False):
+      with st.expander("➕ إضافة شركة جديدة تحت المجموعة القابضة", expanded=False):
           with st.form("add_comp_form", clear_on_submit=True):
-              c_name = st.text_input("اسم الشركة البرمجي")
+              c_name = st.text_input("اسم الشركة (مثال: محمصة أبو زيد، لازوردي بيوتي سنتر، المطعم)")
               c_title = st.text_input("الاسم الرسمي للفاتورة")
               logo_file = st.file_uploader("شعار الشركة", type=["png", "jpg", "jpeg"])
               if st.form_submit_button("💾 حفظ الشركة (Enter)") and c_name:
@@ -274,27 +271,31 @@ elif choice == "🏢 إدارة الشركات والفروع":
   comps_dict = {c["company_name"]: c["id"] for c in comps}
   
   if comps_dict:
-      with st.expander("➕ إضافة فرع جديد", expanded=False):
+      with st.expander("➕ إضافة فرع جديد لأي شركة", expanded=False):
           with st.form("add_branch_form", clear_on_submit=True):
-              sel_c = st.selectbox("اختر الشركة للفرع", list(comps_dict.keys()))
+              sel_c = st.selectbox("اختر الشركة التابع لها الفرع", list(comps_dict.keys()))
               b_name = st.text_input("اسم الفرع / المخزن")
               if st.form_submit_button("💾 حفظ الفرع (Enter)") and b_name:
                   conn.execute("INSERT INTO branches (company_id, branch_name) VALUES (?, ?)", (comps_dict[sel_c], b_name.strip()))
                   conn.commit(); log_action(st.session_state["user_id"], "إضافة فرع", f"تم إضافة فرع {b_name} للشركة {sel_c}"); st.success("تم الحفظ!"); st.rerun()
 
   st.markdown("---")
-  st.subheader("📋 الهيكل التنظيمي للمجموعة")
+  st.subheader("🌲 هيكل المجموعة (الشركات وتحت كل شركة فروعها)")
+  
   for comp in comps:
-      st.markdown(f"### 🏢 شركة: {comp['company_name']}")
+      # عرض اسم الشركة بشكل بارز كأصل شجري
+      st.markdown(f"### 📁 شركة التابعة: **{comp['company_name']}**")
       branches_df = pd.read_sql("SELECT id, branch_name AS 'اسم الفرع' FROM branches WHERE company_id = ?", conn, params=(comp["id"],))
+      
       c1, c2 = st.columns([2, 1])
       with c1:
           if not branches_df.empty:
+              st.markdown("&nbsp;&nbsp;&nbsp;&nbsp;└─ **الفروع التابعة:**")
               edited_b = st.data_editor(branches_df, hide_index=True, key=f"eb_{comp['id']}")
               if st.button(f"💾 حفظ تعديلات فروع ({comp['company_name']})", key=f"save_b_{comp['id']}"):
                   for idx, row in edited_b.iterrows(): conn.execute("UPDATE branches SET branch_name=? WHERE id=?", (row['اسم الفرع'], row['id']))
                   conn.commit(); log_action(st.session_state["user_id"], "تعديل فروع", f"تم تعديل فروع شركة {comp['company_name']}"); st.success("تم التحديث!"); st.rerun()
-          else: st.info("لا توجد فروع مسجلة لهذه الشركة.")
+          else: st.markdown("&nbsp;&nbsp;&nbsp;&nbsp;└─ ⚠️ *لا توجد فروع مسجلة تحت هذه الشركة بعد.*")
       with c2:
           if st.session_state["role"] == "Admin" and st.button(f"🗑️ حذف شركة ({comp['company_name']})", type="primary", key=f"del_c_{comp['id']}"):
               conn.execute("DELETE FROM companies WHERE id=?", (comp["id"],)); conn.commit()
@@ -305,7 +306,7 @@ elif choice == "🏢 إدارة الشركات والفروع":
                   conn.execute("DELETE FROM branches WHERE id=?", (del_b_id,)); conn.commit()
                   log_action(st.session_state["user_id"], "حذف فرع", f"تم حذف الفرع المحدد من شركة {comp['company_name']}")
                   st.success("تم الحذف!"); st.rerun()
-      st.markdown("<hr style='border:1px dashed #ccc'>", unsafe_allow_html=True)
+      st.markdown("<hr style='border:1px dashed #cbd5e1'>", unsafe_allow_html=True)
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين والصلاحيات":
@@ -580,7 +581,7 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                   conn.commit(); log_action(st.session_state["user_id"], "تعديل مخزون", "تم تعديل بيانات الأصناف يدوياً"); st.success("تم الحفظ!")
           with c2: st.download_button("📥 تصدير المخزون لـ Excel", data=to_excel(items_df), file_name="inventory.xlsx")
 
-  # --- النظام الذكي لتوزيع ونقل المخزون ---
+  # --- النظام الذكي لتوزيع ونقل المخزون (فردي أو شامل) ---
   with tab5:
       st.subheader("🔄 توزيع ونقل المخزون (بين الشركات والفروع)")
       transfer_type = st.radio("اختر نوع النقل والتوزيع:", ["نقل صنف محدد (فردي)", "نقل كافة الأصناف دفعة واحدة (من شركة لشركة)"])
@@ -624,7 +625,7 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                   else: st.error("الكمية المتاحة لا تكفي للتحويل!")
           else: st.info("المخزن فارغ حالياً.")
           
-      else: # النقل الشامل (Bulk)
+      else: # النقل الشامل (Bulk Transfer)
           st.markdown("**🎯 نقل كامل الأصناف دفعة واحدة (من الشركة الأم للشركات التابعة)**")
           col_src, col_dst = st.columns(2)
           if st.session_state["role"] == "Admin": t_comps = conn.execute("SELECT id, company_name FROM companies").fetchall()
@@ -638,7 +639,7 @@ elif choice == "📊 التقارير الشاملة والمخازن":
               target_comp_name = st.selectbox("🎯 إلى (الشركة المستهدفة / التابعة):", list(c_dict.keys()), key="dst_comp")
               target_comp_id = c_dict[target_comp_name] if target_comp_name else None
               
-          st.info("سيتم أخذ كافة الأصناف المتوفرة في **المخزن الرئيسي** للشركة المصدرة، وتحويلها بالكامل إلى **المخزن الرئيسي** للشركة المستهدفة.")
+          st.info("سيتم أخذ كافة الأصناف المتوفرة في **المخزن الرئيسي** للشركة المصدرة، وتحويلها بالكامل إلى **المخزن الرئيسي** للشركة المستهدفة بضغطة زر واحدة.")
           
           if st.button("🚀 تنفيذ نقل كافة الأصناف دفعة واحدة", use_container_width=True, type="primary"):
               if source_comp_id == target_comp_id: st.error("لا يمكن النقل لنفس الشركة!")
