@@ -165,9 +165,7 @@ if not st.session_state["branch_verified"]:
       else:
         st.error("❌ ( هنى روحك )! هذا ليس فرعك المخصص، حاول مجدداً.")
   else:
-    st.warning(
-        "لا توجد فروع مسجلة بعد. يطلب من الأدمن إضافتها أولاً من لوحة التحكم."
-    )
+    st.warning("لا توجد فروع مسجلة بعد. يطلب من الأدمن إضافتها أولاً.")
     if st.session_state["role"] == "Admin":
       if st.button("الدخول كأدمن لتسجيل الفروع"):
         st.session_state["branch_verified"] = True
@@ -264,7 +262,7 @@ elif choice == "🏢 إدارة الشركات والفروع":
           st.success("تم حفظ الفرع بنجاح!")
 
   st.markdown("---")
-  st.subheader("📋 الشركات والفروع المسجلة (حذف أو تعديل)")
+  st.subheader("📋 الشركات والفروع المسجلة")
   conn = get_db_connection()
   df_comps = pd.read_sql("SELECT * FROM companies", conn)
   df_branches = pd.read_sql(
@@ -277,10 +275,9 @@ elif choice == "🏢 إدارة الشركات والفروع":
   conn.close()
 
   if not df_comps.empty:
-    st.write("الشركات:")
     st.dataframe(df_comps, use_container_width=True)
     del_c_id = st.selectbox(
-        "رمعرف الشركة للحذف", df_comps["id"].tolist(), key="del_c"
+        "معرف الشركة للحذف", df_comps["id"].tolist(), key="del_c"
     )
     if st.button("🗑️ حذف الشركة"):
       conn = get_db_connection()
@@ -291,7 +288,6 @@ elif choice == "🏢 إدارة الشركات والفروع":
       st.rerun()
 
   if not df_branches.empty:
-    st.write("الفروع:")
     st.dataframe(df_branches, use_container_width=True)
     del_b_id = st.selectbox(
         "معرف الفرع للحذف", df_branches["id"].tolist(), key="del_b"
@@ -334,11 +330,12 @@ elif choice == "👥 إدارة المستخدمين":
 elif choice == "📁 استيراد وتوزيع الأصناف":
   st.header("📁 استيراد الأصناف عبر الإكسيل")
   st.info(
-      "📌 **فورمات ملف الإكسيل المطلوب أعمدته بالترتيب:**\n"
-      "1. `الكود` | 2. `الصنف` | 3. `الكمية` | 4. `سعر الشراء` | 5. `سعر البيع`"
+      "📌 **فورمات ملف الإكسيل المطلوب (بدون عناوين أو مع تخطي السطر"
+      " الأول):**\n"
+      "العمود 1: `الكود` | العمود 2: `الصنف` | العمود 3: `الكمية` | العمود 4:"
+      " `سعر الشراء` | العمود 5: `سعر البيع`"
   )
 
-  # عرض جدول توضيحي لشكل الفورمات
   demo_df = pd.DataFrame({
       "الكود": ["A001", "A002"],
       "الصنف": ["لوز خام", "بندق منقى"],
@@ -346,7 +343,7 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
       "سعر الشراء": [15.0, 25.0],
       "سعر البيع": [20.0, 35.0],
   })
-  st.write("مثال توضيحي لشكل الإكسيل المقبول:")
+  st.write("مثال توضيحي لشكل الفورمات المقبول:")
   st.dataframe(demo_df, use_container_width=True)
 
   conn = get_db_connection()
@@ -356,32 +353,49 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
 
   if comps_dict:
     sel_comp = st.selectbox(
-        "اختر الشركة للتأكيد واستيراد الأصناف إليها", list(comps_dict.keys())
+        "اختر الشركة لتأكيد استيراد الأصناف إليها", list(comps_dict.keys())
     )
     up_file = st.file_uploader(
         "اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"]
     )
     if up_file and st.button("📥 تنفيذ استيراد الأصناف"):
       try:
-        df = pd.read_excel(up_file)
+        # قراءة الملف بدون اعتبار السطر الأول كـ Header لمنع أخطاء التسمية
+        df = pd.read_excel(up_file, header=None)
         conn = get_db_connection()
         cur = conn.cursor()
-        for _, row in df.iterrows():
-          code = str(row.iloc[0]) if pd.notna(row.iloc[0]) else ""
-          name = str(row.iloc[1]) if pd.notna(row.iloc[1]) else ""
-          qty = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0.0
-          b_price = float(row.iloc[3]) if pd.notna(row.iloc[3]) else 0.0
-          s_price = float(row.iloc[4]) if pd.notna(row.iloc[4]) else 0.0
+        success_count = 0
 
-          if name:
-            cur.execute(
-                """INSERT INTO items (company_id, item_code, item_name, quantity,"
-                " buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)""",
-                (comps_dict[sel_comp], code, name, qty, b_price, s_price),
-            )
+        for idx, row in df.iterrows():
+          # تخطي السطر الأول إذا كان يحتوي على عناوين نصية
+          if idx == 0 and any(
+              str(val).strip() in ["الكود", "الصنف", "الكمية", "code", "item"]
+              for val in row.values
+          ):
+            continue
+
+          try:
+            code = str(row.iloc[0]) if pd.notna(row.iloc[0]) else ""
+            name = str(row.iloc[1]) if pd.notna(row.iloc[1]) else ""
+            qty = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0.0
+            b_price = float(row.iloc[3]) if pd.notna(row.iloc[3]) else 0.0
+            s_price = float(row.iloc[4]) if pd.notna(row.iloc[4]) else 0.0
+
+            if name and name != "nan":
+              cur.execute(
+                  """INSERT INTO items (company_id, item_code, item_name,"
+                  " quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)""",
+                  (comps_dict[sel_comp], code, name, qty, b_price, s_price),
+              )
+              success_count += 1
+          except Exception:
+            continue  # تخطي أي سطر تالف أو غير مطابق لتجنب توقف البرنامج
+
         conn.commit()
         conn.close()
-        st.success("تم استيراد وتوزيع الأصناف بنجاح للشركة المحددة!")
+        st.success(
+            f"تم استيراد وتوزيع عدد ({success_count}) صنف بنجاح للشركة المحددة!"
+        )
       except Exception as e:
         st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
   else:
@@ -415,7 +429,10 @@ elif choice == "📊 تقارير المخازن وتحويل الكميات":
     sel_item_id = st.selectbox(
         "اختر الصنف المراد تحويل جزء من كميته",
         item_ids,
-        format_func=lambda x: items_df[items_df["id"] == x]["الصنف"].values[0],
+        format_func=lambda x: (
+            f"{items_df[items_df['id'] == x]['الصنف'].values[0]} (الكمية"
+            f" المتوفرة: {items_df[items_df['id'] == x]['الكمية'].values[0]})"
+        ),
     )
 
     b_dict = {b["branch_name"]: b["id"] for b in branches_list}
@@ -433,12 +450,10 @@ elif choice == "📊 تقارير المخازن وتحويل الكميات":
             (sel_item_id,),
         ).fetchone()
         if curr_item and curr_item["quantity"] >= transfer_qty:
-          # خصم الكمية من المصدر
           conn.execute(
               "UPDATE items SET quantity = quantity - ? WHERE id = ?",
               (transfer_qty, sel_item_id),
           )
-          # إضافة الكمية للفرع الجديد
           conn.execute(
               """INSERT INTO items (company_id, branch_id, item_code, item_name,"
               " quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -466,7 +481,6 @@ elif choice == "📊 تقارير المخازن وتحويل الكميات":
 
 elif choice == "🥜 التحميص والخلط والتصنيع":
   st.header("🥜 إدارة عمليات التحميص والخلط")
-  st.info("قسم مخصص لحساب الفاقد وخلط المكسرات.")
 
 elif choice == "🛒 نقطة البيع (POS)":
   st.header("🛒 شاشة الكاشير ونقطة البيع")
