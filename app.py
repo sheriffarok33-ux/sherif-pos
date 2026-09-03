@@ -134,7 +134,7 @@ def process_barcode():
             })
     st.session_state.barcode_scan = ""
 
-# --- تسجيل الدخول (بدون حساب ادمن افتراضي) ---
+# --- تسجيل الدخول (يعتمد حصرياً على قاعدة البيانات الأمنية) ---
 if not st.session_state["logged_in"]:
   col1, col2, col3 = st.columns([1, 2, 1])
   with col2:
@@ -250,13 +250,12 @@ if choice == "🏠 الرئيسية واللوحة":
           st.markdown("<br>", unsafe_allow_html=True)
 
 elif choice == "🏢 إدارة الشركات والفروع":
-  st.header("🏢 إدارة الشركات والفروع (الهيكل التنظيمي للمجموعة)")
+  st.header("🏢 إدارة الشركات والفروع")
   conn = get_db_connection()
-  
   if st.session_state["role"] == "Admin":
-      with st.expander("➕ إضافة شركة جديدة تحت المجموعة القابضة", expanded=False):
+      with st.expander("➕ إضافة شركة جديدة (صلاحية الأدمن)", expanded=False):
           with st.form("add_comp_form", clear_on_submit=True):
-              c_name = st.text_input("اسم الشركة (مثال: محمصة أبو زيد، لازوردي بيوتي سنتر، المطعم)")
+              c_name = st.text_input("اسم الشركة البرمجي")
               c_title = st.text_input("الاسم الرسمي للفاتورة")
               logo_file = st.file_uploader("شعار الشركة", type=["png", "jpg", "jpeg"])
               if st.form_submit_button("💾 حفظ الشركة (Enter)") and c_name:
@@ -271,9 +270,9 @@ elif choice == "🏢 إدارة الشركات والفروع":
   comps_dict = {c["company_name"]: c["id"] for c in comps}
   
   if comps_dict:
-      with st.expander("➕ إضافة فرع جديد لأي شركة", expanded=False):
+      with st.expander("➕ إضافة فرع جديد", expanded=False):
           with st.form("add_branch_form", clear_on_submit=True):
-              sel_c = st.selectbox("اختر الشركة التابع لها الفرع", list(comps_dict.keys()))
+              sel_c = st.selectbox("اختر الشركة للفرع", list(comps_dict.keys()))
               b_name = st.text_input("اسم الفرع / المخزن")
               if st.form_submit_button("💾 حفظ الفرع (Enter)") and b_name:
                   conn.execute("INSERT INTO branches (company_id, branch_name) VALUES (?, ?)", (comps_dict[sel_c], b_name.strip()))
@@ -281,12 +280,9 @@ elif choice == "🏢 إدارة الشركات والفروع":
 
   st.markdown("---")
   st.subheader("🌲 هيكل المجموعة (الشركات وتحت كل شركة فروعها)")
-  
   for comp in comps:
-      # عرض اسم الشركة بشكل بارز كأصل شجري
       st.markdown(f"### 📁 شركة التابعة: **{comp['company_name']}**")
       branches_df = pd.read_sql("SELECT id, branch_name AS 'اسم الفرع' FROM branches WHERE company_id = ?", conn, params=(comp["id"],))
-      
       c1, c2 = st.columns([2, 1])
       with c1:
           if not branches_df.empty:
@@ -351,20 +347,20 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
             except sqlite3.IntegrityError: st.error("❌ اسم المستخدم مسجل مسبقاً!")
 
       st.markdown("---")
-      st.subheader("📋 قائمة المستخدمين (تعديل الأرقام السرية والإيقاف)")
+      st.subheader("📋 قائمة المستخدمين (تعديل الأرقام السرية وإيقاف الحسابات)")
       if st.session_state["role"] == "Admin": users_df = pd.read_sql("SELECT id, username AS 'اسم المستخدم', password AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users", conn)
       else:
           q = "SELECT id, username AS 'اسم المستخدم', password AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users WHERE company_id = ? OR id IN (SELECT user_id FROM user_branches ub JOIN branches b ON ub.branch_id = b.id WHERE b.company_id = ?)"
           users_df = pd.read_sql(q, conn, params=(st.session_state["company_id"], st.session_state["company_id"]))
       
       if not users_df.empty:
-          st.info("💡 لتغيير كلمة المرور أو إيقاف الحساب (غير الرقم 1 إلى 0)، اضغط على الخانة وعدلها ثم اضغط حفظ.")
+          st.info("💡 يمكنك تعديل (اسم المستخدم، كلمة المرور، وحالة النشاط 1 أو 0) مباشرة بالضغط على الخانة ثم اضغط حفظ.")
           edited_users = st.data_editor(users_df, hide_index=True, disabled=["الرتبة", "id"], key="u_editor")
           c1, c2 = st.columns([2,1])
           with c1:
               if st.button("💾 حفظ تعديلات المستخدمين"):
                   for idx, row in edited_users.iterrows(): conn.execute("UPDATE users SET username=?, password=?, is_active=? WHERE id=?", (row['اسم المستخدم'], row['كلمة المرور'], row['نشط (1=نعم/0=موقوف)'], row['id']))
-                  conn.commit(); log_action(st.session_state["user_id"], "تعديل مستخدمين", "تم تعديل بيانات أو أرقام سرية للمستخدمين"); st.success("تم الحفظ!")
+                  conn.commit(); log_action(st.session_state["user_id"], "تعديل مستخدمين", "تم تعديل بيانات أو أرقام سرية للمستخدمين يدوياً"); st.success("تم الحفظ!")
           with c2:
               del_u_id = st.selectbox("اختر مستخدم للحذف النهائي:", users_df["id"].tolist(), format_func=lambda x: users_df[users_df["id"]==x]["اسم المستخدم"].values[0])
               if st.button("🗑️ حذف المستخدم نهائياً", type="primary") and del_u_id != 0:
@@ -581,7 +577,7 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                   conn.commit(); log_action(st.session_state["user_id"], "تعديل مخزون", "تم تعديل بيانات الأصناف يدوياً"); st.success("تم الحفظ!")
           with c2: st.download_button("📥 تصدير المخزون لـ Excel", data=to_excel(items_df), file_name="inventory.xlsx")
 
-  # --- النظام الذكي لتوزيع ونقل المخزون (فردي أو شامل) ---
+  # --- النظام الذكي لتوزيع ونقل المخزون ---
   with tab5:
       st.subheader("🔄 توزيع ونقل المخزون (بين الشركات والفروع)")
       transfer_type = st.radio("اختر نوع النقل والتوزيع:", ["نقل صنف محدد (فردي)", "نقل كافة الأصناف دفعة واحدة (من شركة لشركة)"])
