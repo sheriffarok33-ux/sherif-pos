@@ -358,15 +358,11 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
   is_viewer = (st.session_state["role"] == "Viewer")
   
   with tab1:
-      # جلب كافة الشركات والفروع بدون قيود لضمان ظهور كل الشركات في القوائم
       all_companies = conn.execute("SELECT id, company_name FROM companies").fetchall()
       all_comps_dict = {c["company_name"]: c["id"] for c in all_companies}
-      
-      all_branches = conn.execute("SELECT b.id, b.branch_name, c.company_name FROM branches b JOIN companies c ON b.company_id = c.id").fetchall()
-      all_b_dict = {f"{b['company_name']} ➔ {b['branch_name']}": b["id"] for b in all_branches}
 
       if not is_viewer:
-          with st.expander("➕ إضافة مستخدم جديد (شامل لكافة الشركات والفروع)", expanded=True):
+          with st.expander("➕ إضافة مستخدم جديد (مفعل بالكامل)", expanded=True):
               u = st.text_input("اسم المستخدم الجديد")
               phone = st.text_input("رقم الهاتف (إجباري ومميز لكل موظف)")
               p = st.text_input("كلمة المرور", type="password")
@@ -385,8 +381,19 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
               if db_role == "General_Supervisor" and all_comps_dict:
                   assigned_c_name = st.selectbox("اختر الشركة التابعة له:", list(all_comps_dict.keys()))
                   assigned_c = all_comps_dict[assigned_c_name]
-              elif db_role in ["Branch_Supervisor", "Cashier"] and all_b_dict:
-                  assigned_b = st.multiselect("اختر الفروع المخصصة للموظف:", list(all_b_dict.keys()))
+              elif db_role in ["Branch_Supervisor", "Cashier"] and all_comps_dict:
+                  # تدرج هرمي صحيح: اختر الشركة أولاً، ثم تظهر فروعها فقط
+                  selected_comp_name = st.selectbox("1️⃣ اختر الشركة أولاً:", list(all_comps_dict.keys()), key="user_sel_comp")
+                  selected_comp_id = all_comps_dict[selected_comp_name]
+                  assigned_c = selected_comp_id # ربط الشركة بالموظف أيضاً
+                  
+                  company_branches = conn.execute("SELECT id, branch_name FROM branches WHERE company_id = ?", (selected_comp_id,)).fetchall()
+                  b_dict = {b["branch_name"]: b["id"] for b in company_branches}
+                  
+                  if b_dict:
+                      assigned_b = st.multiselect("2️⃣ اختر الفروع المتاحة لهذه الشركة:", list(b_dict.keys()))
+                  else:
+                      st.warning("⚠️ هذه الشركة لا توجد لها فروع مسجلة بعد. يرجى إضافتها من قسم (إدارة الشركات والفروع).")
               
               if st.button("💾 حفظ وإضافة المستخدم الجديد"):
                   if u and p and phone:
@@ -394,9 +401,9 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
                           cur = conn.cursor()
                           cur.execute("INSERT INTO users (username, phone, password, role, company_id) VALUES (?, ?, ?, ?, ?)", (u.strip(), phone.strip(), p, db_role, assigned_c))
                           new_user_id = cur.lastrowid
-                          if db_role in ["Branch_Supervisor", "Cashier"]:
+                          if db_role in ["Branch_Supervisor", "Cashier"] and 'b_dict' in locals():
                               for branch_str in assigned_b: 
-                                  cur.execute("INSERT INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, all_b_dict[branch_str]))
+                                  cur.execute("INSERT INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_dict[branch_str]))
                           conn.commit()
                           log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}")
                           st.success(f"🎉 تم حفظ المستخدم ({u}) برتبة ({db_role}) بنجاح!")
@@ -521,7 +528,7 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
 
 elif choice == "🏦 إدارة الخزينة والبنوك":
   st.header("🏦 إدارة الخزائن والبنوك")
-  tab1, tab2, tab3 = st.tabs(["🏛️ تعريف الخزائن", "💸 إيداع وسحب", "📊 أرصدة وحركات الخزائن"])
+  tab1, tab2, tab3 = st.tabs(["🏛️ تعريف الخزائن", "💸 إيداع وسحب", "📊 أرصدة والحركات الخزائن"])
   conn = get_db_connection()
   is_viewer = (st.session_state["role"] == "Viewer")
   
