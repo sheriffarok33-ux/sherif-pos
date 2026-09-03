@@ -45,8 +45,6 @@ def initialize_database():
   cursor.execute("CREATE TABLE IF NOT EXISTS dict_expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL)")
   cursor.execute("CREATE TABLE IF NOT EXISTS dict_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL)")
   cursor.execute("CREATE TABLE IF NOT EXISTS dict_mixes (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL)")
-  
-  # جدول لربط المستخدم الواحد بأكثر من فرع
   cursor.execute("CREATE TABLE IF NOT EXISTS user_branches (user_id INTEGER, branch_id INTEGER, PRIMARY KEY (user_id, branch_id))")
 
   try: cursor.execute("INSERT OR IGNORE INTO dict_expenses (name) VALUES ('رواتب وأجور'), ('إيجار الفرع'), ('كهرباء ومياه'), ('ضيافة ونثريات'), ('صيانة ومعدات'), ('مصروفات تسويق')")
@@ -54,10 +52,8 @@ def initialize_database():
   try: cursor.execute("INSERT OR IGNORE INTO dict_transactions (name) VALUES ('إيداع مبيعات الكاشير'), ('تغذية رصيد الخزينة/الدرج'), ('سحب أرباح للإدارة'), ('تحويل نقدية بين الفروع')")
   except: pass
   
-  # تحديثات ذكية لمعالجة الجداول القديمة ومنع الـ OperationalError
   try: cursor.execute("SELECT branch_id FROM users LIMIT 1")
   except: cursor.execute("ALTER TABLE users ADD COLUMN branch_id INTEGER DEFAULT NULL")
-  
   try: cursor.execute("SELECT branch_id FROM items LIMIT 1")
   except: cursor.execute("ALTER TABLE items ADD COLUMN branch_id INTEGER DEFAULT NULL")
   try: cursor.execute("SELECT quantity FROM items LIMIT 1")
@@ -73,6 +69,7 @@ initialize_database()
 
 def get_db_connection():
   conn = sqlite3.connect("abu_zaid_system.db", timeout=10)
+  conn.execute("PRAGMA foreign_keys = ON") # تفعيل المفاتيح الأجنبية لحذف الفروع المرتبطة تلقائياً
   conn.row_factory = sqlite3.Row
   return conn
 
@@ -132,14 +129,10 @@ if not st.session_state["logged_in"]:
             st.session_state["username"] = user["username"]
             st.session_state["role"] = user["role"]
             st.session_state["user_id"] = user["id"]
-            
-            # جلب كل الفروع المخصصة للموظف من جدول الربط المتعدد
             user_branches_db = conn.execute("SELECT branch_id FROM user_branches WHERE user_id = ?", (user["id"],)).fetchall()
             assigned = [b["branch_id"] for b in user_branches_db]
-            if user["branch_id"] is not None and user["branch_id"] not in assigned:
-                assigned.append(user["branch_id"]) # للفروع القديمة
+            if user["branch_id"] is not None and user["branch_id"] not in assigned: assigned.append(user["branch_id"])
             st.session_state["assigned_branches"] = assigned
-            
             conn.close()
             st.rerun()
           else:
@@ -150,16 +143,12 @@ if not st.session_state["logged_in"]:
 if not st.session_state["branch_verified"]:
   st.title(f"🔥 أهلاً بك يا بطل العمل، {st.session_state['username']}!")
   conn = get_db_connection()
-  
-  if st.session_state["role"] == "Admin":
-      branches = conn.execute("SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id").fetchall()
+  if st.session_state["role"] == "Admin": branches = conn.execute("SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id").fetchall()
   else:
-      # إظهار الفروع المخصصة له فقط
       placeholders = ', '.join('?' for _ in st.session_state["assigned_branches"])
       query = f"SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id WHERE branches.id IN ({placeholders})"
       branches = conn.execute(query, st.session_state["assigned_branches"]).fetchall() if st.session_state["assigned_branches"] else []
   conn.close()
-
   branch_options = {f"{b['company_name']} ➔ {b['branch_name']}": b["id"] for b in branches}
   
   if branch_options:
@@ -168,14 +157,10 @@ if not st.session_state["branch_verified"]:
         chosen_branch = st.selectbox("الفروع المتاحة لك:", list(branch_options.keys()))
         if st.form_submit_button("تأكيد الفرع والدخول (Enter)"):
             chosen_id = branch_options[chosen_branch]
-            st.session_state["branch_verified"] = True
-            st.session_state["selected_branch_id"] = chosen_id
-            st.rerun()
+            st.session_state["branch_verified"] = True; st.session_state["selected_branch_id"] = chosen_id; st.rerun()
   else:
-    if st.session_state["role"] == "Admin" and st.button("الدخول كأدمن لتسجيل الفروع"):
-        st.session_state["branch_verified"] = True; st.rerun()
-    elif st.session_state["role"] != "Admin":
-        st.error("❌ ليس لديك أي فروع مخصصة. راجع الإدارة.")
+    if st.session_state["role"] == "Admin" and st.button("الدخول كأدمن لتسجيل الفروع"): st.session_state["branch_verified"] = True; st.rerun()
+    elif st.session_state["role"] != "Admin": st.error("❌ ليس لديك أي فروع مخصصة. راجع الإدارة.")
   st.stop()
 
 # --- القائمة الجانبية والشعار ---
@@ -187,10 +172,8 @@ else: st.sidebar.markdown("<h2 style='text-align: center;'>🏢 أبو زيد ا
 
 st.sidebar.markdown(f"**👤 {st.session_state['username']} | `{st.session_state['role']}`**")
 st.sidebar.markdown("---")
-
 menu = ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)"]
-if st.session_state["role"] == "Admin":
-  menu.extend(["🏢 إدارة الشركات والفروع", "👥 إدارة المستخدمين", "📁 استيراد وتوزيع الأصناف", "🏦 إدارة الخزينة والبنوك", "💰 تسجيل المصروفات", "📊 التقارير الشاملة والمخازن", "🥜 التحميص والخلط والتصنيع"])
+if st.session_state["role"] == "Admin": menu.extend(["🏢 إدارة الشركات والفروع", "👥 إدارة المستخدمين", "📁 استيراد وتوزيع الأصناف", "🏦 إدارة الخزينة والبنوك", "💰 تسجيل المصروفات", "📊 التقارير الشاملة والمخازن", "🥜 التحميص والخلط والتصنيع"])
 menu.append("🚪 تسجيل الخروج")
 
 for m in menu:
@@ -219,13 +202,7 @@ if choice == "🏠 الرئيسية واللوحة":
   for i, item in enumerate(admin_options):
       data = dashboard_cards.get(item, {"icon": "✨", "color": "linear-gradient(135deg, #64748b, #475569)", "desc": "إدارة القسم"})
       with cols[i % 3]:
-          st.markdown(f'''
-          <div style="background: {data['color']}; padding: 25px 15px; border-radius: 16px; color: white; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin-bottom: 10px; min-height: 150px;">
-              <h1 style="margin:0; font-size: 45px;">{data['icon']}</h1>
-              <h3 style="margin: 10px 0 5px 0;">{item.split(" ", 1)[1]}</h3>
-              <p style="margin:0; font-size: 14px; opacity: 0.9;">{data['desc']}</p>
-          </div>
-          ''', unsafe_allow_html=True)
+          st.markdown(f'''<div style="background: {data['color']}; padding: 25px 15px; border-radius: 16px; color: white; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin-bottom: 10px; min-height: 150px;"><h1 style="margin:0; font-size: 45px;">{data['icon']}</h1><h3 style="margin: 10px 0 5px 0;">{item.split(" ", 1)[1]}</h3><p style="margin:0; font-size: 14px; opacity: 0.9;">{data['desc']}</p></div>''', unsafe_allow_html=True)
           st.button(f"دخول ➔", key=f"btn_{i}", on_click=set_page, args=(item,), use_container_width=True)
           st.markdown("<br>", unsafe_allow_html=True)
 
@@ -255,6 +232,40 @@ elif choice == "🏢 إدارة الشركات والفروع":
           if st.form_submit_button("💾 حفظ الفرع (Enter)") and b_name:
               conn = get_db_connection(); conn.execute("INSERT INTO branches (company_id, branch_name) VALUES (?, ?)", (comps_dict[sel_c], b_name.strip())); conn.commit(); conn.close(); st.success("تم الحفظ!"); st.rerun()
 
+  st.markdown("---")
+  st.subheader("📋 الشركات والفروع المسجلة (إدارة وتعديل)")
+  tab1, tab2 = st.tabs(["🏢 الشركات", "🏪 الفروع"])
+  conn = get_db_connection()
+  
+  with tab1:
+      df_comps = pd.read_sql("SELECT id, company_name AS 'اسم الشركة', company_title AS 'الاسم الرسمي' FROM companies", conn)
+      if not df_comps.empty:
+          st.info("💡 لتعديل الشركة، اضغط مرتين على الاسم وعدله. للحذف استخدم القائمة أدناه.")
+          edited_comps = st.data_editor(df_comps, hide_index=True, key="comps_editor")
+          if st.button("💾 حفظ تعديلات الشركات"):
+              for idx, row in edited_comps.iterrows(): conn.execute("UPDATE companies SET company_name=?, company_title=? WHERE id=?", (row['اسم الشركة'], row['الاسم الرسمي'], row['id']))
+              conn.commit(); st.success("تم التحديث!"); st.rerun()
+              
+          del_c_id = st.selectbox("اختر الشركة للحذف (سيحذف كل فروعها وأرصدتها!):", df_comps["id"].tolist(), format_func=lambda x: df_comps[df_comps["id"]==x]["اسم الشركة"].values[0])
+          if st.button("🗑️ حذف الشركة"):
+              conn.execute("DELETE FROM companies WHERE id=?", (del_c_id,)); conn.commit(); st.success("تم الحذف!"); st.rerun()
+      else: st.info("لا توجد شركات مسجلة.")
+
+  with tab2:
+      df_branches = pd.read_sql("SELECT branches.id, branches.branch_name AS 'اسم الفرع', companies.company_name AS 'الشركة التابعة' FROM branches JOIN companies ON branches.company_id = companies.id", conn)
+      if not df_branches.empty:
+          st.info("💡 اضغط مرتين على اسم الفرع لتعديله. لنقل الفرع لشركة أخرى قم بحذفه وإضافته من جديد.")
+          edited_branches = st.data_editor(df_branches, hide_index=True, disabled=["الشركة التابعة"], key="branches_editor")
+          if st.button("💾 حفظ تعديلات الفروع"):
+              for idx, row in edited_branches.iterrows(): conn.execute("UPDATE branches SET branch_name=? WHERE id=?", (row['اسم الفرع'], row['id']))
+              conn.commit(); st.success("تم التحديث!"); st.rerun()
+              
+          del_b_id = st.selectbox("اختر الفرع للحذف:", df_branches["id"].tolist(), format_func=lambda x: df_branches[df_branches["id"]==x]["اسم الفرع"].values[0])
+          if st.button("🗑️ حذف الفرع"):
+              conn.execute("DELETE FROM branches WHERE id=?", (del_b_id,)); conn.commit(); st.success("تم الحذف!"); st.rerun()
+      else: st.info("لا توجد فروع مسجلة.")
+  conn.close()
+
 elif choice == "👥 إدارة المستخدمين":
   st.header("👥 إضافة وتعيين المستخدمين للفروع")
   conn = get_db_connection()
@@ -269,12 +280,9 @@ elif choice == "👥 إدارة المستخدمين":
     assigned_b = st.multiselect("الفروع المخصصة (اختر فرعاً أو أكثر ليتمكن من الدخول إليها):", list(b_dict.keys())) if b_dict else []
     
     if st.form_submit_button("💾 حفظ المستخدم (Enter)") and u and p:
-      conn = get_db_connection()
-      cur = conn.cursor()
-      # إدخال المستخدم
+      conn = get_db_connection(); cur = conn.cursor()
       cur.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", (u.strip(), p, r))
       new_user_id = cur.lastrowid
-      # ربط الفروع
       for branch_str in assigned_b:
           b_id = b_dict[branch_str]
           cur.execute("INSERT INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_id))
@@ -371,13 +379,13 @@ elif choice == "🏦 إدارة الخزينة والبنوك":
                       else: conn.execute("UPDATE treasuries SET balance = balance - ? WHERE id = ?", (amount, t_id))
                       conn.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, ?, ?, ?)", (t_id, st.session_state["user_id"], trans_type, amount, final_desc))
                       conn.commit(); st.success("تم تسجيل الحركة!"); st.rerun()
+                  else: st.warning("اكتب البيان.")
 
   with tab3:
       df_t = pd.read_sql("SELECT treasuries.id AS 'id', treasuries.treasury_name AS 'الاسم', treasuries.treasury_type AS 'النوع', IFNULL(branches.branch_name, 'خزينة عامة') AS 'الفرع', treasuries.balance AS 'الرصيد' FROM treasuries LEFT JOIN branches ON treasuries.branch_id = branches.id", conn)
       if not df_t.empty:
-          st.info("💡 لتعديل الرصيد يدوياً: اضغط مرتين على الخانة واكتب (للأدمن والمشرفين).")
           edited_t = st.data_editor(df_t, disabled=(st.session_state["role"] == "Cashier"), hide_index=True, key="t_editor")
-          if st.session_state["role"] != "Cashier" and st.button("💾 حفظ التعديلات المباشرة"):
+          if st.session_state["role"] != "Cashier" and st.button("💾 حفظ تعديلات الخزائن"):
               for idx, row in edited_t.iterrows(): conn.execute("UPDATE treasuries SET treasury_name=?, treasury_type=?, balance=? WHERE id=?", (row['الاسم'], row['النوع'], row['الرصيد'], row['id']))
               conn.commit(); st.success("تم التحديث!")
           st.markdown("---")
@@ -427,7 +435,6 @@ elif choice == "📊 التقارير الشاملة والمخازن":
   with tab1:
       items_df = pd.read_sql("SELECT items.id AS id, companies.company_name AS الشركة, branches.branch_name AS الفرع, items.item_code AS الكود, items.item_name AS الصنف, items.quantity AS الكمية, items.buy_price AS 'سعر الشراء', items.sale_price AS 'سعر البيع' FROM items JOIN companies ON items.company_id = companies.id LEFT JOIN branches ON items.branch_id = branches.id", conn)
       if not items_df.empty:
-          st.info("💡 عدّل مباشرة على الجداول بالضغط مرتين (للمشرفين فقط).")
           edited_items = st.data_editor(items_df, disabled=(st.session_state["role"] == "Cashier"), hide_index=True, key="items_editor")
           c1, c2 = st.columns(2)
           with c1:
