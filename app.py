@@ -222,32 +222,31 @@ if not st.session_state["logged_in"]:
 
 # --- التحقق من الفرع ---
 if not st.session_state["branch_verified"]:
-  if st.session_state["role"] in ["Admin", "Viewer"]:
-      st.session_state["branch_verified"] = True
-      st.rerun()
-      
   st.title(f"🔥 أهلاً بك، {st.session_state['username']}!")
   conn = get_db_connection()
   
-  if st.session_state["role"] == "General_Supervisor" and st.session_state["company_id"]: branches = conn.execute("SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id WHERE companies.id = ?", (st.session_state["company_id"],)).fetchall()
+  if st.session_state["role"] == "Admin":
+      branches = conn.execute("SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id").fetchall()
+  elif st.session_state["role"] == "General_Supervisor" and st.session_state["company_id"]:
+      branches = conn.execute("SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id WHERE companies.id = ?", (st.session_state["company_id"],)).fetchall()
   else:
       placeholders = ', '.join('?' for _ in st.session_state["assigned_branches"])
       if placeholders: branches = conn.execute(f"SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id WHERE branches.id IN ({placeholders})", st.session_state["assigned_branches"]).fetchall()
       else: branches = []
   conn.close()
   
-  branch_options = {f"{b['company_name']} ➔ {b['branch_name']}": b["id"] for b in branches}
+  branch_options = {f"🏢 {b['company_name']} ➔ 📍 {b['branch_name']}": b["id"] for b in branches}
   
   if branch_options:
     with st.form("branch_form"):
-        chosen_branch = st.selectbox("الفروع المتاحة لك للعمل:", list(branch_options.keys()))
+        chosen_branch = st.selectbox("اختر الفرع للبدء بالعمل:", list(branch_options.keys()))
         if st.form_submit_button("تأكيد الفرع والدخول (Enter)"):
             st.session_state["branch_verified"] = True; st.session_state["selected_branch_id"] = branch_options[chosen_branch]
             log_action(st.session_state["user_id"], "اختيار فرع", f"تم فتح العمل على الفرع: {chosen_branch}")
             st.rerun()
   else:
     if st.session_state["role"] == "General_Supervisor" and st.button("دخول للوحة شركتي"): st.session_state["branch_verified"] = True; st.rerun()
-    else: st.error("❌ ليس لديك أي فروع مخصصة. راجع الإدارة.")
+    else: st.error("❌ ليس لديك أي فروع مخصصة. راجع الإدارة أو قم بإنشاء فروع جديدة للشركات.")
   st.stop()
 
 # --- القائمة الجانبية والشعار ---
@@ -353,37 +352,41 @@ elif choice == "🏢 إدارة الشركات والفروع":
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين والصلاحيات":
-  st.header("👥 إدارة المستخدمين والصلاحيات")
+  st.header("👥 إدارة المستخدمين وصلاحيات الـ POS")
   tab1, tab2, tab3 = st.tabs(["👥 حسابات المستخدمين", "🛡️ مدير الصلاحيات (POS Manager)", "📝 سجل نشاط المستخدمين (Audit)"])
   conn = get_db_connection()
   is_viewer = (st.session_state["role"] == "Viewer")
   
   with tab1:
-      comps = get_allowed_companies(conn)
-      comps_dict = {c["company_name"]: c["id"] for c in comps}
-      if st.session_state["role"] == "Admin": branches = conn.execute("SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id").fetchall()
-      else: branches = conn.execute("SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id WHERE companies.id = ?", (st.session_state["company_id"],)).fetchall()
-      b_dict = {f"{b['company_name']} ➔ {b['branch_name']}": b["id"] for b in branches}
+      # جلب كافة الشركات والفروع بدون قيود لضمان ظهور كل الشركات في القوائم
+      all_companies_for_users = conn.execute("SELECT id, company_name FROM companies").fetchall()
+      all_comps_dict = {c["company_name"]: c["id"] for c in all_companies_list}
+      
+      all_branches_for_users = conn.execute("SELECT b.id, b.branch_name, c.company_name FROM branches b JOIN companies c ON b.company_id = c.id").fetchall()
+      all_b_dict = {f"{b['company_name']} ➔ {b['branch_name']}": b["id"] for b in all_branches_for_users}
 
       if not is_viewer:
-          with st.expander("➕ إضافة مستخدم جديد (مفعل بالكامل)", expanded=True):
+          with st.expander("➕ إضافة مستخدم جديد (شامل لكافة الشركات والفروع)", expanded=True):
               u = st.text_input("اسم المستخدم الجديد")
               phone = st.text_input("رقم الهاتف (إجباري ومميز لكل موظف)")
               p = st.text_input("كلمة المرور", type="password")
               
-              if st.session_state["role"] == "Admin": roles = ["Admin (مدير النظام)", "General_Supervisor (مدير شركة)", "Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
-              else: roles = ["Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
-              r = st.selectbox("رتبة المستخدم:", roles)
+              if st.session_state["role"] == "Admin": 
+                  roles = ["Admin (مدير النظام)", "General_Supervisor (مدير شركة)", "Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
+              else: 
+                  roles = ["Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
               
+              r = st.selectbox("رتبة المستخدم:", roles)
               db_role = r.split(" ")[0]
+              
               assigned_c = None
               assigned_b = []
               
-              if db_role == "General_Supervisor" and comps_dict:
-                  assigned_c_name = st.selectbox("اختر الشركة التابعة له:", list(comps_dict.keys()))
-                  assigned_c = comps_dict[assigned_c_name]
-              elif db_role in ["Branch_Supervisor", "Cashier"] and b_dict:
-                  assigned_b = st.multiselect("اختر الفروع المخصصة للموظف:", list(b_dict.keys()))
+              if db_role == "General_Supervisor" and all_comps_dict:
+                  assigned_c_name = st.selectbox("اختر الشركة التابعة له:", list(all_comps_dict.keys()))
+                  assigned_c = all_comps_dict[assigned_c_name]
+              elif db_role in ["Branch_Supervisor", "Cashier"] and all_b_dict:
+                  assigned_b = st.multiselect("اختر الفروع المخصصة للموظف:", list(all_b_dict.keys()))
               
               if st.button("💾 حفظ وإضافة المستخدم الجديد"):
                   if u and p and phone:
@@ -393,7 +396,7 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
                           new_user_id = cur.lastrowid
                           if db_role in ["Branch_Supervisor", "Cashier"]:
                               for branch_str in assigned_b: 
-                                  cur.execute("INSERT INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_dict[branch_str]))
+                                  cur.execute("INSERT INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, all_b_dict[branch_str]))
                           conn.commit()
                           log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}")
                           st.success(f"🎉 تم حفظ المستخدم ({u}) برتبة ({db_role}) بنجاح!")
@@ -404,7 +407,8 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
 
       st.markdown("---")
       st.subheader("📋 قائمة المستخدمين")
-      if st.session_state["role"] == "Admin": users_df = pd.read_sql("SELECT id, username AS 'اسم المستخدم', phone AS 'رقم الهاتف', password AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users", conn)
+      if st.session_state["role"] == "Admin": 
+          users_df = pd.read_sql("SELECT id, username AS 'اسم المستخدم', phone AS 'رقم الهاتف', password AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users", conn)
       else:
           q = "SELECT id, username AS 'اسم المستخدم', phone AS 'رقم الهاتف', password AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users WHERE company_id = ? OR id IN (SELECT user_id FROM user_branches ub JOIN branches b ON ub.branch_id = b.id WHERE b.company_id = ?)"
           users_df = pd.read_sql(q, conn, params=(st.session_state["company_id"], st.session_state["company_id"]))
@@ -856,7 +860,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                 else:
                     conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, shift_status) VALUES (?, ?, ?, ?, 'open')", (b_id, st.session_state["user_id"], grand_total, pay_method))
                     for c_item in st.session_state["cart"]:
-                        if c_item["id"] != 999999: # لا نخصم الأصناف العامة الوهمية من المخزن
+                        if c_item["id"] != 999999:
                             conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
                     conn.commit()
                     st.session_state["cart"] = []
@@ -905,7 +909,7 @@ elif choice == "🛒 نقطة البيع (POS)":
     col_x, col_z = st.columns(2)
     with col_x: st.markdown(f"""<div class="card" style="background-color: #0284c7;"><h3>X-READ (مبيعات الوردية)</h3><h2>{shift_total:.2f} د.ل</h2></div>""", unsafe_allow_html=True)
     with col_z:
-        st.markdown(f"""<div class="card" style="background-color: #be123c;"><h3>Z-READ (تصفير الوردية وإيداع)</h3></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="card" style="background-color: #be123c;">### Z-READ (تصفير الوردية وإيداع)</div>""", unsafe_allow_html=True)
         treasuries_branch = conn.execute("SELECT id, treasury_name FROM treasuries WHERE branch_id = ? OR (branch_id IS NULL AND company_id = (SELECT company_id FROM branches WHERE id=?))", (b_id, b_id)).fetchall()
         t_dict_z = {t["treasury_name"]: t["id"] for t in treasuries_branch}
         if t_dict_z:
