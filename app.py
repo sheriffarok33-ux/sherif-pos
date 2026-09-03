@@ -290,12 +290,14 @@ elif choice == "👥 إدارة المستخدمين":
 elif choice == "📁 استيراد وتوزيع الأصناف":
   st.header("📁 استيراد الأصناف عبر الإكسيل")
   
-  # دالة قوية لاستخراج الأرقام حتى لو كان هناك نص بالخطأ في خانة السعر/الكمية
   def safe_float(val):
       try:
           if pd.isna(val) or str(val).strip() == '': return 0.0
           s = str(val).replace(',', '.')
-          s = re.sub(r'[^\d.]', '', s) # إزالة أي حروف وترك الأرقام والنقطة فقط
+          s = re.sub(r'[^\d.]', '', s)
+          if s.count('.') > 1: # معالجة النقاط المتعددة بالخطأ
+              parts = s.split('.')
+              s = parts[0] + '.' + ''.join(parts[1:])
           return float(s) if s else 0.0
       except:
           return 0.0
@@ -309,8 +311,8 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
     sel_comp = st.selectbox("اختر الشركة لتطبيق الاستيراد عليها", list(comps_dict.keys()))
     
     import_mode = st.radio("طريقة الاستيراد:", [
-        "🔄 تحديث وإضافة (يبحث بالكود أو الاسم، ويحدث الكمية والسعر ويضيف النواقص)",
-        "🚨 مسح كامل واستيراد جديد (يحذف جميع الأصناف الحالية ويضع الملف الجديد فقط)"
+        "🔄 تحديث وإضافة (يمنع التكرار، يضيف الكميات الجديدة ويحدث السعر)",
+        "🚨 مسح كامل واستيراد جديد (يحذف كافة الأصناف للشركة ويبدأ من الصفر)"
     ])
     
     up_file = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
@@ -329,19 +331,24 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
         try:
             if row.isna().all(): continue
             name = str(row.iloc[1]).strip() if len(row)>1 and not pd.isna(row.iloc[1]) else ""
-            if not name or name.lower() in ["nan", "null"] or "صنف" in name or name.lower() == "item": continue
+            if not name or name.lower() in ["nan", "null", "item"] or name in ["الصنف", "اسم الصنف", "صنف"]: continue
             
             code = str(row.iloc[0]).strip() if len(row)>0 and not pd.isna(row.iloc[0]) else ""
-            if code.lower() == "nan": code = ""
+            if code.lower() in ["nan", "null", "الكود", "كود", "code"]: code = ""
             
             qty = safe_float(row.iloc[2] if len(row)>2 else 0.0)
             b_price = safe_float(row.iloc[3] if len(row)>3 else 0.0)
             s_price = safe_float(row.iloc[4] if len(row)>4 else 0.0)
             
             if "تحديث وإضافة" in import_mode:
-                # محاولة البحث عن الصنف لتحديثه
-                existing = cur.execute("SELECT id FROM items WHERE company_id = ? AND (item_code = ? OR item_name = ?) LIMIT 1", 
-                                       (comps_dict[sel_comp], code, name)).fetchone()
+                # اصلاح المشكلة الكبرى: لا تستخدم الكود في البحث إلا إذا كان غير فارغ
+                if code != "":
+                    existing = cur.execute("SELECT id FROM items WHERE company_id = ? AND (item_code = ? OR item_name = ?) LIMIT 1", 
+                                           (comps_dict[sel_comp], code, name)).fetchone()
+                else:
+                    existing = cur.execute("SELECT id FROM items WHERE company_id = ? AND item_name = ? LIMIT 1", 
+                                           (comps_dict[sel_comp], name)).fetchone()
+
                 if existing:
                     cur.execute("UPDATE items SET quantity = quantity + ?, buy_price = ?, sale_price = ? WHERE id = ?", 
                                 (qty, b_price, s_price, existing["id"]))
@@ -415,7 +422,6 @@ elif choice == "📊 تقارير المخازن وتحويل الكميات":
         edit_item_id = st.selectbox("اختر الصنف للتعديل أو الحذف:", items_df["id"].tolist(),
             format_func=lambda x: f"[{items_df[items_df['id'] == x]['الكود'].values[0]}] {items_df[items_df['id'] == x]['الصنف'].values[0]}", key="edit_item")
         
-        # استرجاع بيانات الصنف لعرضها في حقول التعديل
         selected_row = items_df[items_df['id'] == edit_item_id].iloc[0]
         
         with st.form("edit_item_form"):
@@ -538,7 +544,6 @@ elif choice == "🛒 نقطة البيع (POS)":
         with c_act1:
             if st.button("🖨️ إتمام وطباعة الفاتورة", use_container_width=True):
                 conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, shift_status) VALUES (?, ?, ?, 'open')", (b_id, st.session_state["user_id"], grand_total))
-                # خصم الكمية المباعة من المخزون
                 for c_item in st.session_state["cart"]:
                     conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
                 conn.commit()
