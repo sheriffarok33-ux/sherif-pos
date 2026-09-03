@@ -4,9 +4,25 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="مجموعة أبو زيد التجارية - النظام السحابي المتكامل",
+    page_title="مجموعة أبو زيد التجارية - النظام السحابي العصري",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
+
+# تخصيص التصميم واللون العام عبر CSS لتكون الواجهة فاخرة وعصرية
+st.markdown("""
+    <style>
+    .main { background-color: #f8fafc; }
+    .card {
+        padding: 20px;
+        border-radius: 12px;
+        color: white;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin-bottom: 15px;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 if not os.path.exists("company_logos"):
   os.makedirs("company_logos")
@@ -79,7 +95,6 @@ def get_db_connection():
   return conn
 
 
-# تهيئة الجلسة
 if "logged_in" not in st.session_state:
   st.session_state["logged_in"] = False
 if "username" not in st.session_state:
@@ -93,28 +108,31 @@ if "cart" not in st.session_state:
 
 # --- شاشة تسجيل الدخول ---
 if not st.session_state["logged_in"]:
-  st.title("🔐 تسجيل الدخول - مجموعة أبو زيد التجارية")
-  with st.form("login_form"):
-    u_name = st.text_input("اسم المستخدم")
-    u_pass = st.text_input("كلمة المرور", type="password")
-    submit = st.form_submit_button("دخول")
+  col1, col2, col3 = st.columns([1, 2, 1])
+  with col2:
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.title("🔐 تسجيل الدخول")
+    st.subheader("مجموعة أبو زيد التجارية")
+    with st.form("login_form"):
+      u_name = st.text_input("اسم المستخدم")
+      u_pass = st.text_input("كلمة المرور", type="password")
+      submit = st.form_submit_button(
+          "🚀 دخول للنظام", use_container_width=True
+      )
 
-    if submit:
-      if u_name == "admin" and u_pass == "admin":
-        st.session_state["logged_in"] = True
-        st.session_state["username"] = "admin"
-        st.session_state["role"] = "Admin"
-        st.session_state["user_id"] = None
-        st.rerun()
-      else:
-        try:
+      if submit:
+        if u_name == "admin" and u_pass == "admin":
+          st.session_state["logged_in"] = True
+          st.session_state["username"] = "admin"
+          st.session_state["role"] = "Admin"
+          st.rerun()
+        else:
           conn = get_db_connection()
           user = conn.execute(
               "SELECT * FROM users WHERE username = ? AND password = ?",
               (u_name, u_pass),
           ).fetchone()
           conn.close()
-
           if user:
             st.session_state["logged_in"] = True
             st.session_state["username"] = user["username"]
@@ -122,70 +140,93 @@ if not st.session_state["logged_in"]:
             st.session_state["user_id"] = user["id"]
             st.rerun()
           else:
-            st.error("اسم المستخدم أو كلمة المرور غير صحيحة!")
-        except Exception as e:
-          st.error(f"خطأ في الاتصال بقاعدة البيانات: {e}")
+            st.error("خطأ في اسم المستخدم أو كلمة المرور!")
   st.stop()
 
-# --- القائمة الرئيسية لوحة التحكم ---
-st.sidebar.title(
-    f"مرحباً: {st.session_state['username']} ({st.session_state['role']})"
-)
-menu = ["الرئيسية"]
+# --- القائمة الجانبية العصرية ---
+st.sidebar.markdown(f"### 👤 المستخدم: {st.session_state['username']}")
+st.sidebar.markdown(f"**الصلاحية:** `{st.session_state['role']}`")
+st.sidebar.markdown("---")
+
+menu = ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)"]
 
 if st.session_state["role"] == "Admin":
   menu.extend([
-      "إضافة شركات وفروع",
-      "إدارة المستخدمين",
-      "استيراد وتوزيع الأصناف",
-      "تقارير المخازن",
-      "التحميص والخلط والتصنيع",
-      "نقطة البيع (POS)",
+      "🏢 إدارة الشركات والفروع",
+      "👥 إدارة المستخدمين",
+      "📁 استيراد وتوزيع الأصناف",
+      "📊 تقارير المخازن الشاملة",
+      "🥜 التحميص والخلط والتصنيع",
   ])
-elif st.session_state["role"] == "Cashier":
-  menu.append("نقطة البيع (POS)")
 
-menu.append("تسجيل الخروج")
-choice = st.sidebar.radio("القائمة الرئيسية", menu)
+menu.append("🚪 تسجيل الخروج")
+choice = st.sidebar.selectbox("📂 القائمة الرئيسية", menu)
 
-if choice == "تسجيل الخروج":
+if choice == "🚪 تسجيل الخروج":
   st.session_state["logged_in"] = False
-  st.session_state["username"] = ""
-  st.session_state["role"] = ""
-  st.session_state["user_id"] = None
-  st.session_state["cart"] = []
   st.rerun()
 
-elif choice == "الرئيسية":
-  st.title("🏢 مجموعة أبو زيد التجارية - لوحة الإدارة السحابية")
-  st.success("النظام يعمل بكامل ملامحه وأقسامه المخصصة للمخامص والمبيعات.")
+elif choice == "🏠 الرئيسية واللوحة":
+  st.title("🏢 مجموعة أبو زيد التجارية - لوحة التحكم السحابية")
+  st.markdown(
+      "مرحباً بك في النظام السحابي المطور لإدارة المخامص والمبيعات بكفاءة"
+      " عالية."
+  )
 
-elif choice == "إضافة شركات وفروع":
-  st.header("🏢 إدارة الشركات والفروع")
+  # عرض بطاقات إحصائية ملونة (Cards) بشكل عصري جداً
+  c1, c2, c3 = st.columns(3)
+  with c1:
+    st.markdown(
+        """<div class="card" style="background-color: #2563eb;"><h3>🏢 الشركات</h3><p>إدارة"
+        " الشركات والفروع</p></div>""",
+        unsafe_allow_html=True,
+    )
+  with c2:
+    st.markdown(
+        """<div class="card" style="background-color: #059669;"><h3>📊 المخازن</h3><p>تتبع"
+        " الأصناف والأسعار</p></div>""",
+        unsafe_allow_html=True,
+    )
+  with c3:
+    st.markdown(
+        """<div class="card" style="background-color: #ea580c;"><h3>🥜 التحميص والخلط</h3><p>حساب"
+        " الفاقد والمكسرات</p></div>""",
+        unsafe_allow_html=True,
+    )
+
+elif choice == "🏢 إدارة الشركات والفروع":
+  st.header("🏢 إدارة الشركات والفروع واللوجو")
   col1, col2 = st.columns(2)
   with col1:
-    st.subheader("إضافة شركة")
+    st.subheader("إضافة شركة جديدة")
     c_name = st.text_input("اسم الشركة")
     c_title = st.text_input("الاسم الرسمي للفاتورة")
-    if st.button("حفظ الشركة"):
+    logo_file = st.file_uploader("شعار الشركة (اللوجو)", type=["png", "jpg", "jpeg"])
+    if st.button("💾 حفظ الشركة"):
       if c_name and c_title:
+        logo_path = ""
+        if logo_file:
+          logo_path = os.path.join("company_logos", logo_file.name)
+          with open(logo_path, "wb") as f:
+            f.write(logo_file.getbuffer())
         conn = get_db_connection()
         conn.execute(
-            "INSERT INTO companies (company_name, company_title) VALUES (?, ?)",
-            (c_name, c_title),
+            "INSERT INTO companies (company_name, company_title, logo_path)"
+            " VALUES (?, ?, ?)",
+            (c_name, c_title, logo_path),
         )
         conn.commit()
         conn.close()
         st.success("تم حفظ الشركة بنجاح!")
   with col2:
-    st.subheader("إضافة فرع")
+    st.subheader("إضافة فرع جديد")
     conn = get_db_connection()
     comps = conn.execute("SELECT id, company_name FROM companies").fetchall()
     conn.close()
     comps_dict = {c["company_name"]: c["id"] for c in comps}
-    sel_c = st.selectbox("اختر الشركة التابع لها الفرع", list(comps_dict.keys()))
+    sel_c = st.selectbox("اختر الشركة", list(comps_dict.keys()))
     b_name = st.text_input("اسم الفرع / المخزن")
-    if st.button("حفظ الفرع"):
+    if st.button("💾 حفظ الفرع"):
       if sel_c and b_name:
         conn = get_db_connection()
         conn.execute(
@@ -196,8 +237,8 @@ elif choice == "إضافة شركات وفروع":
         conn.close()
         st.success("تم حفظ الفرع بنجاح!")
 
-elif choice == "إدارة المستخدمين":
-  st.header("👥 إدارة المستخدمين وصلاحيات الفروع")
+elif choice == "👥 إدارة المستخدمين":
+  st.header("👥 إدارة المستخدمين والصلاحيات")
   with st.form("user_form"):
     u = st.text_input("اسم المستخدم")
     p = st.text_input("كلمة المرور", type="password")
@@ -215,15 +256,15 @@ elif choice == "إدارة المستخدمين":
         conn.close()
         st.success("تم إضافة المستخدم بنجاح!")
 
-elif choice == "استيراد وتوزيع الأصناف":
-  st.header("📁 استيراد وتوزيع الأصناف عبر الإكسيل")
+elif choice == "📁 استيراد وتوزيع الأصناف":
+  st.header("📁 استيراد الأصناف عبر الإكسيل")
   conn = get_db_connection()
   comps = conn.execute("SELECT id, company_name FROM companies").fetchall()
   conn.close()
   comps_dict = {c["company_name"]: c["id"] for c in comps}
   sel_comp = st.selectbox("اختر الشركة", list(comps_dict.keys()))
-  up_file = st.file_uploader("اختر ملف إكسيل الأصناف", type=["xlsx", "xls"])
-  if up_file and st.button("استيراد"):
+  up_file = st.file_uploader("ملف الإكسيل", type=["xlsx", "xls"])
+  if up_file and st.button("📥 بدء الاستيراد"):
     df = pd.read_excel(up_file)
     conn = get_db_connection()
     cur = conn.cursor()
@@ -239,9 +280,9 @@ elif choice == "استيراد وتوزيع الأصناف":
         )
     conn.commit()
     conn.close()
-    st.success("تم استيراد الأصناف بنجاح!")
+    st.success("تم الاستيراد بنجاح!")
 
-elif choice == "تقارير المخازن":
+elif choice == "📊 تقارير المخازن الشاملة":
   st.header("📊 تقارير المخازن والأصناف")
   conn = get_db_connection()
   df = pd.read_sql(
@@ -257,26 +298,24 @@ elif choice == "تقارير المخازن":
   conn.close()
   st.dataframe(df, use_container_width=True)
 
-elif choice == "التحميص والخلط والتصنيع":
-  st.header("🥜 إدارة عمليات التحميص، فاقد الوزن، وخلط المكسرات المشكلة")
-
+elif choice == "🥜 التحميص والخلط والتصنيع":
+  st.header("🥜 إدارة عمليات التحميص، الفاقد، وخلط المكسرات")
   tab1, tab2 = st.tabs(
       ["🔥 قسم التحميص وحساب الفاقد", "🥜 خلائط المكسرات المشكلة"]
   )
 
   with tab1:
-    st.subheader("تسجيل عملية تحميص (حساب الفاقد ورفع التكلفة تلقائياً)")
+    st.subheader("تسجيل عملية تحميص")
     conn = get_db_connection()
     branches = conn.execute("""
             SELECT branches.id, branches.branch_name, companies.company_name 
             FROM branches JOIN companies ON branches.company_id = companies.id
         """).fetchall()
     conn.close()
-
     branch_dict = {
         f"{b['company_name']} ➔ {b['branch_name']}": b["id"] for b in branches
     }
-    sel_b_roast = st.selectbox("اختر الفرع للتحميص", list(branch_dict.keys()))
+    sel_b_roast = st.selectbox("اختر الفرع", list(branch_dict.keys()))
 
     if sel_b_roast:
       b_id = branch_dict[sel_b_roast]
@@ -285,25 +324,19 @@ elif choice == "التحميص والخلط والتصنيع":
           "SELECT item_name, sale_price FROM items WHERE branch_id = ?", (b_id,)
       ).fetchall()
       conn.close()
-
       items_dict = {
-          f"{i['item_name']} (السعر: {i['sale_price']} د.ل)": i for i in items
+          f"{i['item_name']} ({i['sale_price']} د.ل)": i for i in items
       }
       sel_item = st.selectbox("اختر الصنف الخام", list(items_dict.keys()))
 
-      in_qty = st.number_input("الوزن الخام المرسل (كيلو)", min_value=0.1, value=10.0)
-      out_qty = st.number_input(
-          "الوزن الناتج الصافي بعد التحميص (كيلو)", min_value=0.1, value=8.5
-      )
-      new_roast_name = st.text_input(
-          "اسم الصنف الجديد بعد التحميص (مثال: لوز محمص)"
-      )
+      in_qty = st.number_input("الوزن الخام المرسل (كيلو)", value=10.0)
+      out_qty = st.number_input("الوزن الناتج بعد التحميص (كيلو)", value=8.5)
+      new_roast_name = st.text_input("اسم الصنف الجديد (مثال: لوز محمص)")
 
-      if st.button("تنفيذ عملية التحميص واحتساب التكلفة"):
+      if st.button("⚙️ تنفيذ التحميص وتحديث التكلفة"):
         if new_roast_name and sel_item:
           old_price = items_dict[sel_item]["sale_price"]
           new_unit_price = (in_qty * old_price) / out_qty
-
           conn = get_db_connection()
           conn.execute(
               "INSERT INTO items (branch_id, item_name, sale_price) VALUES (?, ?,"
@@ -313,23 +346,19 @@ elif choice == "التحميص والخلط والتصنيع":
           conn.commit()
           conn.close()
           st.success(
-              f"تم التحميص بنجاح! الوزن المفقود: {in_qty - out_qty} كجم | سعر الكيلو"
-              f" الجديد: {new_unit_price:.2f} د.ل"
+              f"تم التحميص بنجاح! سعر الكيلو الجديد: {new_unit_price:.2f} د.ل"
           )
 
   with tab2:
-    st.subheader("تكوين وتسعير أصناف المكسرات المشكلة (Blending)")
-    mix_name = st.text_input("اسم صنف المكسرات المشكلة الجديد")
-    total_cost = st.number_input(
-        "إجمالي تكلفة المكونات والتحميص (د.ل)", min_value=0.1, value=50.0
-    )
-    profit_margin = st.number_input("نسبة هامش الربح (%)", min_value=0.0, value=20.0)
+    st.subheader("تكوين المكسرات المشكلة (Mix Nuts)")
+    mix_name = st.text_input("اسم صنف المكسرات الجديد")
+    total_cost = st.number_input("إجمالي التكلفة (د.ل)", value=50.0)
+    profit_margin = st.number_input("نسبة هامش الربح (%)", value=20.0)
 
-    if st.button("اعتماد وإضافة الخليط للبيع"):
+    if st.button("✨ اعتماد الخليط كصنف جديد للبيع"):
       if mix_name:
         final_price = total_cost * (1 + (profit_margin / 100))
         conn = get_db_connection()
-        # يتم إضافته لأول فرع كمثال افتتاحي
         b_id = list(branch_dict.values())[0] if branch_dict else None
         conn.execute(
             "INSERT INTO items (branch_id, item_name, sale_price) VALUES (?, ?, ?)",
@@ -338,16 +367,14 @@ elif choice == "التحميص والخلط والتصنيع":
         conn.commit()
         conn.close()
         st.success(
-            f"تم اعتماد الخليط '{mix_name}' بنجاح بسعر بيع: {final_price:.2f} د.ل"
+            f"تم اعتماد '{mix_name}' بسعر بيع: {final_price:.2f} د.ل بنجاح!"
         )
 
-elif choice == "نقطة البيع (POS)":
+elif choice == "🛒 نقطة البيع (POS)":
   st.header("🛒 شاشة الكاشير ونقطة البيع")
-
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   conn.close()
-
   b_map = {b["branch_name"]: b["id"] for b in branches}
   sel_branch_pos = st.selectbox("اختر الفرع للبيع", list(b_map.keys()))
 
@@ -358,18 +385,13 @@ elif choice == "نقطة البيع (POS)":
         "SELECT item_name, sale_price FROM items WHERE branch_id = ?", (b_id,)
     ).fetchall()
     conn.close()
-
     items_options = {
         f"{i['item_name']} - {i['sale_price']} د.ل": i for i in branch_items
     }
 
     col1, col2 = st.columns([2, 1])
-
     with col1:
-      st.subheader("اختر الأصناف للإضافة إلى الفاتورة")
-      chosen_item = st.selectbox(
-          "قائمة الأصناف المتاحة", list(items_options.keys())
-      )
+      chosen_item = st.selectbox("الأصناف المتاحة", list(items_options.keys()))
       qty = st.number_input("الكمية", min_value=1, value=1)
       if st.button("➕ إضافة للسلة"):
         item_data = items_options[chosen_item]
@@ -382,20 +404,18 @@ elif choice == "نقطة البيع (POS)":
         st.success("تمت الإضافة للسلة")
 
     with col2:
-      st.subheader("🛒 سلة الفاتورة الحالية")
+      st.subheader("🛒 سلة الفاتورة")
       if st.session_state["cart"]:
         df_cart = pd.DataFrame(st.session_state["cart"])
         st.dataframe(df_cart[["name", "price", "qty", "total"]])
         grand_total = sum([x["total"] for x in st.session_state["cart"]])
-        st.metric("إجمالي الفاتورة", f"{grand_total:.2f} د.ل")
-
-        if st.button("🖨️ إتمام البيع وطباعة الفاتورة"):
-          st.success("تم إتمام الفاتورة وتسجيل المبيعات بنجاح!")
+        st.metric("الإجمالي النهائي", f"{grand_total:.2f} د.ل")
+        if st.button("🖨️ إتمام البيع"):
+          st.success("تم إتمام الفاتورة بنجاح!")
           st.session_state["cart"] = []
           st.rerun()
       else:
         st.info("السلة فارغة")
 
-# التوقيع الرسمي
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
