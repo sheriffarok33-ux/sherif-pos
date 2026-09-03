@@ -621,22 +621,22 @@ elif choice == "📊 التقارير الشاملة والمخازن":
               conn.commit(); log_action(st.session_state["user_id"], "تعديل مخزون", "تعديل بيانات الأصناف"); st.success("تم الحفظ!")
           st.download_button("📥 تصدير المخزون لـ Excel", data=to_excel(items_df), file_name="inventory.xlsx")
 
-  # --- شاشة توزيع ونقل المخزون بوضوح تام ---
+  # --- شاشة توزيع ونقل المخزون المدعومة بوضوح المخازن الرئيسية ---
   with tab5:
       st.subheader("🔄 توزيع ونقل المخزون (بين المخازن الرئيسية والشركات والفروع)")
       if not is_viewer:
           transfer_type = st.radio("نوع النقل:", ["نقل صنف محدد (فردي)", "نقل كافة الأصناف دفعة واحدة (شامل من المخزن الرئيسي)"])
           
-          # جلب كافة الشركات وتسميتها بوضوح تام كـ "المخزن الرئيسي للشركة"
+          # جلب كافة الشركات لكي تظهر بوضوح تام كـ "المخزن الرئيسي"
           all_companies_list = conn.execute("SELECT id, company_name FROM companies").fetchall()
-          all_c_dict = {f"🏢 مخزن شركة: {c['company_name']} (الرئيسي)": c["id"] for c in all_companies_list}
+          all_c_dict = {f"🏢 مخزن شركة: {c['company_name']} (المخزن الرئيسي للشركة الأم)": c["id"] for c in all_companies_list}
           
           if transfer_type == "نقل صنف محدد (فردي)" and not items_df.empty:
               item_ids = items_df["id"].tolist()
               sel_item_id = st.selectbox("اختر الصنف:", item_ids, format_func=lambda x: f"[{items_df[items_df['id'] == x]['الكود'].values[0]}] {items_df[items_df['id'] == x]['الصنف'].values[0]} | المصدر: {items_df[items_df['id'] == x]['الشركة'].values[0]} - {items_df[items_df['id'] == x]['الفرع'].values[0]} | متاح: {items_df[items_df['id'] == x]['الكمية'].values[0]}")
               
               col_dest1, col_dest2 = st.columns(2)
-              with col_dest1: target_comp_label = st.selectbox("إلى شركة:", list(all_c_dict.keys()), key="tc1")
+              with col_dest1: target_comp_label = st.selectbox("إلى شركة / جهة:", list(all_c_dict.keys()), key="tc1")
               target_comp_id = all_c_dict[target_comp_label] if target_comp_label else None
               
               with col_dest2:
