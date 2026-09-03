@@ -121,8 +121,10 @@ def to_excel(df):
     return output.getvalue()
 
 def get_allowed_companies(conn):
-    if st.session_state["role"] == "Admin": return conn.execute("SELECT id, company_name FROM companies").fetchall()
-    elif st.session_state["company_id"]: return conn.execute("SELECT id, company_name FROM companies WHERE id = ?", (st.session_state["company_id"],)).fetchall()
+    if st.session_state["role"] == "Admin": 
+        return conn.execute("SELECT id, company_name FROM companies").fetchall()
+    elif st.session_state["company_id"]: 
+        return conn.execute("SELECT id, company_name FROM companies WHERE id = ?", (st.session_state["company_id"],)).fetchall()
     return []
 
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
@@ -614,7 +616,7 @@ elif choice == "📊 التقارير الشاملة والمخازن":
               conn.commit(); log_action(st.session_state["user_id"], "تعديل مخزون", "تعديل بيانات الأصناف"); st.success("تم الحفظ!")
           st.download_button("📥 تصدير المخزون لـ Excel", data=to_excel(items_df), file_name="inventory.xlsx")
 
-  # --- شاشة توزيع ونقل المخزون المدعومة بالكامل ---
+  # --- شاشة توزيع ونقل المخزون الكاملة ---
   with tab5:
       st.subheader("🔄 توزيع ونقل المخزون (بين الشركات والفروع)")
       if not is_viewer:
@@ -622,11 +624,14 @@ elif choice == "📊 التقارير الشاملة والمخازن":
           
           if transfer_type == "نقل صنف محدد (فردي)" and not items_df.empty:
               item_ids = items_df["id"].tolist()
-              sel_item_id = st.selectbox("اختر الصنف:", item_ids, format_func=lambda x: f"[{items_df[items_df['id'] == x]['الكود'].values[0]}] {items_df[items_df['id'] == x]['الصنف'].values[0]} | المصدر: {items_df[items_df['id'] == x]['الشركة'].values[0]} - {items_df[items_df['id'] == x]['الفرع'].values[0]} | متاح: {items_df[items_df['id'] == x][' الكمية'].values[0] if ' الكمية' in items_df.columns else items_df[items_df['id'] == x]['الكمية'].values[0]}")
+              sel_item_id = st.selectbox("اختر الصنف:", item_ids, format_func=lambda x: f"[{items_df[items_df['id'] == x]['الكود'].values[0]}] {items_df[items_df['id'] == x]['الصنف'].values[0]} | المصدر: {items_df[items_df['id'] == x]['الشركة'].values[0]} - {items_df[items_df['id'] == x]['الفرع'].values[0]} | متاح: {items_df[items_df['id'] == x]['الكمية'].values[0]}")
               
               col_dest1, col_dest2 = st.columns(2)
-              if st.session_state["role"] == "Admin": t_comps = conn.execute("SELECT id, company_name FROM companies").fetchall()
-              else: t_comps = conn.execute("SELECT id, company_name FROM companies WHERE id=?", (st.session_state["company_id"],)).fetchall()
+              if st.session_state["role"] == "Admin": 
+                  t_comps = conn.execute("SELECT id, company_name FROM companies").fetchall()
+              else: 
+                  t_comps = conn.execute("SELECT id, company_name FROM companies WHERE id=?", (st.session_state["company_id"],)).fetchall()
+              
               c_dict = {c["company_name"]: c["id"] for c in t_comps}
               
               with col_dest1: target_comp_name = st.selectbox("إلى شركة:", list(c_dict.keys()), key="tc1")
@@ -655,7 +660,12 @@ elif choice == "📊 التقارير الشاملة والمخازن":
           elif transfer_type == "نقل كافة الأصناف دفعة واحدة (شامل)":
               st.markdown("**🎯 نقل كامل الأصناف دفعة واحدة (من الشركة الأم للشركات التابعة)**")
               col_src, col_dst = st.columns(2)
-              t_comps = conn.execute("SELECT id, company_name FROM companies" if st.session_state["role"]=="Admin" else "SELECT id, company_name FROM companies WHERE id=?", (None if st.session_state["role"]=="Admin" else st.session_state["company_id"],)).fetchall()
+              
+              if st.session_state["role"] == "Admin": 
+                  t_comps = conn.execute("SELECT id, company_name FROM companies").fetchall()
+              else: 
+                  t_comps = conn.execute("SELECT id, company_name FROM companies WHERE id=?", (st.session_state["company_id"],)).fetchall()
+              
               c_dict = {c["company_name"]: c["id"] for c in t_comps}
               
               with col_src:
@@ -811,8 +821,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                     refund_total = item_data_ret['sale_price'] * ret_qty
                     conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, shift_status) VALUES (?, ?, ?, 'open')", (b_id, st.session_state["user_id"], -refund_total))
                     conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (ret_qty, item_data_ret['id']))
-                    conn.commit(); st.session_state["un_auth"] = False if "un_auth" in st.session_state else None
-                    st.session_state["return_auth"] = False; log_action(st.session_state["user_id"], "مرتجع POS", f"إرجاع صنف بخصم {refund_total}"); st.success("تم الإرجاع بنجاح."); st.rerun()
+                    conn.commit(); st.session_state["return_auth"] = False; log_action(st.session_state["user_id"], "مرتجع POS", f"إرجاع صنف بخصم {refund_total}"); st.success("تم الإرجاع بنجاح."); st.rerun()
 
   with tab3:
     open_sales = conn.execute("SELECT SUM(total_amount) as total FROM invoices WHERE branch_id = ? AND shift_status = 'open'", (b_id,)).fetchone()
@@ -832,6 +841,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                         conn.execute("UPDATE invoices SET shift_status = 'closed' WHERE branch_id = ? AND shift_status = 'open'", (b_id,))
                         conn.execute("UPDATE treasuries SET balance = balance + ? WHERE id = ?", (shift_total, t_id_z))
                         conn.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, 'إيداع', ?, 'إغلاق وردية Z-READ')", (t_id_z, st.session_state["user_id"], shift_total))
+        
                         conn.commit(); log_action(st.session_state["user_id"], "إغلاق وردية", "تم تنفيذ Z-Read وإيداع المبالغ"); st.success("تم الترحيل بنجاح!"); st.rerun()
                     else: st.info("الوردية مصفرة بالفعل.")
   conn.close()
