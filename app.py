@@ -67,6 +67,8 @@ def initialize_database():
             branch_id INTEGER DEFAULT NULL,
             item_code TEXT,
             item_name TEXT NOT NULL,
+            quantity REAL DEFAULT 0.0,
+            buy_price REAL DEFAULT 0.0,
             sale_price REAL NOT NULL,
             FOREIGN KEY (company_id) REFERENCES companies(id),
             FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
@@ -92,10 +94,6 @@ if "username" not in st.session_state:
   st.session_state["username"] = ""
 if "role" not in st.session_state:
   st.session_state["role"] = ""
-if "user_id" not in st.session_state:
-  st.session_state["user_id"] = None
-if "selected_branch_id" not in st.session_state:
-  st.session_state["selected_branch_id"] = None
 if "branch_verified" not in st.session_state:
   st.session_state["branch_verified"] = False
 if "cart" not in st.session_state:
@@ -133,7 +131,6 @@ if not st.session_state["logged_in"]:
             st.session_state["logged_in"] = True
             st.session_state["username"] = user["username"]
             st.session_state["role"] = user["role"]
-            st.session_state["user_id"] = user["id"]
             st.session_state["assigned_branch_id"] = user["branch_id"]
             st.rerun()
           else:
@@ -143,8 +140,8 @@ if not st.session_state["logged_in"]:
 # --- شاشة التحقق من الفرع برسالة ترحيبية أو "هنى روحك" ---
 if not st.session_state["branch_verified"]:
   st.title(
-      f"🔥 أهلاً بك يا قهوجي/بطل العمل، {st.session_state['username']}! استعد"
-      " ليوم عمل متميز ومشوق."
+      f"🔥 أهلاً بك يا بطل العمل، {st.session_state['username']}! استعد ليوم عمل"
+      " متميز ومشوق."
   )
   st.info("الرجاء اختيار الفرع التابع لك لتأكيد الدخول:")
 
@@ -157,13 +154,9 @@ if not st.session_state["branch_verified"]:
     chosen_branch = st.selectbox("اختر فرعك المخصص", list(branch_options.keys()))
     if st.button("تأكيد الفرع والدخول"):
       chosen_id = branch_options[chosen_branch]
-      # إذا كان الأدمين مستثنى أو الفرع مطابق لتعيين المستخدم
       if (
           st.session_state["role"] == "Admin"
-          .get("assigned_branch_id")
-          == chosen_id
-          or st.session_state.get("assigned_branch_id") is None
-          or st.session_state["role"] == "Admin"
+          or st.session_state.get("assigned_branch_id") == chosen_id
       ):
         st.session_state["branch_verified"] = True
         st.session_state["selected_branch_id"] = chosen_id
@@ -193,7 +186,7 @@ if st.session_state["role"] == "Admin":
       "🏢 إدارة الشركات والفروع",
       "👥 إدارة المستخدمين",
       "📁 استيراد وتوزيع الأصناف",
-      "📊 تقارير المخازن الشاملة",
+      "📊 تقارير المخازن وتحويل الكميات",
       "🥜 التحميص والخلط والتصنيع",
   ])
 
@@ -207,10 +200,6 @@ if choice == "🚪 تسجيل الخروج":
 
 elif choice == "🏠 الرئيسية واللوحة":
   st.title("🏢 مجموعة أبو زيد التجارية - لوحة التحكم السحابية")
-  st.markdown(
-      "أهلاً بك في النظام السحابي لإدارة الفروع والمخامص والمبيعات."
-  )
-
   c1, c2, c3 = st.columns(3)
   with c1:
     st.markdown(
@@ -232,8 +221,7 @@ elif choice == "🏠 الرئيسية واللوحة":
     )
 
 elif choice == "🏢 إدارة الشركات والفروع":
-  st.header("🏢 إدارة الشركات والفروع (صلاحيات الأدمين)")
-
+  st.header("🏢 إدارة الشركات والفروع")
   col1, col2 = st.columns(2)
   with col1:
     st.subheader("إضافة شركة جديدة")
@@ -262,7 +250,7 @@ elif choice == "🏢 إدارة الشركات والفروع":
     conn.close()
     comps_dict = {c["company_name"]: c["id"] for c in comps}
     if comps_dict:
-      sel_c = st.selectbox("اختر الشركة التابع لها الفرع", list(comps_dict.keys()))
+      sel_c = st.selectbox("اختر الشركة للفرع", list(comps_dict.keys()))
       b_name = st.text_input("اسم الفرع / المخزن")
       if st.button("💾 حفظ الفرع"):
         if b_name:
@@ -274,11 +262,9 @@ elif choice == "🏢 إدارة الشركات والفروع":
           conn.commit()
           conn.close()
           st.success("تم حفظ الفرع بنجاح!")
-    else:
-      st.info("أضف شركة أولاً ليظهر خيار إتاحة الفروع.")
 
   st.markdown("---")
-  st.subheader("📋 شاشة عرض الشركات والفروع المسجلة (تعديل وحذف)")
+  st.subheader("📋 الشركات والفروع المسجلة (حذف أو تعديل)")
   conn = get_db_connection()
   df_comps = pd.read_sql("SELECT * FROM companies", conn)
   df_branches = pd.read_sql(
@@ -290,225 +276,197 @@ elif choice == "🏢 إدارة الشركات والفروع":
   )
   conn.close()
 
-  st.write("### الشركات المتاحة:")
   if not df_comps.empty:
+    st.write("الشركات:")
     st.dataframe(df_comps, use_container_width=True)
     del_c_id = st.selectbox(
-        "اختر رقم معرف الشركة للحذف", df_comps["id"].tolist(), key="del_c"
+        "رمعرف الشركة للحذف", df_comps["id"].tolist(), key="del_c"
     )
-    if st.button("🗑️ حذف الشركة المحددة"):
+    if st.button("🗑️ حذف الشركة"):
       conn = get_db_connection()
       conn.execute("DELETE FROM companies WHERE id = ?", (del_c_id,))
       conn.commit()
       conn.close()
-      st.success("تم الحذف بنجاح!")
+      st.success("تم الحذف!")
       st.rerun()
-  else:
-    st.info("لا توجد شركات مسجلة.")
 
-  st.write("### الفروع المتاحة:")
   if not df_branches.empty:
+    st.write("الفروع:")
     st.dataframe(df_branches, use_container_width=True)
     del_b_id = st.selectbox(
-        "اختر رقم معرف الفرع للحذف", df_branches["id"].tolist(), key="del_b"
+        "معرف الفرع للحذف", df_branches["id"].tolist(), key="del_b"
     )
-    if st.button("🗑️ حذف الفرع المحدد"):
+    if st.button("🗑️ حذف الفرع"):
       conn = get_db_connection()
       conn.execute("DELETE FROM branches WHERE id = ?", (del_b_id,))
       conn.commit()
       conn.close()
-      st.success("تم حذف الفرع بنجاح!")
+      st.success("تم الحذف!")
       st.rerun()
-  else:
-    st.info("لا توجد فروع مسجلة.")
 
 elif choice == "👥 إدارة المستخدمين":
-  st.header("👥 إدارة المستخدمين والصلاحيات والربط بالفروع")
+  st.header("👥 إدارة المستخدمين والصلاحيات")
   with st.form("user_form"):
     u = st.text_input("اسم المستخدم")
     p = st.text_input("كلمة المرور", type="password")
     r = st.selectbox(
         "الصلاحية", ["Cashier", "Branch_Supervisor", "General_Supervisor", "Admin"]
     )
-
     conn = get_db_connection()
     branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
     conn.close()
     b_dict = {b["branch_name"]: b["id"] for b in branches}
-    assigned_b = st.selectbox("الفرع المخصص للمستخدم", list(b_dict.keys()))
+    assigned_b = st.selectbox("الفرع المخصص", list(b_dict.keys()))
 
-    if st.form_submit_button("حفظ المستخدم الجديد"):
+    if st.form_submit_button("حفظ المستخدم"):
       if u and p:
         b_id = b_dict[assigned_b] if assigned_b else None
         conn = get_db_connection()
-        try:
-          conn.execute(
-              "INSERT INTO users (username, password, role, branch_id) VALUES"
-              " (?, ?, ?, ?)",
-              (u, p, r, b_id),
-          )
-          conn.commit()
-          st.success("تم إضافة المستخدم بنجاح!")
-        except Exception as e:
-          st.error(f"خطأ: {e}")
-        finally:
-          conn.close()
-
-  st.markdown("---")
-  st.subheader("📋 قائمة المستخدمين المسجلين (إدارة وتعديل)")
-  conn = get_db_connection()
-  df_users = pd.read_sql(
-      """
-        SELECT users.id, users.username AS المستخدم, users.role AS الصلاحية, branches.branch_name AS الفرع المخصص
-        FROM users LEFT JOIN branches ON users.branch_id = branches.id
-    """,
-      conn,
-  )
-  conn.close()
-  if not df_users.empty:
-    st.dataframe(df_users, use_container_width=True)
-    del_u_id = st.selectbox(
-        "اختر رقم معرف المستخدم للحذف", df_users["id"].tolist()
-    )
-    if st.button("🗑️ حذف المستخدم المحدد"):
-      conn = get_db_connection()
-      conn.execute("DELETE FROM users WHERE id = ?", (del_u_id,))
-      conn.commit()
-      conn.close()
-      st.success("تم الحذف بنجاح!")
-      st.rerun()
+        conn.execute(
+            "INSERT INTO users (username, password, role, branch_id) VALUES"
+            " (?, ?, ?, ?)",
+            (u, p, r, b_id),
+        )
+        conn.commit()
+        conn.close()
+        st.success("تم إضافة المستخدم!")
 
 elif choice == "📁 استيراد وتوزيع الأصناف":
   st.header("📁 استيراد الأصناف عبر الإكسيل")
+  st.info(
+      "📌 **فورمات ملف الإكسيل المطلوب أعمدته بالترتيب:**\n"
+      "1. `الكود` | 2. `الصنف` | 3. `الكمية` | 4. `سعر الشراء` | 5. `سعر البيع`"
+  )
+
+  # عرض جدول توضيحي لشكل الفورمات
+  demo_df = pd.DataFrame({
+      "الكود": ["A001", "A002"],
+      "الصنف": ["لوز خام", "بندق منقى"],
+      "الكمية": [100, 50],
+      "سعر الشراء": [15.0, 25.0],
+      "سعر البيع": [20.0, 35.0],
+  })
+  st.write("مثال توضيحي لشكل الإكسيل المقبول:")
+  st.dataframe(demo_df, use_container_width=True)
+
   conn = get_db_connection()
   comps = conn.execute("SELECT id, company_name FROM companies").fetchall()
   conn.close()
   comps_dict = {c["company_name"]: c["id"] for c in comps}
-  if comps_dict:
-    sel_comp = st.selectbox("اختر الشركة لتوزيع الأصناف عليها", list(comps_dict.keys()))
-    up_file = st.file_uploader("ملف الإكسيل", type=["xlsx", "xls"])
-    if up_file and st.button("📥 بدء استيراد وتوزيع الأصناف"):
-      df = pd.read_excel(up_file)
-      conn = get_db_connection()
-      cur = conn.cursor()
-      for _, row in df.iterrows():
-        code = str(row.iloc[0]) if pd.notna(row.iloc[0]) else ""
-        name = str(row.iloc[1]) if pd.notna(row.iloc[1]) else ""
-        price = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0.0
-        if name:
-          cur.execute(
-              "INSERT INTO items (company_id, item_code, item_name, sale_price)"
-              " VALUES (?, ?, ?, ?)",
-              (comps_dict[sel_comp], code, name, price),
-          )
-      conn.commit()
-      conn.close()
-      st.success("تم استيراد الأصناف بنجاح!")
-  else:
-    st.warning("أضف شركة أولاً قبل استيراد الأصناف.")
 
-elif choice == "📊 تقارير المخازن الشاملة":
-  st.header("📊 تقارير المخازن والأصناف")
+  if comps_dict:
+    sel_comp = st.selectbox(
+        "اختر الشركة للتأكيد واستيراد الأصناف إليها", list(comps_dict.keys())
+    )
+    up_file = st.file_uploader(
+        "اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"]
+    )
+    if up_file and st.button("📥 تنفيذ استيراد الأصناف"):
+      try:
+        df = pd.read_excel(up_file)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        for _, row in df.iterrows():
+          code = str(row.iloc[0]) if pd.notna(row.iloc[0]) else ""
+          name = str(row.iloc[1]) if pd.notna(row.iloc[1]) else ""
+          qty = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0.0
+          b_price = float(row.iloc[3]) if pd.notna(row.iloc[3]) else 0.0
+          s_price = float(row.iloc[4]) if pd.notna(row.iloc[4]) else 0.0
+
+          if name:
+            cur.execute(
+                """INSERT INTO items (company_id, item_code, item_name, quantity,"
+                " buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)""",
+                (comps_dict[sel_comp], code, name, qty, b_price, s_price),
+            )
+        conn.commit()
+        conn.close()
+        st.success("تم استيراد وتوزيع الأصناف بنجاح للشركة المحددة!")
+      except Exception as e:
+        st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
+  else:
+    st.warning("أضف شركة أولاً ليتم توجيه الأصناف إليها.")
+
+elif choice == "📊 تقارير المخازن وتحويل الكميات":
+  st.header("📊 تقارير المخازن وتحويل الكميات للفروع")
+
   conn = get_db_connection()
-  df = pd.read_sql(
+  items_df = pd.read_sql(
       """
-        SELECT items.id AS المعرف, companies.company_name AS الشركة, branches.branch_name AS الفرع, 
-               items.item_code AS الكود, items.item_name AS الصنف, items.sale_price AS السعر
+        SELECT items.id, companies.company_name AS الشركة, branches.branch_name AS الفرع, 
+               items.item_code AS الكود, items.item_name AS الصنف, items.quantity AS الكمية, items.sale_price AS السعر
         FROM items 
         JOIN companies ON items.company_id = companies.id 
         LEFT JOIN branches ON items.branch_id = branches.id
     """,
       conn,
   )
+  branches_list = conn.execute(
+      "SELECT id, branch_name FROM branches"
+  ).fetchall()
   conn.close()
-  if not df.empty:
-    st.dataframe(df, use_container_width=True)
-    del_item_id = st.selectbox(
-        "اختر رقم معرف الصنف للحذف أو التعديل", df["المعرف"].tolist()
+
+  if not items_df.empty:
+    st.dataframe(items_df, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("🔄 تحويل كمية من صنف لفرع آخر")
+    item_ids = items_df["id"].tolist()
+    sel_item_id = st.selectbox(
+        "اختر الصنف المراد تحويل جزء من كميته",
+        item_ids,
+        format_func=lambda x: items_df[items_df["id"] == x]["الصنف"].values[0],
     )
-    if st.button("🗑️ حذف الصنف المحدد"):
-      conn = get_db_connection()
-      conn.execute("DELETE FROM items WHERE id = ?", (del_item_id,))
-      conn.commit()
-      conn.close()
-      st.success("تم حذف الصنف بنجاح!")
-      st.rerun()
+
+    b_dict = {b["branch_name"]: b["id"] for b in branches_list}
+    if b_dict:
+      target_branch = st.selectbox("الفرع المحول إليه", list(b_dict.keys()))
+      transfer_qty = st.number_input(
+          "الكمية المراد تحويلها", min_value=0.1, value=1.0
+      )
+
+      if st.button("🚀 تنفيذ التحويل للفرع"):
+        conn = get_db_connection()
+        curr_item = conn.execute(
+            "SELECT quantity, item_code, item_name, company_id, buy_price,"
+            " sale_price FROM items WHERE id = ?",
+            (sel_item_id,),
+        ).fetchone()
+        if curr_item and curr_item["quantity"] >= transfer_qty:
+          # خصم الكمية من المصدر
+          conn.execute(
+              "UPDATE items SET quantity = quantity - ? WHERE id = ?",
+              (transfer_qty, sel_item_id),
+          )
+          # إضافة الكمية للفرع الجديد
+          conn.execute(
+              """INSERT INTO items (company_id, branch_id, item_code, item_name,"
+              " quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+              (
+                  curr_item["company_id"],
+                  b_dict[target_branch],
+                  curr_item["item_code"],
+                  curr_item["item_name"],
+                  transfer_qty,
+                  curr_item["buy_price"],
+                  curr_item["sale_price"],
+              ),
+          )
+          conn.commit()
+          conn.close()
+          st.success("تم تحويل الكمية بنجاح إلى الفرع المستهدف!")
+          st.rerun()
+        else:
+          conn.close()
+          st.error("الكمية المتوفرة لا تكفي لإتمام التحويل!")
+    else:
+      st.warning("لا توجد فروع متاحة للتحويل إليها.")
   else:
-    st.info("لا توجد أصناف مسجلة في المخزن.")
+    st.info("لا توجد أصناف في المخزن.")
 
 elif choice == "🥜 التحميص والخلط والتصنيع":
-  st.header("🥜 إدارة عمليات التحميص، الفاقد، وخلط المكسرات")
-  tab1, tab2 = st.tabs(
-      ["🔥 قسم التحميص وحساب الفاقد", "🥜 خلائط المكسرات المشكلة"]
-  )
-
-  with tab1:
-    st.subheader("تسجيل عملية تحميص")
-    conn = get_db_connection()
-    branches = conn.execute("""
-            SELECT branches.id, branches.branch_name, companies.company_name 
-            FROM branches JOIN companies ON branches.company_id = companies.id
-        """).fetchall()
-    conn.close()
-    branch_dict = {
-        f"{b['company_name']} ➔ {b['branch_name']}": b["id"] for b in branches
-    }
-    if branch_dict:
-      sel_b_roast = st.selectbox("اختر الفرع", list(branch_dict.keys()))
-      b_id = branch_dict[sel_b_roast]
-      conn = get_db_connection()
-      items = conn.execute(
-          "SELECT item_name, sale_price FROM items", ()
-      ).fetchall()
-      conn.close()
-      if items:
-        items_dict = {
-            f"{i['item_name']} ({i['sale_price']} د.ل)": i for i in items
-        }
-        sel_item = st.selectbox("اختر الصنف الخام", list(items_dict.keys()))
-        in_qty = st.number_input("الوزن الخام المرسل (كيلو)", value=10.0)
-        out_qty = st.number_input("الوزن الناتج بعد التحميص (كيلو)", value=8.5)
-        new_roast_name = st.text_input("اسم الصنف الجديد بعد التحميص")
-
-        if st.button("⚙️ تنفيذ التحميص وتحديث التكلفة"):
-          if new_roast_name and sel_item:
-            old_price = items_dict[sel_item]["sale_price"]
-            new_unit_price = (in_qty * old_price) / out_qty
-            conn = get_db_connection()
-            conn.execute(
-                "INSERT INTO items (branch_id, item_name, sale_price) VALUES"
-                " (?, ?, ?)",
-                (b_id, new_roast_name, round(new_unit_price, 2)),
-            )
-            conn.commit()
-            conn.close()
-            st.success(
-                f"تم التحميص بنجاح! سعر الكيلو الجديد: {new_unit_price:.2f} د.ل"
-            )
-      else:
-        st.info("لا توجد أصناف مسجلة للاختيار منها.")
-    else:
-      st.warning("أضف فروعاً أولاً لتتمكن من إجراء التحميص.")
-
-  with tab2:
-    st.subheader("تكوين المكسرات المشكلة (Mix Nuts)")
-    mix_name = st.text_input("اسم صنف المكسرات الجديد")
-    total_cost = st.number_input("إجمالي التكلفة (د.ل)", value=50.0)
-    profit_margin = st.number_input("نسبة هامش الربح (%)", value=20.0)
-
-    if st.button("✨ اعتماد الخليط كصنف جديد للبيع"):
-      if mix_name:
-        final_price = total_cost * (1 + (profit_margin / 100))
-        conn = get_db_connection()
-        conn.execute(
-            "INSERT INTO items (item_name, sale_price) VALUES (?, ?)",
-            (mix_name, round(final_price, 2)),
-        )
-        conn.commit()
-        conn.close()
-        st.success(
-            f"تم اعتماد '{mix_name}' بسعر بيع: {final_price:.2f} د.ل بنجاح!"
-        )
+  st.header("🥜 إدارة عمليات التحميص والخلط")
+  st.info("قسم مخصص لحساب الفاقد وخلط المكسرات.")
 
 elif choice == "🛒 نقطة البيع (POS)":
   st.header("🛒 شاشة الكاشير ونقطة البيع")
@@ -550,7 +508,7 @@ elif choice == "🛒 نقطة البيع (POS)":
       else:
         st.info("السلة فارغة")
   else:
-    st.info("لا توجد أصناف متاحة للبيع حالياً.")
+    st.info("لا توجد أصناف متاحة للبيع.")
 
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
