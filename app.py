@@ -134,7 +134,7 @@ def process_barcode():
             })
     st.session_state.barcode_scan = ""
 
-# --- تسجيل الدخول (مع زر طوارئ لإنشاء أول أدمن إذا قاعدة البيانات فارغة) ---
+# --- تسجيل الدخول (مع قفل أمني ذكي لزر الطوارئ) ---
 if not st.session_state["logged_in"]:
   col1, col2, col3 = st.columns([1, 2, 1])
   with col2:
@@ -142,19 +142,19 @@ if not st.session_state["logged_in"]:
     st.title("🔐 بوابة الدخول")
     st.subheader("مجموعة أبو زيد التجارية (القابضة)")
     
-    # فحص هل يوجد أي مستخدم أدمن في القاعدة أم لا
     conn_chk = get_db_connection()
     admin_check = conn_chk.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin'").fetchone()[0]
     conn_chk.close()
     
+    # زر الطوارئ يظهر حصرياً إذا لم يكن هناك أي أدمن في قاعدة البيانات
     if admin_check == 0:
-        st.warning("⚠️ لا توجد حسابات مسجلة بصلاحية (مدير عام). انقر الزر أدناه لإنشاء حساب الأدمن الافتراضي فوراً:")
+        st.warning("⚠️ لا توجد حسابات أدمن مسجلة. انقر الزر أدناه لإنشاء حساب المدير العام أول مرة فقط:")
         if st.button("🛠️ إنشاء حساب الأدمن (admin / admin)"):
             conn_ins = get_db_connection()
             try:
                 conn_ins.execute("INSERT INTO users (username, password, role, is_active) VALUES ('admin', 'admin', 'Admin', 1)")
                 conn_ins.commit()
-                st.success("تم إنشاء حساب الأدمن بنجاح! قم بإدخاله بالأسفل للدخول.")
+                st.success("تم إنشاء الحساب بنجاح! قم بإدخاله بالأسفل للدخول.")
                 st.rerun()
             except Exception as e:
                 st.error(f"خطأ: {e}")
