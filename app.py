@@ -134,13 +134,33 @@ def process_barcode():
             })
     st.session_state.barcode_scan = ""
 
-# --- تسجيل الدخول (يعتمد حصرياً على قاعدة البيانات الأمنية) ---
+# --- تسجيل الدخول (مع زر طوارئ لإنشاء أول أدمن إذا قاعدة البيانات فارغة) ---
 if not st.session_state["logged_in"]:
   col1, col2, col3 = st.columns([1, 2, 1])
   with col2:
     st.markdown("<br><br><br>", unsafe_allow_html=True)
     st.title("🔐 بوابة الدخول")
     st.subheader("مجموعة أبو زيد التجارية (القابضة)")
+    
+    # فحص هل يوجد أي مستخدم أدمن في القاعدة أم لا
+    conn_chk = get_db_connection()
+    admin_check = conn_chk.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin'").fetchone()[0]
+    conn_chk.close()
+    
+    if admin_check == 0:
+        st.warning("⚠️ لا توجد حسابات مسجلة بصلاحية (مدير عام). انقر الزر أدناه لإنشاء حساب الأدمن الافتراضي فوراً:")
+        if st.button("🛠️ إنشاء حساب الأدمن (admin / admin)"):
+            conn_ins = get_db_connection()
+            try:
+                conn_ins.execute("INSERT INTO users (username, password, role, is_active) VALUES ('admin', 'admin', 'Admin', 1)")
+                conn_ins.commit()
+                st.success("تم إنشاء حساب الأدمن بنجاح! قم بإدخاله بالأسفل للدخول.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"خطأ: {e}")
+            finally:
+                conn_ins.close()
+
     with st.form("login_form"):
       u_name = st.text_input("اسم المستخدم")
       u_pass = st.text_input("كلمة المرور", type="password")
@@ -279,7 +299,7 @@ elif choice == "🏢 إدارة الشركات والفروع":
                   conn.commit(); log_action(st.session_state["user_id"], "إضافة فرع", f"تم إضافة فرع {b_name} للشركة {sel_c}"); st.success("تم الحفظ!"); st.rerun()
 
   st.markdown("---")
-  st.subheader("🌲 هيكل المجموعة (الشركات وتحت كل شركة فروعها)")
+  st.subheader("📋 الهيكل التنظيمي للمجموعة")
   for comp in comps:
       st.markdown(f"### 📁 شركة التابعة: **{comp['company_name']}**")
       branches_df = pd.read_sql("SELECT id, branch_name AS 'اسم الفرع' FROM branches WHERE company_id = ?", conn, params=(comp["id"],))
@@ -664,7 +684,7 @@ elif choice == "📊 التقارير الشاملة والمخازن":
           with c2: st.download_button("📥 تصدير المبيعات لـ Excel", data=to_excel(invoices_df), file_name="sales.xlsx")
 
   with tab3:
-      expenses_df = pd.read_sql(f"SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON expenses.company_id = companies.id LEFT JOIN users ON expenses.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id {comp_filter}", conn, params=params)
+      expenses_df = pd.read_sql(f"SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON expenses.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id {comp_filter}", conn, params=params)
       if not expenses_df.empty:
           edited_exp = st.data_editor(expenses_df, disabled=(st.session_state["role"] == "Cashier"), hide_index=True, key="exp_editor")
           c1, c2 = st.columns(2)
