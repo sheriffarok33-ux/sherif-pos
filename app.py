@@ -462,23 +462,24 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
 
   conn = get_db_connection()
   
-  # جلب كل الشركات المتاحة للأدمن أو لمدير الشركة للاستيراد
   if st.session_state["role"] == "Admin":
       all_companies = conn.execute("SELECT id, company_name FROM companies").fetchall()
   else:
       all_companies = conn.execute("SELECT id, company_name FROM companies WHERE id = ?", (st.session_state["company_id"],)).fetchall()
   
-  comps_dict = {c["company_name"]: c["id"] for c in all_companies}
+  comps_dict = {f"🏢 {c['company_name']} (المخزن الرئيسي للشركة الأم)": c["id"] for c in all_companies}
   
   if comps_dict and not is_viewer:
-    sel_comp = st.selectbox("اختر الشركة (سينزل المخزون في المخزن الرئيسي للشركة)", list(comps_dict.keys()))
+    sel_comp_label = st.selectbox("اختر المخزن الرئيسي للشركة المستهدفة لاستيراد الأصناف:", list(comps_dict.keys()))
+    sel_comp_id = comps_dict[sel_comp_label]
+    
     import_mode = st.radio("طريقة الاستيراد:", ["🔄 تحديث وإضافة", "🚨 مسح كامل واستيراد جديد"])
     up_file = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
     if up_file and st.button("📥 تنفيذ استيراد الأصناف"):
       df = pd.read_excel(up_file, header=None)
       cur = conn.cursor()
       added_count = 0; updated_count = 0
-      if "مسح كامل" in import_mode: cur.execute("DELETE FROM items WHERE company_id = ? AND branch_id IS NULL", (comps_dict[sel_comp],)); conn.commit()
+      if "مسح كامل" in import_mode: cur.execute("DELETE FROM items WHERE company_id = ? AND branch_id IS NULL", (sel_comp_id,)); conn.commit()
       for idx, row in df.iterrows():
         try:
             if row.isna().all(): continue
@@ -491,19 +492,19 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
             s_price = safe_float(row.iloc[4] if len(row)>4 else 0.0)
             
             if "تحديث وإضافة" in import_mode:
-                if code != "": existing = cur.execute("SELECT id FROM items WHERE company_id = ? AND branch_id IS NULL AND (item_code = ? OR item_name = ?) LIMIT 1", (comps_dict[sel_comp], code, name)).fetchone()
-                else: existing = cur.execute("SELECT id FROM items WHERE company_id = ? AND branch_id IS NULL AND item_name = ? LIMIT 1", (comps_dict[sel_comp], name)).fetchone()
+                if code != "": existing = cur.execute("SELECT id FROM items WHERE company_id = ? AND branch_id IS NULL AND (item_code = ? OR item_name = ?) LIMIT 1", (sel_comp_id, code, name)).fetchone()
+                else: existing = cur.execute("SELECT id FROM items WHERE company_id = ? AND branch_id IS NULL AND item_name = ? LIMIT 1", (sel_comp_id, name)).fetchone()
                 if existing:
                     cur.execute("UPDATE items SET quantity = quantity + ?, buy_price = ?, sale_price = ? WHERE id = ?", (qty, b_price, s_price, existing["id"]))
                     updated_count += 1
                 else:
-                    cur.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, NULL, ?, ?, ?, ?, ?)", (comps_dict[sel_comp], code, name, qty, b_price, s_price))
+                    cur.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, NULL, ?, ?, ?, ?, ?)", (sel_comp_id, code, name, qty, b_price, s_price))
                     added_count += 1
             else:
-                cur.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, NULL, ?, ?, ?, ?, ?)", (comps_dict[sel_comp], code, name, qty, b_price, s_price))
+                cur.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, NULL, ?, ?, ?, ?, ?)", (sel_comp_id, code, name, qty, b_price, s_price))
                 added_count += 1
         except Exception: continue
-      conn.commit(); log_action(st.session_state["user_id"], "استيراد أصناف", f"استيراد لشركة {sel_comp}"); st.success("تم الاستيراد بنجاح إلى المخزن الرئيسي للشركة!")
+      conn.commit(); log_action(st.session_state["user_id"], "استيراد أصناف", f"استيراد للمخزن الرئيسي"); st.success("تم الاستيراد بنجاح إلى المخزن الرئيسي للشركة!")
   conn.close()
 
 elif choice == "🏦 إدارة الخزينة والبنوك":
@@ -620,23 +621,23 @@ elif choice == "📊 التقارير الشاملة والمخازن":
               conn.commit(); log_action(st.session_state["user_id"], "تعديل مخزون", "تعديل بيانات الأصناف"); st.success("تم الحفظ!")
           st.download_button("📥 تصدير المخزون لـ Excel", data=to_excel(items_df), file_name="inventory.xlsx")
 
-  # --- شاشة توزيع ونقل المخزون الكاملة ---
+  # --- شاشة توزيع ونقل المخزون بوضوح تام ---
   with tab5:
       st.subheader("🔄 توزيع ونقل المخزون (بين المخازن الرئيسية والشركات والفروع)")
       if not is_viewer:
           transfer_type = st.radio("نوع النقل:", ["نقل صنف محدد (فردي)", "نقل كافة الأصناف دفعة واحدة (شامل من المخزن الرئيسي)"])
           
-          # جلب كافة الشركات المسجلة في النظام لتظهر في القوائم (المخزن الرئيسي للشركة الأم والشركات التابعة)
+          # جلب كافة الشركات وتسميتها بوضوح تام كـ "المخزن الرئيسي للشركة"
           all_companies_list = conn.execute("SELECT id, company_name FROM companies").fetchall()
-          all_c_dict = {c["company_name"]: c["id"] for c in all_companies_list}
+          all_c_dict = {f"🏢 مخزن شركة: {c['company_name']} (الرئيسي)": c["id"] for c in all_companies_list}
           
           if transfer_type == "نقل صنف محدد (فردي)" and not items_df.empty:
               item_ids = items_df["id"].tolist()
-              sel_item_id = st.selectbox("اختر الصنف من المخزن الرئيسي:", item_ids, format_func=lambda x: f"[{items_df[items_df['id'] == x]['الكود'].values[0]}] {items_df[items_df['id'] == x]['الصنف'].values[0]} | المصدر: {items_df[items_df['id'] == x]['الشركة'].values[0]} - {items_df[items_df['id'] == x]['الفرع'].values[0]} | متاح: {items_df[items_df['id'] == x]['الكمية'].values[0]}")
+              sel_item_id = st.selectbox("اختر الصنف:", item_ids, format_func=lambda x: f"[{items_df[items_df['id'] == x]['الكود'].values[0]}] {items_df[items_df['id'] == x]['الصنف'].values[0]} | المصدر: {items_df[items_df['id'] == x]['الشركة'].values[0]} - {items_df[items_df['id'] == x]['الفرع'].values[0]} | متاح: {items_df[items_df['id'] == x]['الكمية'].values[0]}")
               
               col_dest1, col_dest2 = st.columns(2)
-              with col_dest1: target_comp_name = st.selectbox("إلى شركة / جهة:", list(all_c_dict.keys()), key="tc1")
-              target_comp_id = all_c_dict[target_comp_name] if target_comp_name else None
+              with col_dest1: target_comp_label = st.selectbox("إلى شركة:", list(all_c_dict.keys()), key="tc1")
+              target_comp_id = all_c_dict[target_comp_label] if target_comp_label else None
               
               with col_dest2:
                   if target_comp_id:
@@ -663,11 +664,11 @@ elif choice == "📊 التقارير الشاملة والمخازن":
               col_src, col_dst = st.columns(2)
               
               with col_src:
-                  source_comp_name = st.selectbox("📦 من (المخزن الرئيسي للشركة المصدرة / الأم):", list(all_c_dict.keys()), key="src_comp")
-                  source_comp_id = all_c_dict[source_comp_name] if source_comp_name else None
+                  source_comp_label = st.selectbox("📦 من (المخزن الرئيسي للشركة المصدرة / الأم):", list(all_c_dict.keys()), key="src_comp")
+                  source_comp_id = all_c_dict[source_comp_label] if source_comp_label else None
               with col_dst:
-                  target_comp_name = st.selectbox("🎯 إلى (مخزن الشركة المستهدفة / التابعة):", list(all_c_dict.keys()), key="dst_comp")
-                  target_comp_id = all_c_dict[target_comp_name] if target_comp_name else None
+                  target_comp_label = st.selectbox("🎯 إلى (مخزن الشركة المستهدفة / التابعة):", list(all_c_dict.keys()), key="dst_comp")
+                  target_comp_id = all_c_dict[target_comp_label] if target_comp_label else None
               
               if st.button("🚀 تنفيذ نقل كافة الأصناف دفعة واحدة", use_container_width=True, type="primary"):
                   if source_comp_id == target_comp_id: st.error("لا يمكن النقل لنفس الشركة!")
@@ -682,7 +683,7 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                               else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, NULL, ?, ?, ?, ?, ?)", (target_comp_id, s_item["item_code"], s_item["item_name"], s_item["quantity"], s_item["buy_price"], s_item["sale_price"]))
                               conn.execute("UPDATE items SET quantity = 0 WHERE id = ?", (s_item["id"],))
                               transferred_count += 1
-                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف من {source_comp_name} إلى {target_comp_name}"); st.success(f"تم نقل ({transferred_count}) صنف بنجاح إلى مخزن {target_comp_name}!"); st.rerun()
+                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف"); st.success(f"تم نقل ({transferred_count}) صنف بنجاح!"); st.rerun()
 
   with tab2:
       invoices_df = pd.read_sql(f"SELECT invoices.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', users.username AS 'الكاشير', invoices.total_amount AS 'المبلغ', invoices.shift_status AS 'الحالة', invoices.created_at AS 'التاريخ' FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id {comp_filter}", conn, params=params)
