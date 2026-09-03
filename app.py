@@ -49,14 +49,14 @@ def initialize_database():
   cursor.execute("CREATE TABLE IF NOT EXISTS companies (id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT UNIQUE NOT NULL, company_title TEXT NOT NULL, logo_path TEXT)")
   cursor.execute("CREATE TABLE IF NOT EXISTS branches (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_name TEXT NOT NULL, FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE)")
   
-  # جدول المستخدمين مع دعم رقم الهاتف وإلغاء قيد الـ UNIQUE على الاسم ل السماح بالتكرار
+  # جدول المستخدمين (مع إعادة هندسة الجدول لوقف قيود الـ CHECK القديمة وضمان مرونة الرتب)
   cursor.execute("""
-      CREATE TABLE IF NOT EXISTS users (
+      CREATE TABLE IF NOT EXISTS users_new (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           username TEXT NOT NULL,
           phone TEXT,
           password TEXT NOT NULL,
-          role TEXT CHECK(role IN ('Admin', 'General_Supervisor', 'Branch_Supervisor', 'Cashier', 'Viewer')) NOT NULL,
+          role TEXT NOT NULL,
           branch_id INTEGER,
           company_id INTEGER,
           is_active INTEGER DEFAULT 1,
@@ -65,6 +65,38 @@ def initialize_database():
       )
   """)
   
+  # نقل البيانات القديمة إن وجدت للجدول الجديد
+  cursor.execute("PRAGMA table_info(users)")
+  existing_table = cursor.fetchall()
+  if existing_table:
+      try:
+          cursor.execute("""
+              INSERT INTO users_new (id, username, phone, password, role, branch_id, company_id, is_active)
+              SELECT id, username, phone, password, role, branch_id, company_id, 
+              COALESCE((SELECT is_active FROM users u2 WHERE u2.id = users.id), 1)
+              FROM users
+          """)
+          cursor.execute("DROP TABLE users")
+          cursor.execute("ALTER TABLE users_new RENAME TO users")
+      except Exception:
+          pass
+  else:
+      cursor.execute("DROP TABLE IF EXISTS users_new")
+      cursor.execute("""
+          CREATE TABLE users (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              username TEXT NOT NULL,
+              phone TEXT,
+              password TEXT NOT NULL,
+              role TEXT NOT NULL,
+              branch_id INTEGER,
+              company_id INTEGER,
+              is_active INTEGER DEFAULT 1,
+              FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL,
+              FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL
+          )
+      """)
+
   cursor.execute("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_id INTEGER DEFAULT NULL, item_code TEXT, item_name TEXT NOT NULL, quantity REAL DEFAULT 0.0, buy_price REAL DEFAULT 0.0, sale_price REAL NOT NULL, FOREIGN KEY (company_id) REFERENCES companies(id), FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE)")
   cursor.execute("CREATE TABLE IF NOT EXISTS invoices (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, total_amount REAL, shift_status TEXT DEFAULT 'open', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
   cursor.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_id INTEGER, user_id INTEGER, treasury_id INTEGER, amount REAL NOT NULL, description TEXT NOT NULL, expense_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (company_id) REFERENCES companies(id), FOREIGN KEY (branch_id) REFERENCES branches(id))")
@@ -93,11 +125,6 @@ def initialize_database():
   try: cursor.execute("INSERT OR IGNORE INTO dict_expenses (name) VALUES ('رواتب وأجور'), ('إيجار الفرع'), ('كهرباء ومياه'), ('ضيافة ونثريات'), ('صيانة ومعدات'), ('مصروفات تسويق')")
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO dict_transactions (name) VALUES ('إيداع مبيعات الكاشير'), ('تغذية رصيد الخزينة/الدرج'), ('سحب أرباح للإدارة'), ('تحويل نقدية بين الفروع')")
-  except: pass
-  
-  try: cursor.execute("ALTER TABLE users ADD COLUMN phone TEXT")
-  except: pass
-  try: cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
   except: pass
 
   conn.commit(); conn.close()
@@ -173,6 +200,7 @@ if not st.session_state["logged_in"]:
         if st.button("🛠️ إنشاء حساب المدير العام (admin / admin)"):
             conn_ins = get_db_connection()
             try:
+                conn_ins.execute("DELETE FROM users WHERE username = 'admin'")
                 conn_ins.execute("INSERT INTO users (username, phone, password, role, company_id, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', NULL, 1)")
                 conn_ins.commit()
                 st.success("تم إنشاء حساب الأدمن بصلاحيات كاملة بنجاح! قم بإدخاله بالأسفل للدخول.")
@@ -366,7 +394,7 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
       if not is_viewer:
           with st.expander("➕ إضافة مستخدم جديد", expanded=False):
             with st.form("user_form", clear_on_submit=True):
-              u = st.text_input("اسم المستخدم (يمكن تكراره بشرط اختلاف رقم الهاتف)")
+              u = st.text_input("اسم المستخدم")
               phone = st.text_input("رقم الهاتف (إجباري ومميز لكل موظف)")
               p = st.text_input("كلمة المرور")
               
