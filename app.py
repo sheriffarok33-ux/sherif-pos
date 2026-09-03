@@ -63,6 +63,8 @@ def initialize_database():
   cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role TEXT PRIMARY KEY, allowed_menus TEXT)")
   cursor.execute("CREATE TABLE IF NOT EXISTS activity_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
+  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(ALL_MENUS),))
+  except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),👥 إدارة المستخدمين والصلاحيات,📁 استيراد وتوزيع الأصناف,🏦 إدارة الخزينة والبنوك,💰 تسجيل المصروفات,📊 التقارير الشاملة والمخازن,🥜 التحميص والخلط والتصنيع')")
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Branch_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),💰 تسجيل المصروفات,📊 التقارير الشاملة والمخازن')")
@@ -134,7 +136,7 @@ def process_barcode():
             })
     st.session_state.barcode_scan = ""
 
-# --- تسجيل الدخول (مع زر طوارئ ذكي لترقية أو إنشاء الأدمن العام) ---
+# --- تسجيل الدخول ---
 if not st.session_state["logged_in"]:
   col1, col2, col3 = st.columns([1, 2, 1])
   with col2:
@@ -151,7 +153,6 @@ if not st.session_state["logged_in"]:
         if st.button("🛠️ إنشاء حساب المدير العام (admin / admin)"):
             conn_ins = get_db_connection()
             try:
-                # حذف أي حساب قديم باسم admin لتجنب التعارض وإعادة إنشائه بصلاحية Admin مطلقة
                 conn_ins.execute("DELETE FROM users WHERE username = 'admin'")
                 conn_ins.execute("INSERT INTO users (username, password, role, company_id, is_active) VALUES ('admin', 'admin', 'Admin', NULL, 1)")
                 conn_ins.commit()
@@ -185,9 +186,13 @@ if not st.session_state["logged_in"]:
               if user["branch_id"] is not None and user["branch_id"] not in assigned: assigned.append(user["branch_id"])
               st.session_state["assigned_branches"] = assigned
               
-              perms = conn.execute("SELECT allowed_menus FROM role_permissions WHERE role = ?", (user["role"],)).fetchone()
-              if perms and perms["allowed_menus"]: st.session_state["allowed_menus"] = perms["allowed_menus"].split(",")
-              else: st.session_state["allowed_menus"] = ALL_MENUS
+              # الأدمن يملك كافة القوائم دائماً دون قيود
+              if user["role"] == "Admin":
+                  st.session_state["allowed_menus"] = ALL_MENUS
+              else:
+                  perms = conn.execute("SELECT allowed_menus FROM role_permissions WHERE role = ?", (user["role"],)).fetchone()
+                  if perms and perms["allowed_menus"]: st.session_state["allowed_menus"] = perms["allowed_menus"].split(",")
+                  else: st.session_state["allowed_menus"] = ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)"]
               
               log_action(user["id"], "تسجيل دخول", f"تم دخول المستخدم {user['username']}")
               conn.close(); st.rerun()
