@@ -30,7 +30,6 @@ st.markdown("""
 
 if not os.path.exists("company_logos"): os.makedirs("company_logos")
 
-# القائمة الكلية الثابتة للنظام
 ALL_MENUS = [
     "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
@@ -49,7 +48,6 @@ def initialize_database():
 
   cursor.execute("CREATE TABLE IF NOT EXISTS companies (id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT UNIQUE NOT NULL, company_title TEXT NOT NULL, logo_path TEXT)")
   cursor.execute("CREATE TABLE IF NOT EXISTS branches (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_name TEXT NOT NULL, FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE)")
-  # إضافة is_active للمستخدمين
   cursor.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT CHECK(role IN ('Admin', 'General_Supervisor', 'Branch_Supervisor', 'Cashier')) NOT NULL, branch_id INTEGER, company_id INTEGER, is_active INTEGER DEFAULT 1, FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL, FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL)")
   cursor.execute("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_id INTEGER DEFAULT NULL, item_code TEXT, item_name TEXT NOT NULL, quantity REAL DEFAULT 0.0, buy_price REAL DEFAULT 0.0, sale_price REAL NOT NULL, FOREIGN KEY (company_id) REFERENCES companies(id), FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE)")
   cursor.execute("CREATE TABLE IF NOT EXISTS invoices (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, total_amount REAL, shift_status TEXT DEFAULT 'open', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
@@ -62,11 +60,9 @@ def initialize_database():
   cursor.execute("CREATE TABLE IF NOT EXISTS dict_mixes (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL)")
   cursor.execute("CREATE TABLE IF NOT EXISTS user_branches (user_id INTEGER, branch_id INTEGER, PRIMARY KEY (user_id, branch_id))")
   
-  # جداول الصلاحيات وسجل النشاط
   cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role TEXT PRIMARY KEY, allowed_menus TEXT)")
   cursor.execute("CREATE TABLE IF NOT EXISTS activity_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
-  # الصلاحيات الافتراضية
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),👥 إدارة المستخدمين والصلاحيات,📁 استيراد وتوزيع الأصناف,🏦 إدارة الخزينة والبنوك,💰 تسجيل المصروفات,📊 التقارير الشاملة والمخازن,🥜 التحميص والخلط والتصنيع')")
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Branch_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),💰 تسجيل المصروفات,📊 التقارير الشاملة والمخازن')")
@@ -301,15 +297,11 @@ elif choice == "🏢 إدارة الشركات والفروع":
           else: st.info("لا توجد فروع مسجلة لهذه الشركة.")
       with c2:
           if st.session_state["role"] == "Admin" and st.button(f"🗑️ حذف شركة ({comp['company_name']})", type="primary", key=f"del_c_{comp['id']}"):
-              conn.execute("DELETE FROM companies WHERE id=?", (comp["id"],)); conn.commit()
-              log_action(st.session_state["user_id"], "حذف شركة", f"تم حذف شركة {comp['company_name']}")
-              st.rerun()
+              conn.execute("DELETE FROM companies WHERE id=?", (comp["id"],)); conn.commit(); log_action(st.session_state["user_id"], "حذف شركة", f"تم حذف شركة {comp['company_name']}"); st.rerun()
           if not branches_df.empty:
               del_b_id = st.selectbox("اختر فرعاً للحذف:", branches_df["id"].tolist(), format_func=lambda x: branches_df[branches_df["id"]==x]["اسم الفرع"].values[0], key=f"sel_del_{comp['id']}")
               if st.button("🗑️ حذف الفرع المحدد", key=f"btn_del_{comp['id']}"):
-                  conn.execute("DELETE FROM branches WHERE id=?", (del_b_id,)); conn.commit()
-                  log_action(st.session_state["user_id"], "حذف فرع", f"تم حذف الفرع المحدد من شركة {comp['company_name']}")
-                  st.success("تم الحذف!"); st.rerun()
+                  conn.execute("DELETE FROM branches WHERE id=?", (del_b_id,)); conn.commit(); log_action(st.session_state["user_id"], "حذف فرع", f"تم حذف الفرع المحدد من شركة {comp['company_name']}"); st.success("تم الحذف!"); st.rerun()
       st.markdown("<hr style='border:1px dashed #ccc'>", unsafe_allow_html=True)
   conn.close()
 
@@ -318,7 +310,6 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
   tab1, tab2, tab3 = st.tabs(["👥 حسابات المستخدمين (إنشاء/تعديل/إيقاف)", "🛡️ مدير الصلاحيات (POS Manager)", "📝 سجل نشاط المستخدمين (Audit)"])
   conn = get_db_connection()
   
-  # --- Tab 1: المستخدمين ---
   with tab1:
       comps = get_allowed_companies(conn)
       comps_dict = {c["company_name"]: c["id"] for c in comps}
@@ -329,7 +320,7 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
       with st.expander("➕ إضافة مستخدم جديد", expanded=False):
         with st.form("user_form", clear_on_submit=True):
           u = st.text_input("اسم المستخدم")
-          p = st.text_input("كلمة المرور") # Password visible as requested
+          p = st.text_input("كلمة المرور")
           
           if st.session_state["role"] == "Admin": roles = ["Admin (مدير النظام)", "General_Supervisor (مدير شركة)", "Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)"]
           else: roles = ["Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)"]
@@ -357,8 +348,7 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
 
       st.markdown("---")
       st.subheader("📋 قائمة المستخدمين (تعديل الأرقام السرية والإيقاف)")
-      if st.session_state["role"] == "Admin":
-          users_df = pd.read_sql("SELECT id, username AS 'اسم المستخدم', password AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users", conn)
+      if st.session_state["role"] == "Admin": users_df = pd.read_sql("SELECT id, username AS 'اسم المستخدم', password AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users", conn)
       else:
           q = "SELECT id, username AS 'اسم المستخدم', password AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users WHERE company_id = ? OR id IN (SELECT user_id FROM user_branches ub JOIN branches b ON ub.branch_id = b.id WHERE b.company_id = ?)"
           users_df = pd.read_sql(q, conn, params=(st.session_state["company_id"], st.session_state["company_id"]))
@@ -375,19 +365,14 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
           with c2:
               del_u_id = st.selectbox("اختر مستخدم للحذف النهائي:", users_df["id"].tolist(), format_func=lambda x: users_df[users_df["id"]==x]["اسم المستخدم"].values[0])
               if st.button("🗑️ حذف المستخدم نهائياً", type="primary") and del_u_id != 0:
-                  conn.execute("DELETE FROM users WHERE id=?", (del_u_id,)); conn.commit()
-                  log_action(st.session_state["user_id"], "حذف مستخدم", f"تم حذف المستخدم ID:{del_u_id}"); st.success("تم الحذف!"); st.rerun()
+                  conn.execute("DELETE FROM users WHERE id=?", (del_u_id,)); conn.commit(); log_action(st.session_state["user_id"], "حذف مستخدم", f"تم حذف المستخدم ID:{del_u_id}"); st.success("تم الحذف!"); st.rerun()
 
-  # --- Tab 2: POS Manager ---
   with tab2:
       st.subheader("🛡️ مدير صلاحيات العرض (POS Manager)")
-      if st.session_state["role"] != "Admin":
-          st.error("صلاحية تعديل أقسام النظام مخصصة للأدمن العام فقط.")
+      if st.session_state["role"] != "Admin": st.error("صلاحية تعديل أقسام النظام مخصصة للأدمن العام فقط.")
       else:
-          st.info("حدد القوائم التي يُسمح لكل رتبة بمشاهدتها الدخول إليها:")
-          roles_to_manage = ["General_Supervisor", "Branch_Supervisor", "Cashier"]
-          sel_role = st.selectbox("اختر الرتبة لضبط صلاحياتها:", roles_to_manage)
-          
+          st.info("حدد القوائم التي يُسمح لكل رتبة بمشاهدتها والدخول إليها:")
+          sel_role = st.selectbox("اختر الرتبة لضبط صلاحياتها:", ["General_Supervisor", "Branch_Supervisor", "Cashier"])
           curr_perms = conn.execute("SELECT allowed_menus FROM role_permissions WHERE role = ?", (sel_role,)).fetchone()
           allowed_list = curr_perms["allowed_menus"].split(",") if curr_perms and curr_perms["allowed_menus"] else []
           
@@ -396,38 +381,24 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
               new_perms = []
               for m in ALL_MENUS:
                   if m == "🏠 الرئيسية واللوحة": 
-                      st.checkbox(m, value=True, disabled=True) # اجباري
-                      new_perms.append(m)
+                      st.checkbox(m, value=True, disabled=True); new_perms.append(m)
                   else:
                       if st.checkbox(m, value=(m in allowed_list)): new_perms.append(m)
                       
               if st.form_submit_button("💾 اعتماد الصلاحيات"):
-                  perms_str = ",".join(new_perms)
-                  conn.execute("INSERT OR REPLACE INTO role_permissions (role, allowed_menus) VALUES (?, ?)", (sel_role, perms_str))
+                  conn.execute("INSERT OR REPLACE INTO role_permissions (role, allowed_menus) VALUES (?, ?)", (sel_role, ",".join(new_perms)))
                   conn.commit(); log_action(st.session_state["user_id"], "تعديل صلاحيات", f"تم تعديل صلاحيات الرتبة {sel_role}"); st.success("تم الحفظ بنجاح!")
                   
-  # --- Tab 3: سجل النشاط ---
   with tab3:
       st.subheader("📝 سجل نشاط المستخدمين (Audit Trail)")
-      st.write("يعرض دخول وخروج المستخدمين وكافة عملياتهم الحساسة بالنظام.")
-      
-      log_query = """
-          SELECT l.id AS 'رقم', IFNULL(u.username, 'Admin/System') AS 'المستخدم', u.role AS 'الرتبة', 
-                 l.action AS 'نوع الحركة', l.details AS 'التفاصيل', l.log_time AS 'وقت وتاريخ الحركة'
-          FROM activity_logs l LEFT JOIN users u ON l.user_id = u.id
-      """
-      if st.session_state["role"] != "Admin":
-          log_query += f" WHERE u.company_id = {st.session_state['company_id']} OR u.id IN (SELECT user_id FROM user_branches ub JOIN branches b ON ub.branch_id = b.id WHERE b.company_id = {st.session_state['company_id']})"
-      
+      log_query = "SELECT l.id AS 'رقم', IFNULL(u.username, 'Admin/System') AS 'المستخدم', u.role AS 'الرتبة', l.action AS 'نوع الحركة', l.details AS 'التفاصيل', l.log_time AS 'وقت وتاريخ الحركة' FROM activity_logs l LEFT JOIN users u ON l.user_id = u.id"
+      if st.session_state["role"] != "Admin": log_query += f" WHERE u.company_id = {st.session_state['company_id']} OR u.id IN (SELECT user_id FROM user_branches ub JOIN branches b ON ub.branch_id = b.id WHERE b.company_id = {st.session_state['company_id']})"
       log_query += " ORDER BY l.log_time DESC LIMIT 500"
       logs_df = pd.read_sql(log_query, conn)
-      
       if not logs_df.empty:
           st.dataframe(logs_df, use_container_width=True)
           st.download_button("📥 تصدير السجل لـ Excel", data=to_excel(logs_df), file_name="audit_logs.xlsx")
-      else:
-          st.info("لا توجد نشاطات مسجلة بعد.")
-  
+      else: st.info("لا توجد نشاطات مسجلة بعد.")
   conn.close()
 
 elif choice == "📁 استيراد وتوزيع الأصناف":
@@ -466,8 +437,8 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
             s_price = safe_float(row.iloc[4] if len(row)>4 else 0.0)
             
             if "تحديث وإضافة" in import_mode:
-                if code != "": existing = cur.execute("SELECT id FROM items WHERE company_id = ? AND (item_code = ? OR item_name = ?) LIMIT 1", (comps_dict[sel_comp], code, name)).fetchone()
-                else: existing = cur.execute("SELECT id FROM items WHERE company_id = ? AND item_name = ? LIMIT 1", (comps_dict[sel_comp], name)).fetchone()
+                if code != "": existing = cur.execute("SELECT id FROM items WHERE company_id = ? AND branch_id IS NULL AND (item_code = ? OR item_name = ?) LIMIT 1", (comps_dict[sel_comp], code, name)).fetchone()
+                else: existing = cur.execute("SELECT id FROM items WHERE company_id = ? AND branch_id IS NULL AND item_name = ? LIMIT 1", (comps_dict[sel_comp], name)).fetchone()
                 if existing:
                     cur.execute("UPDATE items SET quantity = quantity + ?, buy_price = ?, sale_price = ? WHERE id = ?", (qty, b_price, s_price, existing["id"]))
                     updated_count += 1
@@ -505,9 +476,7 @@ elif choice == "🏦 إدارة الخزينة والبنوك":
               t_bal = st.number_input("الرصيد الافتتاحي (د.ل)", value=0.0)
               if st.form_submit_button("حفظ الخزينة (Enter)") and t_name:
                   conn.execute("INSERT INTO treasuries (company_id, branch_id, treasury_name, treasury_type, balance) VALUES (?, ?, ?, ?, ?)", (c_dict[sel_c], b_dict[t_branch], t_name.strip(), t_type, t_bal))
-                  conn.commit()
-                  log_action(st.session_state["user_id"], "إنشاء خزينة", f"تم إنشاء خزينة {t_name}")
-                  st.success("تم الإنشاء!"); st.rerun()
+                  conn.commit(); log_action(st.session_state["user_id"], "إنشاء خزينة", f"تم إنشاء خزينة {t_name}"); st.success("تم الإنشاء!"); st.rerun()
 
   with tab2:
       if st.session_state["role"] == "Admin": treasuries = conn.execute("SELECT id, treasury_name, balance FROM treasuries").fetchall()
@@ -533,9 +502,7 @@ elif choice == "🏦 إدارة الخزينة والبنوك":
                       if trans_type == "إيداع": conn.execute("UPDATE treasuries SET balance = balance + ? WHERE id = ?", (amount, t_id))
                       else: conn.execute("UPDATE treasuries SET balance = balance - ? WHERE id = ?", (amount, t_id))
                       conn.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, ?, ?, ?)", (t_id, st.session_state["user_id"], trans_type, amount, final_desc))
-                      conn.commit()
-                      log_action(st.session_state["user_id"], f"{trans_type} خزينة", f"المبلغ {amount} لسبب: {final_desc}")
-                      st.success("تم تسجيل الحركة!"); st.rerun()
+                      conn.commit(); log_action(st.session_state["user_id"], f"{trans_type} خزينة", f"المبلغ {amount} لسبب: {final_desc}"); st.success("تم تسجيل الحركة!"); st.rerun()
                   else: st.warning("اكتب البيان.")
 
   with tab3:
@@ -587,14 +554,12 @@ elif choice == "💰 تسجيل المصروفات":
                   conn.execute("INSERT INTO expenses (company_id, branch_id, user_id, treasury_id, amount, description) VALUES (?, ?, ?, ?, ?, ?)", (comps_dict[sel_comp], b_dict[sel_branch], st.session_state["user_id"], t_id, amount, final_desc))
                   conn.execute("UPDATE treasuries SET balance = balance - ? WHERE id = ?", (amount, t_id))
                   conn.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, 'سحب', ?, ?)", (t_id, st.session_state["user_id"], amount, f"مصروفات: {final_desc}"))
-                  conn.commit()
-                  log_action(st.session_state["user_id"], "تسجيل مصروف", f"مبلغ {amount} لسبب: {final_desc}")
-                  st.success("تم تسجيل المصروف!"); st.rerun()
+                  conn.commit(); log_action(st.session_state["user_id"], "تسجيل مصروف", f"مبلغ {amount} لسبب: {final_desc}"); st.success("تم تسجيل المصروف!"); st.rerun()
   conn.close()
 
 elif choice == "📊 التقارير الشاملة والمخازن":
-  st.header("📊 التقارير الشاملة والمخازن (للقراءة والتعديل)")
-  tab1, tab2, tab3, tab4 = st.tabs(["📋 تقارير المخزون", "📈 تقارير المبيعات", "💸 تقارير المصروفات", "⚙️ تصفير البيانات"])
+  st.header("📊 التقارير الشاملة والمخازن")
+  tab1, tab5, tab2, tab3, tab4 = st.tabs(["📋 تقارير وتعديل المخزون", "🔄 توزيع ونقل المخزون", "📈 تقارير المبيعات", "💸 تقارير المصروفات", "⚙️ تصفير البيانات"])
   conn = get_db_connection()
   
   comp_filter = ""
@@ -603,8 +568,10 @@ elif choice == "📊 التقارير الشاملة والمخازن":
       comp_filter = " WHERE companies.id = ? "
       params = (st.session_state["company_id"],)
   
+  items_df = pd.read_sql(f"SELECT items.id AS id, companies.company_name AS الشركة, branches.branch_name AS الفرع, items.item_code AS الكود, items.item_name AS الصنف, items.quantity AS الكمية, items.buy_price AS 'سعر الشراء', items.sale_price AS 'سعر البيع' FROM items JOIN companies ON items.company_id = companies.id LEFT JOIN branches ON items.branch_id = branches.id {comp_filter}", conn, params=params)
+  items_df['الفرع'] = items_df['الفرع'].fillna('المخزن الرئيسي للشركة (غير موزع)')
+  
   with tab1:
-      items_df = pd.read_sql(f"SELECT items.id AS id, companies.company_name AS الشركة, branches.branch_name AS الفرع, items.item_code AS الكود, items.item_name AS الصنف, items.quantity AS الكمية, items.buy_price AS 'سعر الشراء', items.sale_price AS 'سعر البيع' FROM items JOIN companies ON items.company_id = companies.id LEFT JOIN branches ON items.branch_id = branches.id {comp_filter}", conn, params=params)
       if not items_df.empty:
           edited_items = st.data_editor(items_df, disabled=(st.session_state["role"] == "Cashier"), hide_index=True, key="items_editor")
           c1, c2 = st.columns(2)
@@ -613,6 +580,57 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                   for idx, row in edited_items.iterrows(): conn.execute("UPDATE items SET item_code=?, item_name=?, quantity=?, buy_price=?, sale_price=? WHERE id=?", (row['الكود'], row['الصنف'], row['الكمية'], row['سعر الشراء'], row['سعر البيع'], row['id']))
                   conn.commit(); log_action(st.session_state["user_id"], "تعديل مخزون", "تم تعديل بيانات الأصناف يدوياً"); st.success("تم الحفظ!")
           with c2: st.download_button("📥 تصدير المخزون لـ Excel", data=to_excel(items_df), file_name="inventory.xlsx")
+
+  # --- النظام الذكي لتوزيع ونقل المخزون ---
+  with tab5:
+      st.subheader("🔄 توزيع ونقل المخزون (بين الشركات والفروع)")
+      if not items_df.empty:
+          item_ids = items_df["id"].tolist()
+          sel_item_id = st.selectbox(
+              "📦 1. اختر الصنف المراد نقله أو توزيعه (ابحث بالكتابة):", 
+              item_ids,
+              format_func=lambda x: f"[{items_df[items_df['id'] == x]['الكود'].values[0]}] {items_df[items_df['id'] == x]['الصنف'].values[0]} | المصدر: {items_df[items_df['id'] == x]['الشركة'].values[0]} - {items_df[items_df['id'] == x]['الفرع'].values[0]} | متاح: {items_df[items_df['id'] == x]['الكمية'].values[0]}"
+          )
+          
+          st.markdown("**🎯 2. إلى أين تريد نقل أو توزيع هذا الصنف؟**")
+          col_dest1, col_dest2 = st.columns(2)
+          
+          if st.session_state["role"] == "Admin": t_comps = conn.execute("SELECT id, company_name FROM companies").fetchall()
+          else: t_comps = conn.execute("SELECT id, company_name FROM companies WHERE id=?", (st.session_state["company_id"],)).fetchall()
+          
+          c_dict = {c["company_name"]: c["id"] for c in t_comps}
+          
+          with col_dest1:
+              target_comp_name = st.selectbox("إلى شركة:", list(c_dict.keys()))
+              target_comp_id = c_dict[target_comp_name] if target_comp_name else None
+              
+          with col_dest2:
+              if target_comp_id:
+                  target_branches = conn.execute("SELECT id, branch_name FROM branches WHERE company_id=?", (target_comp_id,)).fetchall()
+                  b_dict = {"المخزن الرئيسي للشركة (بدون فرع)": None}
+                  b_dict.update({b["branch_name"]: b["id"] for b in target_branches})
+                  target_branch_name = st.selectbox("إلى فرع:", list(b_dict.keys()))
+                  target_branch_id = b_dict[target_branch_name]
+              else: target_branch_id = None
+                  
+          transfer_qty = st.number_input("الكمية المراد نقلها", min_value=0.1, value=1.0)
+          
+          if st.button("🚀 تنفيذ النقل / التوزيع", use_container_width=True):
+              curr_item = conn.execute("SELECT * FROM items WHERE id = ?", (sel_item_id,)).fetchone()
+              if curr_item and curr_item["quantity"] >= transfer_qty:
+                  conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (transfer_qty, sel_item_id))
+                  
+                  if target_branch_id is None: existing = conn.execute("SELECT id FROM items WHERE company_id=? AND branch_id IS NULL AND item_code=? AND item_name=?", (target_comp_id, curr_item["item_code"], curr_item["item_name"])).fetchone()
+                  else: existing = conn.execute("SELECT id FROM items WHERE company_id=? AND branch_id=? AND item_code=? AND item_name=?", (target_comp_id, target_branch_id, curr_item["item_code"], curr_item["item_name"])).fetchone()
+                      
+                  if existing: conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (transfer_qty, existing["id"]))
+                  else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)", (target_comp_id, target_branch_id, curr_item["item_code"], curr_item["item_name"], transfer_qty, curr_item["buy_price"], curr_item["sale_price"]))
+                  
+                  conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون", f"تم نقل {transfer_qty} من {curr_item['item_name']} إلى {target_comp_name} - {target_branch_name}")
+                  st.success("تم النقل والتوزيع بنجاح!"); st.rerun()
+              else: st.error("الكمية المتاحة لا تكفي للتحويل!")
+      else:
+          st.info("المخزن فارغ حالياً.")
 
   with tab2:
       invoices_df = pd.read_sql(f"SELECT invoices.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', users.username AS 'الكاشير', invoices.total_amount AS 'المبلغ', CASE WHEN invoices.shift_status = 'open' THEN 'حالية (لم ترحل)' ELSE 'سابقة (مرحلة Z-READ)' END AS 'حالة العملية', invoices.created_at AS 'التاريخ' FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id {comp_filter}", conn, params=params)
