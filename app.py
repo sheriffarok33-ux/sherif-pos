@@ -352,18 +352,18 @@ elif choice == "🏢 إدارة الشركات والفروع":
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين والصلاحيات":
-  st.header("👥 إدارة المستخدمين وصلاحيات الـ POS")
+  st.header("👥 إدارة المستخدمين والصلاحيات")
   tab1, tab2, tab3 = st.tabs(["👥 حسابات المستخدمين", "🛡️ مدير الصلاحيات (POS Manager)", "📝 سجل نشاط المستخدمين (Audit)"])
   conn = get_db_connection()
   is_viewer = (st.session_state["role"] == "Viewer")
   
   with tab1:
       # جلب كافة الشركات والفروع بدون قيود لضمان ظهور كل الشركات في القوائم
-      all_companies_for_users = conn.execute("SELECT id, company_name FROM companies").fetchall()
-      all_comps_dict = {c["company_name"]: c["id"] for c in all_companies_list}
+      all_companies = conn.execute("SELECT id, company_name FROM companies").fetchall()
+      all_comps_dict = {c["company_name"]: c["id"] for c in all_companies}
       
-      all_branches_for_users = conn.execute("SELECT b.id, b.branch_name, c.company_name FROM branches b JOIN companies c ON b.company_id = c.id").fetchall()
-      all_b_dict = {f"{b['company_name']} ➔ {b['branch_name']}": b["id"] for b in all_branches_for_users}
+      all_branches = conn.execute("SELECT b.id, b.branch_name, c.company_name FROM branches b JOIN companies c ON b.company_id = c.id").fetchall()
+      all_b_dict = {f"{b['company_name']} ➔ {b['branch_name']}": b["id"] for b in all_branches}
 
       if not is_viewer:
           with st.expander("➕ إضافة مستخدم جديد (شامل لكافة الشركات والفروع)", expanded=True):
@@ -909,7 +909,7 @@ elif choice == "🛒 نقطة البيع (POS)":
     col_x, col_z = st.columns(2)
     with col_x: st.markdown(f"""<div class="card" style="background-color: #0284c7;"><h3>X-READ (مبيعات الوردية)</h3><h2>{shift_total:.2f} د.ل</h2></div>""", unsafe_allow_html=True)
     with col_z:
-        st.markdown(f"""<div class="card" style="background-color: #be123c;">### Z-READ (تصفير الوردية وإيداع)</div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="card" style="background-color: #be123c;"><h3>Z-READ (تصفير الوردية وإيداع)</h3></div>""", unsafe_allow_html=True)
         treasuries_branch = conn.execute("SELECT id, treasury_name FROM treasuries WHERE branch_id = ? OR (branch_id IS NULL AND company_id = (SELECT company_id FROM branches WHERE id=?))", (b_id, b_id)).fetchall()
         t_dict_z = {t["treasury_name"]: t["id"] for t in treasuries_branch}
         if t_dict_z:
