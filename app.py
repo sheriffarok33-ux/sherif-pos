@@ -17,11 +17,11 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap');
     html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; }
     .main { background-color: #f4f7f6; }
-    div.stButton > button { border-radius: 10px; font-weight: 700; transition: all 0.3s ease; height: 45px; }
+    div.stButton > button { border-radius: 12px; font-weight: 700; transition: all 0.2s ease; height: 50px; font-size: 16px; }
     [data-testid="stSidebar"] .stButton>button {
         background-color: #ffffff; color: #1e293b; border: 1px solid #e2e8f0;
         border-radius: 12px; padding: 10px 15px; text-align: right; font-weight: bold;
-        transition: all 0.3s ease; margin-bottom: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); font-size: 16px;
+        transition: all 0.3s ease; margin-bottom: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); font-size: 16px; height: auto;
     }
     [data-testid="stSidebar"] .stButton>button:hover { background-color: #2563eb; color: white; border-color: #2563eb; transform: translateX(-5px); }
     .card { padding: 20px; border-radius: 12px; color: white; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px; }
@@ -806,7 +806,7 @@ elif choice == "🛒 نقطة البيع (POS)":
   
   branch_items = conn.execute("SELECT * FROM items WHERE branch_id = ?", (b_id,)).fetchall()
       
-  # تقسيم الشاشة إلى عمودين: اليمين للسلة وفاتورة المبيعات، واليسار للأزرار والسكانر
+  # تقسيم الشاشة: اليمين للفاتورة، واليسار لأزرار الكاشير السريعة
   col_main, col_side = st.columns([2, 1])
   
   with col_main:
@@ -821,7 +821,7 @@ elif choice == "🛒 نقطة البيع (POS)":
           # أزرار إدارة السلة
           c_del1, c_del2 = st.columns(2)
           with c_del1:
-              if st.button("🗑️ تفريغ السلة بالكامل", use_container_width=True):
+              if st.button("🗑️ تفريغ السلة", use_container_width=True):
                   st.session_state["cart"] = []
                   st.rerun()
           with c_del2:
@@ -832,20 +832,20 @@ elif choice == "🛒 نقطة البيع (POS)":
           st.info("🛒 السلة فارغة. قم بمسح الباركود أو اختيار الصنف للبيع.")
 
   with col_side:
-      st.subheader("⚡ لوحة الكاشير السريعة")
+      st.subheader("⚡ لوحة الإدخال السريع")
       
-      # 1. مسح الباركود السريع (لا يحتاج ماوس)
+      # 1. مسح الباركود السريع
       st.text_input("🔍 مسح الباركود بالسكانر (Enter):", key="barcode_scan", on_change=process_barcode, placeholder="امسح الباركود واضغط Enter")
       
       st.markdown("---")
       
-      # 2. القائمة المنسدلة المباشرة (Drop-down) للبحث السريع عن الأصناف دون تعقيد
+      # 2. القائمة المنسدلة (Drop-down) لاختيار الأصناف بدون ماوس معقد
       if branch_items:
           items_options = {f"[{i['item_code']}] {i['item_name']} - {i['sale_price']} د.ل": i for i in branch_items}
-          chosen_drop_item = st.selectbox("📋 اختر الصنف من القائمة المنسدلة:", [""] + list(items_options.keys()))
-          drop_qty = st.number_input("الكمية:", min_value=1.0, value=1.0, key="drop_qty_input")
+          chosen_drop_item = st.selectbox("📋 قائمة الأصناف (Drop-down):", [""] + list(items_options.keys()))
+          drop_qty = st.number_input("الكمية (تقبل الوزن الكسري مثل 0.5):", min_value=0.01, value=1.0, step=0.5, key="drop_qty_input")
           
-          if st.button("➕ إضافة الصنف المختار للسلة", use_container_width=True) and chosen_drop_item:
+          if st.button("➕ إضافة للسلة", use_container_width=True) and chosen_drop_item:
               item_data = items_options[chosen_drop_item]
               found = False
               for c in st.session_state["cart"]:
@@ -859,25 +859,25 @@ elif choice == "🛒 نقطة البيع (POS)":
                       "id": item_data["id"], "code": item_data["item_code"], "name": item_data["item_name"],
                       "price": float(item_data["sale_price"]), "qty": float(drop_qty), "total": float(item_data["sale_price"]) * float(drop_qty)
                   })
-              st.success("تمت الإضافة بنجاح!")
+              st.success("تمت الإضافة!")
               st.rerun()
 
       st.markdown("---")
       
-      # 3. صنف عام / حر يدوي (بدون سعر مسبق، الكاشير يكتب السعر بنفسه)
-      with st.expander("➕ صنف عام / يدوي (بدون سعر سلفاً)", expanded=False):
-          g_name = st.text_input("اسم أو وصف الصنف العام:", key="gen_name_box")
-          g_price = st.number_input("السعر اليدوي (د.ل):", min_value=0.1, value=10.0, key="gen_price_box")
-          g_qty = st.number_input("الكمية:", min_value=1.0, value=1.0, key="gen_qty_box")
-          g_note = st.text_input("تنبيه/سبب الإضافة اليدوية:", key="gen_note_box")
+      # 3. صنف عام / يدوي (بدون سعر سلفاً، الكاشير يكتب الاسم والسعر والكمية يدوياً)
+      with st.expander("➕ صنف عام / حر يدوي (بدون سعر سلفاً)", expanded=False):
+          g_name = st.text_input("اسم الصنف العام:", key="gen_name_box")
+          g_price = st.number_input("السعر اليدوي (د.ل):", min_value=0.01, value=10.0, step=1.0, key="gen_price_box")
+          g_qty = st.number_input("الكمية/الوزن:", min_value=0.01, value=1.0, step=0.5, key="gen_qty_box")
+          g_note = st.text_input("ملاحظة / سبب الإضافة اليدوية:", key="gen_note_box")
           
           if st.button("إضافة الصنف اليدوي للسلة", use_container_width=True):
               if g_name:
                   st.session_state["cart"].append({
-                      "id": 999999, "code": "GEN-000", "name": f"[عام/يدوي] {g_name} (ملاحظة: {g_note})",
+                      "id": 999999, "code": "GEN-000", "name": f"[عام/يدوي] {g_name} ({g_note})",
                       "price": float(g_price), "qty": float(g_qty), "total": float(g_price) * float(g_qty)
                   })
-                  st.success("تمت إضافة الصنف اليدوي للسلة!")
+                  st.success("تمت إضافة الصنف اليدوي!")
                   st.rerun()
               else:
                   st.warning("الرجاء كتابة اسم الصنف.")
@@ -893,10 +893,10 @@ elif choice == "🛒 نقطة البيع (POS)":
           if st.button("⏸️ تعليق الفاتورة الحالية", use_container_width=True):
               st.session_state["held_carts"].append(st.session_state["cart"])
               st.session_state["cart"] = []
-              st.success("تم تعليق الفاتورة بنجاح.")
+              st.success("تم تعليق الفاتورة.")
               st.rerun()
 
-  # --- شاشة الدفع المنفصلة (Popup / Full Checkout Screen) عند الضغط على زر الدفع ---
+  # --- شاشة الدفع المنفصلة (تظهر في خطوة منفصلة عند الضغط على زر الدفع) ---
   if st.session_state.get("checkout_screen", False):
       st.markdown("---")
       st.container()
@@ -907,7 +907,7 @@ elif choice == "🛒 نقطة البيع (POS)":
       with col_pay1:
           st.metric("إجمالي الفاتورة المطلوب", f"{grand_total:,.2f} د.ل")
           pay_method = st.selectbox("طريقة الدفع:", ["كاش (نقدي)", "بطاقة (شبكة)", "تحويل بنكي"], key="pay_method_box")
-          cash_paid = st.number_input("المبلغ المستلم من العميل (د.ل):", min_value=0.0, value=float(grand_total), key="cash_paid_box")
+          cash_paid = st.number_input("المبلغ المستلم من العميل (د.ل):", min_value=0.0, value=float(grand_total), step=1.0, key="cash_paid_box")
           
           change_due = cash_paid - grand_total if pay_method == "كاش (نقدي)" else 0.0
           if pay_method == "كاش (نقدي)":
@@ -916,7 +916,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                   st.error("⚠️ المبلغ المستلم أقل من الإجمالي المطلوب!")
 
       with col_pay2:
-          st.markdown("### 🖨️ معاينة وتأكيد الطباعة")
+          st.markdown("### 🖨️ تأكيد وإصدار الفاتورة")
           st.write(f"عدد الأصناف في الفاتورة: {len(st.session_state['cart'])}")
           
           col_btn1, col_btn2 = st.columns(2)
@@ -936,7 +936,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                       st.success("🎉 تم إصدار الفاتورة وطباعتها بنجاح!")
                       st.rerun()
           with col_btn2:
-              if st.button("❌ إلغاء والرجوع للكاشير", use_container_width=True):
+              if st.button("❌ إلغاء والرجوع", use_container_width=True):
                   st.session_state["checkout_screen"] = False
                   st.rerun()
 
