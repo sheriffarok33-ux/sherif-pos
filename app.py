@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import pandas as pd
 import streamlit as st
@@ -98,18 +99,12 @@ def initialize_database():
         )
     """)
   
-  try:
-      cursor.execute("SELECT branch_id FROM items LIMIT 1")
-  except:
-      cursor.execute("ALTER TABLE items ADD COLUMN branch_id INTEGER DEFAULT NULL")
-  try:
-      cursor.execute("SELECT quantity FROM items LIMIT 1")
-  except:
-      cursor.execute("ALTER TABLE items ADD COLUMN quantity REAL DEFAULT 0.0")
-  try:
-      cursor.execute("SELECT buy_price FROM items LIMIT 1")
-  except:
-      cursor.execute("ALTER TABLE items ADD COLUMN buy_price REAL DEFAULT 0.0")
+  try: cursor.execute("SELECT branch_id FROM items LIMIT 1")
+  except: cursor.execute("ALTER TABLE items ADD COLUMN branch_id INTEGER DEFAULT NULL")
+  try: cursor.execute("SELECT quantity FROM items LIMIT 1")
+  except: cursor.execute("ALTER TABLE items ADD COLUMN quantity REAL DEFAULT 0.0")
+  try: cursor.execute("SELECT buy_price FROM items LIMIT 1")
+  except: cursor.execute("ALTER TABLE items ADD COLUMN buy_price REAL DEFAULT 0.0")
 
   conn.commit()
   conn.close()
@@ -295,12 +290,13 @@ elif choice == "👥 إدارة المستخدمين":
 elif choice == "📁 استيراد وتوزيع الأصناف":
   st.header("📁 استيراد الأصناف عبر الإكسيل")
   
+  # دالة قوية لاستخراج الأرقام حتى لو كان هناك نص بالخطأ في خانة السعر/الكمية
   def safe_float(val):
       try:
-          if pd.isna(val): return 0.0
-          s = str(val).strip().replace(',', '.')
-          if not s: return 0.0
-          return float(s)
+          if pd.isna(val) or str(val).strip() == '': return 0.0
+          s = str(val).replace(',', '.')
+          s = re.sub(r'[^\d.]', '', s) # إزالة أي حروف وترك الأرقام والنقطة فقط
+          return float(s) if s else 0.0
       except:
           return 0.0
 
@@ -310,13 +306,25 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
   comps_dict = {c["company_name"]: c["id"] for c in comps}
   
   if comps_dict:
-    sel_comp = st.selectbox("اختر الشركة للاستيراد إليها", list(comps_dict.keys()))
+    sel_comp = st.selectbox("اختر الشركة لتطبيق الاستيراد عليها", list(comps_dict.keys()))
+    
+    import_mode = st.radio("طريقة الاستيراد:", [
+        "🔄 تحديث وإضافة (يبحث بالكود أو الاسم، ويحدث الكمية والسعر ويضيف النواقص)",
+        "🚨 مسح كامل واستيراد جديد (يحذف جميع الأصناف الحالية ويضع الملف الجديد فقط)"
+    ])
+    
     up_file = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
     if up_file and st.button("📥 تنفيذ استيراد الأصناف"):
       df = pd.read_excel(up_file, header=None)
       conn = get_db_connection(); cur = conn.cursor()
-      success_count = 0
+      added_count = 0
+      updated_count = 0
       
+      if "مسح كامل" in import_mode:
+          cur.execute("DELETE FROM items WHERE company_id = ?", (comps_dict[sel_comp],))
+          conn.commit()
+          st.warning("تم مسح المخزون القديم لهذه الشركة.")
+
       for idx, row in df.iterrows():
         try:
             if row.isna().all(): continue
@@ -330,40 +338,60 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
             b_price = safe_float(row.iloc[3] if len(row)>3 else 0.0)
             s_price = safe_float(row.iloc[4] if len(row)>4 else 0.0)
             
-            cur.execute("INSERT INTO items (company_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)", 
-                        (comps_dict[sel_comp], code, name, qty, b_price, s_price))
-            success_count += 1
+            if "تحديث وإضافة" in import_mode:
+                # محاولة البحث عن الصنف لتحديثه
+                existing = cur.execute("SELECT id FROM items WHERE company_id = ? AND (item_code = ? OR item_name = ?) LIMIT 1", 
+                                       (comps_dict[sel_comp], code, name)).fetchone()
+                if existing:
+                    cur.execute("UPDATE items SET quantity = quantity + ?, buy_price = ?, sale_price = ? WHERE id = ?", 
+                                (qty, b_price, s_price, existing["id"]))
+                    updated_count += 1
+                else:
+                    cur.execute("INSERT INTO items (company_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)", 
+                                (comps_dict[sel_comp], code, name, qty, b_price, s_price))
+                    added_count += 1
+            else:
+                cur.execute("INSERT INTO items (company_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)", 
+                            (comps_dict[sel_comp], code, name, qty, b_price, s_price))
+                added_count += 1
+                
         except Exception as e:
-            continue # يتجاوز السطر الخاطئ ويكمل الباقي
+            continue
             
       conn.commit(); conn.close()
-      st.success(f"🎉 تم استيراد ({success_count}) صنف بنجاح!")
+      st.success(f"🎉 تمت العملية بنجاح! تم إضافة ({added_count}) صنف جديد، وتحديث ({updated_count}) صنف موجود.")
+  else:
+    st.warning("أضف شركة أولاً.")
 
 elif choice == "📊 تقارير المخازن وتحويل الكميات":
-  st.header("📊 تقارير المخازن وتحويل الكميات")
+  st.header("📊 إدارة المخازن (تقارير، تحويل، تعديل وحذف)")
+  
+  tab1, tab2, tab3 = st.tabs(["📋 عرض المخزون", "🔄 تحويل بين الفروع", "✏️ تعديل أو حذف صنف"])
+  
   conn = get_db_connection()
-  items_df = pd.read_sql("SELECT items.id, companies.company_name AS الشركة, branches.branch_name AS الفرع, items.item_code AS الكود, items.item_name AS الصنف, items.quantity AS الكمية, items.sale_price AS السعر FROM items JOIN companies ON items.company_id = companies.id LEFT JOIN branches ON items.branch_id = branches.id", conn)
+  items_df = pd.read_sql("SELECT items.id, companies.company_name AS الشركة, branches.branch_name AS الفرع, items.item_code AS الكود, items.item_name AS الصنف, items.quantity AS الكمية, items.buy_price AS 'سعر الشراء', items.sale_price AS 'سعر البيع' FROM items JOIN companies ON items.company_id = companies.id LEFT JOIN branches ON items.branch_id = branches.id", conn)
   branches_list = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   conn.close()
 
-  if not items_df.empty:
-    search_q = st.text_input("🔍 بحث عن صنف (بالاسم أو الكود):")
-    if search_q:
-        mask = items_df['الصنف'].astype(str).str.contains(search_q, case=False, na=False) | items_df['الكود'].astype(str).str.contains(search_q, case=False, na=False)
-        display_df = items_df[mask]
-    else:
-        display_df = items_df
-
-    st.dataframe(display_df, use_container_width=True)
-    
-    st.markdown("---")
-    st.subheader("🔄 تحويل كمية من صنف لفرع آخر")
-    item_ids = display_df["id"].tolist()
-    if item_ids:
-        sel_item_id = st.selectbox(
-            "اختر الصنف المراد تحويله (ابحث بالكتابة):",
-            item_ids,
-            format_func=lambda x: f"[{items_df[items_df['id'] == x]['الكود'].values[0]}] {items_df[items_df['id'] == x]['الصنف'].values[0]} (الكمية: {items_df[items_df['id'] == x]['الكمية'].values[0]})"
+  with tab1:
+      if not items_df.empty:
+        search_q = st.text_input("🔍 بحث عن صنف (بالاسم أو الكود):")
+        if search_q:
+            mask = items_df['الصنف'].astype(str).str.contains(search_q, case=False, na=False) | items_df['الكود'].astype(str).str.contains(search_q, case=False, na=False)
+            display_df = items_df[mask]
+        else:
+            display_df = items_df
+        st.dataframe(display_df, use_container_width=True)
+        st.info(f"إجمالي عدد الأصناف المعروضة: {len(display_df)} صنف.")
+      else:
+        st.info("المخزن فارغ حالياً.")
+        
+  with tab2:
+      if not items_df.empty:
+        st.subheader("🔄 تحويل كمية لفرع آخر")
+        item_ids = items_df["id"].tolist()
+        sel_item_id = st.selectbox("اختر الصنف المراد تحويله (ابحث بالكتابة):", item_ids,
+            format_func=lambda x: f"[{items_df[items_df['id'] == x]['الكود'].values[0]}] {items_df[items_df['id'] == x]['الصنف'].values[0]} (متاح: {items_df[items_df['id'] == x]['الكمية'].values[0]})"
         )
         b_dict = {b["branch_name"]: b["id"] for b in branches_list}
         if b_dict:
@@ -381,11 +409,48 @@ elif choice == "📊 تقارير المخازن وتحويل الكميات":
                 else:
                     conn.close(); st.error("الكمية لا تكفي!")
 
+  with tab3:
+      if not items_df.empty:
+        st.subheader("✏️ تعديل صنف أو حذفه")
+        edit_item_id = st.selectbox("اختر الصنف للتعديل أو الحذف:", items_df["id"].tolist(),
+            format_func=lambda x: f"[{items_df[items_df['id'] == x]['الكود'].values[0]}] {items_df[items_df['id'] == x]['الصنف'].values[0]}", key="edit_item")
+        
+        # استرجاع بيانات الصنف لعرضها في حقول التعديل
+        selected_row = items_df[items_df['id'] == edit_item_id].iloc[0]
+        
+        with st.form("edit_item_form"):
+            new_code = st.text_input("كود الصنف", value=selected_row['الكود'])
+            new_name = st.text_input("اسم الصنف", value=selected_row['الصنف'])
+            new_qty = st.number_input("الكمية الحالية", value=float(selected_row['الكمية']))
+            new_bprice = st.number_input("سعر الشراء", value=float(selected_row['سعر الشراء']))
+            new_sprice = st.number_input("سعر البيع", value=float(selected_row['سعر البيع']))
+            
+            c_save, c_del = st.columns(2)
+            with c_save:
+                if st.form_submit_button("💾 حفظ التعديلات"):
+                    conn = get_db_connection()
+                    conn.execute("UPDATE items SET item_code=?, item_name=?, quantity=?, buy_price=?, sale_price=? WHERE id=?", 
+                                 (new_code, new_name, new_qty, new_bprice, new_sprice, edit_item_id))
+                    conn.commit(); conn.close()
+                    st.success("تم تعديل الصنف بنجاح!"); st.rerun()
+            with c_del:
+                if st.form_submit_button("🗑️ حذف الصنف نهائياً"):
+                    conn = get_db_connection()
+                    conn.execute("DELETE FROM items WHERE id=?", (edit_item_id,))
+                    conn.commit(); conn.close()
+                    st.success("تم الحذف بنجاح!"); st.rerun()
+                    
+        st.markdown("---")
+        if st.button("🚨 تصفير المخزن بالكامل وحذف كافة الأصناف (خطر)"):
+            conn = get_db_connection()
+            conn.execute("DELETE FROM items")
+            conn.commit(); conn.close()
+            st.warning("تم تصفير المخزن بالكامل!"); st.rerun()
+
 elif choice == "🥜 التحميص والخلط والتصنيع":
   st.header("🥜 إدارة عمليات التحميص والخلط")
   tab1, tab2 = st.tabs(["🔥 قسم التحميص وحساب الفاقد", "🥜 خلائط المكسرات المشكلة"])
   with tab1:
-    st.subheader("تسجيل عملية تحميص")
     conn = get_db_connection()
     branches = conn.execute("SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id").fetchall()
     conn.close()
@@ -414,7 +479,6 @@ elif choice == "🥜 التحميص والخلط والتصنيع":
             st.success(f"تم التحميص بنجاح! سعر الكيلو الجديد: {new_unit_price:.2f} د.ل")
 
   with tab2:
-    st.subheader("تكوين المكسرات المشكلة (Mix Nuts)")
     mix_name = st.text_input("اسم صنف المكسرات الجديد")
     total_cost = st.number_input("إجمالي التكلفة (د.ل)", min_value=0.1, value=50.0)
     profit_margin = st.number_input("نسبة هامش الربح (%)", min_value=0.0, value=20.0)
@@ -474,9 +538,12 @@ elif choice == "🛒 نقطة البيع (POS)":
         with c_act1:
             if st.button("🖨️ إتمام وطباعة الفاتورة", use_container_width=True):
                 conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, shift_status) VALUES (?, ?, ?, 'open')", (b_id, st.session_state["user_id"], grand_total))
+                # خصم الكمية المباعة من المخزون
+                for c_item in st.session_state["cart"]:
+                    conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
                 conn.commit()
                 st.session_state["cart"] = []
-                st.success("تم إتمام البيع وتسجيله في الوردية!"); st.rerun()
+                st.success("تم إتمام البيع وتسجيله في الوردية وخصم الكمية!"); st.rerun()
         with c_act2:
             if st.button("⏸️ تعليق الفاتورة (Hold)", use_container_width=True):
                 st.session_state["held_carts"].append(st.session_state["cart"])
@@ -517,10 +584,11 @@ elif choice == "🛒 نقطة البيع (POS)":
             ret_item = st.selectbox("اختر الصنف المراد إرجاعه:", list(items_options_ret.keys()))
             ret_qty = st.number_input("الكمية المرتجعة", min_value=1, value=1)
             
-            if st.button("إتمام المرتجع (خصم من الصندوق)"):
+            if st.button("إتمام المرتجع (خصم من الصندوق وإرجاع للمخزن)"):
                 item_data_ret = items_options_ret[ret_item]
                 refund_total = item_data_ret['sale_price'] * ret_qty
                 conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, shift_status) VALUES (?, ?, ?, 'open')", (b_id, st.session_state["user_id"], -refund_total))
+                conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (ret_qty, item_data_ret['id']))
                 conn.commit()
                 st.session_state["return_auth"] = False
                 st.success(f"تم إرجاع الصنف وخصم {refund_total} د.ل من الصندوق بنجاح."); st.rerun()
