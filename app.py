@@ -364,35 +364,41 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
       b_dict = {f"{b['company_name']} ➔ {b['branch_name']}": b["id"] for b in branches}
 
       if not is_viewer:
-          with st.expander("➕ إضافة مستخدم جديد", expanded=False):
-            with st.form("user_form", clear_on_submit=True):
-              u = st.text_input("اسم المستخدم")
+          with st.expander("➕ إضافة مستخدم جديد (مفعل بالكامل)", expanded=True):
+              u = st.text_input("اسم المستخدم الجديد")
               phone = st.text_input("رقم الهاتف (إجباري ومميز لكل موظف)")
-              p = st.text_input("كلمة المرور")
+              p = st.text_input("كلمة المرور", type="password")
               
               if st.session_state["role"] == "Admin": roles = ["Admin (مدير النظام)", "General_Supervisor (مدير شركة)", "Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
               else: roles = ["Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
-              r = st.selectbox("الرتبة:", roles)
+              r = st.selectbox("رتبة المستخدم:", roles)
               
               db_role = r.split(" ")[0]
               assigned_c = None
               assigned_b = []
               
               if db_role == "General_Supervisor" and comps_dict:
-                  assigned_c_name = st.selectbox("الشركة التابعة له:", list(comps_dict.keys()))
+                  assigned_c_name = st.selectbox("اختر الشركة التابعة له:", list(comps_dict.keys()))
                   assigned_c = comps_dict[assigned_c_name]
               elif db_role in ["Branch_Supervisor", "Cashier"] and b_dict:
-                  assigned_b = st.multiselect("الفروع المخصصة للموظف:", list(b_dict.keys()))
+                  assigned_b = st.multiselect("اختر الفروع المخصصة للموظف:", list(b_dict.keys()))
               
-              if st.form_submit_button("💾 حفظ المستخدم") and u and p and phone:
-                try:
-                    cur = conn.cursor()
-                    cur.execute("INSERT INTO users (username, phone, password, role, company_id) VALUES (?, ?, ?, ?, ?)", (u.strip(), phone.strip(), p, db_role, assigned_c))
-                    new_user_id = cur.lastrowid
-                    if db_role in ["Branch_Supervisor", "Cashier"]:
-                        for branch_str in assigned_b: cur.execute("INSERT INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_dict[branch_str]))
-                    conn.commit(); log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}"); st.success("تم بنجاح!")
-                except Exception as e: st.error(f"خطأ أثناء الإضافة: {e}")
+              if st.button("💾 حفظ وإضافة المستخدم الجديد"):
+                  if u and p and phone:
+                      try:
+                          cur = conn.cursor()
+                          cur.execute("INSERT INTO users (username, phone, password, role, company_id) VALUES (?, ?, ?, ?, ?)", (u.strip(), phone.strip(), p, db_role, assigned_c))
+                          new_user_id = cur.lastrowid
+                          if db_role in ["Branch_Supervisor", "Cashier"]:
+                              for branch_str in assigned_b: 
+                                  cur.execute("INSERT INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_dict[branch_str]))
+                          conn.commit()
+                          log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}")
+                          st.success(f"🎉 تم حفظ المستخدم ({u}) برتبة ({db_role}) بنجاح!")
+                          st.rerun()
+                      except Exception as e: st.error(f"خطأ أثناء الإضافة (تأكد أن رقم الهاتف أو اسم المستخدم غير مكرر بطريقة خاطئة): {e}")
+                  else:
+                      st.warning("⚠️ الرجاء ملء جميع الحقول الإجبارية (الاسم، الهاتف، كلمة المرور).")
 
       st.markdown("---")
       st.subheader("📋 قائمة المستخدمين")
@@ -707,7 +713,7 @@ elif choice == "📊 التقارير الشاملة والمخازن":
       if st.session_state["role"] == "Admin":
           expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON expenses.company_id = companies.id LEFT JOIN users ON expenses.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id", conn)
       else:
-          expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON expenses.company_id = companies.id LEFT JOIN users ON expenses.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id WHERE companies.id = ?", conn, params=(st.session_state["company_id"],))
+          expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON expenses.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id WHERE companies.id = ?", conn, params=(st.session_state["company_id"],))
           
       if not expenses_df.empty: st.dataframe(expenses_df, use_container_width=True)
       else: st.info("لا توجد مصروفات مسجلة حتى الآن.")
