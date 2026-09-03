@@ -69,7 +69,7 @@ initialize_database()
 
 def get_db_connection():
   conn = sqlite3.connect("abu_zaid_system.db", timeout=10)
-  conn.execute("PRAGMA foreign_keys = ON") # تفعيل المفاتيح الأجنبية لحذف الفروع المرتبطة تلقائياً
+  conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = sqlite3.Row
   return conn
 
@@ -249,7 +249,6 @@ elif choice == "🏢 إدارة الشركات والفروع":
           del_c_id = st.selectbox("اختر الشركة للحذف (سيحذف كل فروعها وأرصدتها!):", df_comps["id"].tolist(), format_func=lambda x: df_comps[df_comps["id"]==x]["اسم الشركة"].values[0])
           if st.button("🗑️ حذف الشركة"):
               conn.execute("DELETE FROM companies WHERE id=?", (del_c_id,)); conn.commit(); st.success("تم الحذف!"); st.rerun()
-      else: st.info("لا توجد شركات مسجلة.")
 
   with tab2:
       df_branches = pd.read_sql("SELECT branches.id, branches.branch_name AS 'اسم الفرع', companies.company_name AS 'الشركة التابعة' FROM branches JOIN companies ON branches.company_id = companies.id", conn)
@@ -263,7 +262,6 @@ elif choice == "🏢 إدارة الشركات والفروع":
           del_b_id = st.selectbox("اختر الفرع للحذف:", df_branches["id"].tolist(), format_func=lambda x: df_branches[df_branches["id"]==x]["اسم الفرع"].values[0])
           if st.button("🗑️ حذف الفرع"):
               conn.execute("DELETE FROM branches WHERE id=?", (del_b_id,)); conn.commit(); st.success("تم الحذف!"); st.rerun()
-      else: st.info("لا توجد فروع مسجلة.")
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين":
@@ -277,16 +275,23 @@ elif choice == "👥 إدارة المستخدمين":
     u = st.text_input("اسم المستخدم")
     p = st.text_input("كلمة المرور", type="password")
     r = st.selectbox("الصلاحية", ["Cashier", "Branch_Supervisor", "General_Supervisor", "Admin"])
-    assigned_b = st.multiselect("الفروع المخصصة (اختر فرعاً أو أكثر ليتمكن من الدخول إليها):", list(b_dict.keys())) if b_dict else []
+    st.info("💡 صلاحية الـ (Admin) تمنح الدخول لجميع الشركات والفروع تلقائياً.")
+    assigned_b = st.multiselect("الفروع المخصصة (لغير الأدمن):", list(b_dict.keys())) if b_dict else []
     
     if st.form_submit_button("💾 حفظ المستخدم (Enter)") and u and p:
       conn = get_db_connection(); cur = conn.cursor()
-      cur.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", (u.strip(), p, r))
-      new_user_id = cur.lastrowid
-      for branch_str in assigned_b:
-          b_id = b_dict[branch_str]
-          cur.execute("INSERT INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_id))
-      conn.commit(); conn.close(); st.success("تم إضافة المستخدم وربطه بالفروع بنجاح!")
+      try:
+          cur.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", (u.strip(), p, r))
+          new_user_id = cur.lastrowid
+          if r != "Admin":
+              for branch_str in assigned_b:
+                  b_id = b_dict[branch_str]
+                  cur.execute("INSERT INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_id))
+          conn.commit(); st.success("تم إضافة المستخدم بنجاح!")
+      except sqlite3.IntegrityError:
+          st.error("❌ اسم المستخدم مسجل مسبقاً! الرجاء اختيار اسم مستخدم مختلف.")
+      finally:
+          conn.close()
 
 elif choice == "📁 استيراد وتوزيع الأصناف":
   st.header("📁 استيراد الأصناف عبر الإكسيل")
@@ -435,6 +440,7 @@ elif choice == "📊 التقارير الشاملة والمخازن":
   with tab1:
       items_df = pd.read_sql("SELECT items.id AS id, companies.company_name AS الشركة, branches.branch_name AS الفرع, items.item_code AS الكود, items.item_name AS الصنف, items.quantity AS الكمية, items.buy_price AS 'سعر الشراء', items.sale_price AS 'سعر البيع' FROM items JOIN companies ON items.company_id = companies.id LEFT JOIN branches ON items.branch_id = branches.id", conn)
       if not items_df.empty:
+          st.info("💡 عدّل مباشرة على الجداول بالضغط مرتين (للمشرفين فقط).")
           edited_items = st.data_editor(items_df, disabled=(st.session_state["role"] == "Cashier"), hide_index=True, key="items_editor")
           c1, c2 = st.columns(2)
           with c1:
