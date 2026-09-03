@@ -134,7 +134,7 @@ def process_barcode():
             })
     st.session_state.barcode_scan = ""
 
-# --- تسجيل الدخول (مع قفل أمني ذكي لزر الطوارئ) ---
+# --- تسجيل الدخول (مع زر طوارئ ذكي لترقية أو إنشاء الأدمن العام) ---
 if not st.session_state["logged_in"]:
   col1, col2, col3 = st.columns([1, 2, 1])
   with col2:
@@ -146,15 +146,16 @@ if not st.session_state["logged_in"]:
     admin_check = conn_chk.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin'").fetchone()[0]
     conn_chk.close()
     
-    # زر الطوارئ يظهر حصرياً إذا لم يكن هناك أي أدمن في قاعدة البيانات
     if admin_check == 0:
-        st.warning("⚠️ لا توجد حسابات أدمن مسجلة. انقر الزر أدناه لإنشاء حساب المدير العام أول مرة فقط:")
-        if st.button("🛠️ إنشاء حساب الأدمن (admin / admin)"):
+        st.warning("⚠️ لا توجد حسابات بصلاحية (مدير عام - Admin). انقر الزر أدناه لإنشاء/إصلاح حساب الأدمن فوراً:")
+        if st.button("🛠️ إنشاء حساب المدير العام (admin / admin)"):
             conn_ins = get_db_connection()
             try:
-                conn_ins.execute("INSERT INTO users (username, password, role, is_active) VALUES ('admin', 'admin', 'Admin', 1)")
+                # حذف أي حساب قديم باسم admin لتجنب التعارض وإعادة إنشائه بصلاحية Admin مطلقة
+                conn_ins.execute("DELETE FROM users WHERE username = 'admin'")
+                conn_ins.execute("INSERT INTO users (username, password, role, company_id, is_active) VALUES ('admin', 'admin', 'Admin', NULL, 1)")
                 conn_ins.commit()
-                st.success("تم إنشاء الحساب بنجاح! قم بإدخاله بالأسفل للدخول.")
+                st.success("تم إنشاء حساب الأدمن بصلاحيات كاملة بنجاح! قم بإدخاله بالأسفل للدخول.")
                 st.rerun()
             except Exception as e:
                 st.error(f"خطأ: {e}")
@@ -186,7 +187,7 @@ if not st.session_state["logged_in"]:
               
               perms = conn.execute("SELECT allowed_menus FROM role_permissions WHERE role = ?", (user["role"],)).fetchone()
               if perms and perms["allowed_menus"]: st.session_state["allowed_menus"] = perms["allowed_menus"].split(",")
-              else: st.session_state["allowed_menus"] = ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)"]
+              else: st.session_state["allowed_menus"] = ALL_MENUS
               
               log_action(user["id"], "تسجيل دخول", f"تم دخول المستخدم {user['username']}")
               conn.close(); st.rerun()
