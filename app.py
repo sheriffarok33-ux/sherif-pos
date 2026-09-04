@@ -103,6 +103,11 @@ def initialize_database():
   try: cursor.execute("ALTER TABLE invoices ADD COLUMN notes TEXT")
   except: pass
 
+  # تأكيد وجود حساب أدمن افتراضي دائماً لعدم انغلاق البرنامج
+  admin_chk = cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin' AND is_active = 1").fetchone()[0]
+  if admin_chk == 0:
+      cursor.execute("INSERT OR IGNORE INTO users (username, phone, password, role, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', 1)")
+
   conn.commit(); conn.close()
 
 initialize_database()
@@ -153,10 +158,18 @@ def process_barcode():
         item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
         conn.close()
         if item:
-            st.session_state["cart"].append({
-                "id": item["id"], "code": item["item_code"], "name": item["item_name"],
-                "price": item["sale_price"], "qty": 1, "total": item["sale_price"] * 1
-            })
+            found = False
+            for c in st.session_state["cart"]:
+                if c["id"] == item["id"]:
+                    c["qty"] += 1.0
+                    c["total"] = c["price"] * c["qty"]
+                    found = True
+                    break
+            if not found:
+                st.session_state["cart"].append({
+                    "id": item["id"], "code": item["item_code"], "name": item["item_name"],
+                    "price": float(item["sale_price"]), "qty": 1.0, "total": float(item["sale_price"]) * 1.0
+                })
     st.session_state.barcode_scan = ""
 
 # --- تسجيل الدخول ---
@@ -166,25 +179,6 @@ if not st.session_state["logged_in"]:
     st.markdown("<br><br><br>", unsafe_allow_html=True)
     st.title("🔐 بوابة الدخول")
     st.subheader("مجموعة أبو زيد التجارية (القابضة)")
-    
-    conn_chk = get_db_connection()
-    admin_check = conn_chk.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin'").fetchone()[0]
-    conn_chk.close()
-    
-    if admin_check == 0:
-        st.warning("⚠️ لا توجد حسابات بصلاحية (مدير عام - Admin). انقر الزر أدناه لإنشاء/إصلاح حساب الأدمن فوراً:")
-        if st.button("🛠️ إنشاء حساب المدير العام (admin / admin)"):
-            conn_ins = get_db_connection()
-            try:
-                conn_ins.execute("DELETE FROM users WHERE username = 'admin'")
-                conn_ins.execute("INSERT INTO users (username, phone, password, role, company_id, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', NULL, 1)")
-                conn_ins.commit()
-                st.success("تم إنشاء حساب الأدمن بصلاحيات كاملة بنجاح! قم بإدخاله بالأسفل للدخول.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"خطأ: {e}")
-            finally:
-                conn_ins.close()
 
     with st.form("login_form"):
       u_name = st.text_input("اسم المستخدم")
@@ -222,14 +216,17 @@ if not st.session_state["logged_in"]:
               conn.close(); st.error("خطأ في اسم المستخدم أو كلمة المرور!")
   st.stop()
 
-# --- التحقق من الفرع ---
+# --- التحقق من الفرع (التحسين الجذري: الأدمن يتخطى اختيار الفرع تماماً) ---
 if not st.session_state["branch_verified"]:
+  if st.session_state["role"] in ["Admin", "Viewer"]:
+      st.session_state["branch_verified"] = True
+      st.session_state["selected_branch_id"] = None
+      st.rerun()
+      
   st.title(f"🔥 أهلاً بك، {st.session_state['username']}!")
   conn = get_db_connection()
   
-  if st.session_state["role"] == "Admin":
-      branches = conn.execute("SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id").fetchall()
-  elif st.session_state["role"] == "General_Supervisor" and st.session_state["company_id"]:
+  if st.session_state["role"] == "General_Supervisor" and st.session_state["company_id"]:
       branches = conn.execute("SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id WHERE companies.id = ?", (st.session_state["company_id"],)).fetchall()
   else:
       placeholders = ', '.join('?' for _ in st.session_state["assigned_branches"])
@@ -247,8 +244,15 @@ if not st.session_state["branch_verified"]:
             log_action(st.session_state["user_id"], "اختيار فرع", f"تم فتح العمل على الفرع: {chosen_branch}")
             st.rerun()
   else:
-    if st.session_state["role"] == "General_Supervisor" and st.button("دخول للوحة شركتي"): st.session_state["branch_verified"] = True; st.rerun()
-    else: st.error("❌ ليس لديك أي فروع مخصصة. راجع الإدارة أو قم بإنشاء فروع جديدة للشركات.")
+    if st.session_state["role"] == "General_Supervisor" and st.button("دخول للوحة شركتي"): 
+        st.session_state["branch_verified"] = True
+        st.session_state["selected_branch_id"] = None
+        st.rerun()
+    else: 
+        st.error("❌ ليس لديك أي فروع مخصصة. راجع الإدارة أو قم بإنشاء فروع جديدة للشركات.")
+        if st.button("🔄 العودة لتسجيل الدخول"):
+            st.session_state.clear()
+            st.rerun()
   st.stop()
 
 # --- القائمة الجانبية والشعار ---
@@ -808,7 +812,6 @@ elif choice == "🛒 نقطة البيع (POS)":
         with st.form("checkout_form"):
             pay_method = st.selectbox("طريقة الدفع:", ["كاش (نقدي)", "بطاقة (شبكة)", "تحويل بنكي"])
             cash_paid = st.number_input("المبلغ المستلم من العميل (د.ل):", min_value=0.0, value=grand_total)
-            inv_notes = st.text_input("📝 ملاحظات الفاتورة / رقم الإيصال / بيان المنصرف:")
             
             change_due = cash_paid - grand_total if pay_method == "كاش (نقدي)" else 0.0
             if pay_method == "كاش (نقدي)":
@@ -828,11 +831,11 @@ elif choice == "🛒 نقطة البيع (POS)":
                 if pay_method == "كاش (نقدي)" and change_due < 0:
                     st.error("لا يمكن إتمام البيع، المبلغ المستلم غير كافٍ.")
                 else:
-                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, notes, shift_status) VALUES (?, ?, ?, ?, ?, 'open')", (b_id, st.session_state["user_id"], grand_total, pay_method, inv_notes.strip()))
+                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, shift_status) VALUES (?, ?, ?, ?, 'open')", (b_id, st.session_state["user_id"], grand_total, pay_method))
                     for c_item in st.session_state["cart"]:
                         conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
                     conn.commit(); st.session_state["cart"] = []
-                    log_action(st.session_state["user_id"], "مبيعات POS", f"إتمام فاتورة بمبلغ {grand_total} عبر {pay_method} - ملاحظات: {inv_notes}")
+                    log_action(st.session_state["user_id"], "مبيعات POS", f"إتمام فاتورة بمبلغ {grand_total} عبر {pay_method}")
                     st.success("تم إتمام البيع بنجاح!"); st.rerun()
             if hold_submit:
                 st.session_state["held_carts"].append(st.session_state["cart"]); st.session_state["cart"] = []; st.rerun()
@@ -860,7 +863,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                 if st.form_submit_button("إتمام المرتجع (Enter)"):
                     item_data_ret = items_options_ret[ret_item]
                     refund_total = item_data_ret['sale_price'] * ret_qty
-                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, notes, shift_status) VALUES (?, ?, ?, 'مرتجع', 'مرتجع صنف', 'open')", (b_id, st.session_state["user_id"], -refund_total, 'كاش'))
+                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, shift_status) VALUES (?, ?, ?, 'مرتجع', 'open')", (b_id, st.session_state["user_id"], -refund_total, 'كاش'))
                     conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (ret_qty, item_data_ret['id']))
                     conn.commit(); st.session_state["return_auth"] = False; log_action(st.session_state["user_id"], "مرتجع POS", f"إرجاع صنف بخصم {refund_total}"); st.success("تم الإرجاع بنجاح."); st.rerun()
 
