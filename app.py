@@ -103,6 +103,11 @@ def initialize_database():
   try: cursor.execute("ALTER TABLE invoices ADD COLUMN notes TEXT")
   except: pass
 
+  # فحص طوارئ: التأكد من وجود حساب Admin نشط دائماً
+  admin_chk = cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin' AND is_active = 1").fetchone()[0]
+  if admin_chk == 0:
+      cursor.execute("INSERT OR REPLACE INTO users (id, username, phone, password, role, is_active) VALUES (1, 'admin', '0910000000', 'admin', 'Admin', 1)")
+
   conn.commit(); conn.close()
 
 initialize_database()
@@ -176,25 +181,6 @@ if not st.session_state["logged_in"]:
     st.title("🔐 بوابة الدخول")
     st.subheader("مجموعة أبو زيد التجارية (القابضة)")
     
-    conn_chk = get_db_connection()
-    admin_check = conn_chk.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin'").fetchone()[0]
-    conn_chk.close()
-    
-    if admin_check == 0:
-        st.warning("⚠️ لا توجد حسابات بصلاحية (مدير عام - Admin). انقر الزر أدناه لإنشاء/إصلاح حساب الأدمن فوراً:")
-        if st.button("🛠️ إنشاء حساب المدير العام (admin / admin)"):
-            conn_ins = get_db_connection()
-            try:
-                conn_ins.execute("DELETE FROM users WHERE username = 'admin'")
-                conn_ins.execute("INSERT INTO users (username, phone, password, role, company_id, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', NULL, 1)")
-                conn_ins.commit()
-                st.success("تم إنشاء حساب الأدمن بصلاحيات كاملة بنجاح! قم بإدخاله بالأسفل للدخول.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"خطأ: {e}")
-            finally:
-                conn_ins.close()
-
     with st.form("login_form"):
       u_name = st.text_input("اسم المستخدم")
       u_pass = st.text_input("كلمة المرور", type="password")
@@ -229,6 +215,8 @@ if not st.session_state["logged_in"]:
               conn.close(); st.rerun()
           else: 
               conn.close(); st.error("خطأ في اسم المستخدم أو كلمة المرور!")
+              
+    st.info("💡 زر طوارئ: إذا واجهتك مشكلة في الدخول، يمكنك الدخول بـ (اسم المستخدم: `admin` | كلمة المرور: `admin`).")
   st.stop()
 
 # --- التحقق من الفرع ---
@@ -256,8 +244,12 @@ if not st.session_state["branch_verified"]:
             log_action(st.session_state["user_id"], "اختيار فرع", f"تم فتح العمل على الفرع: {chosen_branch}")
             st.rerun()
   else:
-    if st.session_state["role"] == "General_Supervisor" and st.button("دخول للوحة شركتي"): st.session_state["branch_verified"] = True; st.rerun()
-    else: st.error("❌ ليس لديك أي فروع مخصصة. راجع الإدارة أو قم بإنشاء فروع جديدة للشركات.")
+    if st.session_state["role"] == "General_Supervisor" or st.session_state["role"] == "Admin":
+        if st.button("دخول بدون فرع محدد (إدارة عامة)"):
+            st.session_state["branch_verified"] = True
+            st.session_state["selected_branch_id"] = None
+            st.rerun()
+    st.error("❌ ليس لديك أي فروع مخصصة. راجع الإدارة أو قم بإنشاء فروع جديدة للشركات.")
   st.stop()
 
 # --- القائمة الجانبية والشعار ---
@@ -635,7 +627,7 @@ elif choice == "💰 تسجيل المصروفات":
                   conn.execute("INSERT INTO expenses (company_id, branch_id, user_id, treasury_id, amount, description) VALUES (?, ?, ?, ?, ?, ?)", (comps_dict[sel_comp], b_dict[sel_branch], st.session_state["user_id"], t_id, amount, final_desc))
                   conn.execute("UPDATE treasuries SET balance = balance - ? WHERE id = ?", (amount, t_id))
                   conn.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, 'سحب', ?, ?)", (t_id, st.session_state["user_id"], amount, f"مصروفات: {final_desc}"))
-                  conn.commit(); log_action(st.session_state["user_id"], "تسجيل مصروف", f"{amount} - {final_desc}"); st.success("تم التحديث بنجاح!"); st.rerun()
+                  conn.commit(); log_action(st.session_state["user_id"], "تسجيل مصروف", f"{amount} - {final_desc}"); st.success("تم الحفظ وتحديث الخزينة بنجاح!"); st.rerun()
   conn.close()
 
 elif choice == "📊 التقارير الشاملة والمخازن":
