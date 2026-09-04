@@ -65,7 +65,7 @@ def initialize_database():
   """)
   
   cursor.execute("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_id INTEGER DEFAULT NULL, item_code TEXT, item_name TEXT NOT NULL, quantity REAL DEFAULT 0.0, buy_price REAL DEFAULT 0.0, sale_price REAL NOT NULL, FOREIGN KEY (company_id) REFERENCES companies(id), FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE)")
-  cursor.execute("CREATE TABLE IF NOT EXISTS invoices (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, total_amount REAL, payment_method TEXT DEFAULT 'كاش', shift_status TEXT DEFAULT 'open', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+  cursor.execute("CREATE TABLE IF NOT EXISTS invoices (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, total_amount REAL, payment_method TEXT DEFAULT 'كاش', notes TEXT, shift_status TEXT DEFAULT 'open', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
   cursor.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_id INTEGER, user_id INTEGER, treasury_id INTEGER, amount REAL NOT NULL, description TEXT NOT NULL, expense_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (company_id) REFERENCES companies(id), FOREIGN KEY (branch_id) REFERENCES branches(id))")
   cursor.execute("CREATE TABLE IF NOT EXISTS treasuries (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_id INTEGER, treasury_name TEXT NOT NULL, treasury_type TEXT NOT NULL, balance REAL DEFAULT 0.0)")
   cursor.execute("CREATE TABLE IF NOT EXISTS treasury_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, treasury_id INTEGER, user_id INTEGER, trans_type TEXT NOT NULL, amount REAL NOT NULL, description TEXT, trans_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
@@ -99,6 +99,8 @@ def initialize_database():
   try: cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
   except: pass
   try: cursor.execute("ALTER TABLE invoices ADD COLUMN payment_method TEXT DEFAULT 'كاش'")
+  except: pass
+  try: cursor.execute("ALTER TABLE invoices ADD COLUMN notes TEXT")
   except: pass
 
   conn.commit(); conn.close()
@@ -618,7 +620,7 @@ elif choice == "💰 تسجيل المصروفات":
       t_dict = {f"{t['treasury_name']} (رصيد: {t['balance']:,.2f})": t["id"] for t in treasuries}
       
       with st.form("expense_form", clear_on_submit=True):
-          amount = st.number_input("مبلغ المصروف", min_value=0.1, value=10.0)
+          amount = st.number_input("مبلغ المصروف", min_value=0.01, value=10.0, step=1.0)
           exp_list = [r["name"] for r in conn.execute("SELECT name FROM dict_expenses").fetchall()]
           exp_list.append("➕ إضافة تصنيف جديد...")
           sel_desc = st.selectbox("تصنيف المصروف", exp_list)
@@ -633,7 +635,7 @@ elif choice == "💰 تسجيل المصروفات":
                   conn.execute("INSERT INTO expenses (company_id, branch_id, user_id, treasury_id, amount, description) VALUES (?, ?, ?, ?, ?, ?)", (comps_dict[sel_comp], b_dict[sel_branch], st.session_state["user_id"], t_id, amount, final_desc))
                   conn.execute("UPDATE treasuries SET balance = balance - ? WHERE id = ?", (amount, t_id))
                   conn.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, 'سحب', ?, ?)", (t_id, st.session_state["user_id"], amount, f"مصروفات: {final_desc}"))
-                  conn.commit(); log_action(st.session_state["user_id"], "تسجيل مصروف", f"{amount} - {final_desc}"); st.success("تم!"); st.rerun()
+                  conn.commit(); log_action(st.session_state["user_id"], "تسجيل مصروف", f"{amount} - {final_desc}"); st.success("تم التحديث بنجاح!"); st.rerun()
   conn.close()
 
 elif choice == "📊 التقارير الشاملة والمخازن":
@@ -722,9 +724,9 @@ elif choice == "📊 التقارير الشاملة والمخازن":
 
   with tab2:
       if st.session_state["role"] == "Admin":
-          invoices_df = pd.read_sql("SELECT invoices.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', users.username AS 'الكاشير', invoices.total_amount AS 'المبلغ', invoices.payment_method AS 'طريقة الدفع', invoices.shift_status AS 'الحالة', invoices.created_at AS 'التاريخ' FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id", conn)
+          invoices_df = pd.read_sql("SELECT invoices.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', users.username AS 'الكاشير', invoices.total_amount AS 'المبلغ', invoices.payment_method AS 'طريقة الدفع', invoices.notes AS 'ملاحظات الفاتورة', invoices.shift_status AS 'الحالة', invoices.created_at AS 'التاريخ' FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id", conn)
       else:
-          invoices_df = pd.read_sql("SELECT invoices.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', users.username AS 'الكاشير', invoices.total_amount AS 'المبلغ', invoices.payment_method AS 'طريقة الدفع', invoices.shift_status AS 'الحالة', invoices.created_at AS 'التاريخ' FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id WHERE companies.id = ?", conn, params=(st.session_state["company_id"],))
+          invoices_df = pd.read_sql("SELECT invoices.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', users.username AS 'الكاشير', invoices.total_amount AS 'المبلغ', invoices.payment_method AS 'طريقة الدفع', invoices.notes AS 'ملاحظات الفاتورة', invoices.shift_status AS 'الحالة', invoices.created_at AS 'التاريخ' FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id WHERE companies.id = ?", conn, params=(st.session_state["company_id"],))
           
       if not invoices_df.empty: st.dataframe(invoices_df, use_container_width=True)
       else: st.info("لا توجد فواتير مبيعات مسجلة حتى الآن.")
@@ -843,6 +845,7 @@ elif choice == "🛒 نقطة البيع (POS)":
         with st.form("checkout_form"):
             pay_method = st.selectbox("طريقة الدفع:", ["كاش (نقدي)", "بطاقة (شبكة)", "تحويل بنكي"])
             cash_paid = st.number_input("المبلغ المستلم من العميل (د.ل):", min_value=0.0, value=float(grand_total), step=1.0)
+            inv_notes = st.text_input("📝 ملاحظات الفاتورة / رقم الإيصال اليدوي / بيان المنصرف:")
             
             change_due = cash_paid - grand_total if pay_method == "كاش (نقدي)" else 0.0
             if pay_method == "كاش (نقدي)":
@@ -862,11 +865,11 @@ elif choice == "🛒 نقطة البيع (POS)":
                 if pay_method == "كاش (نقدي)" and change_due < 0:
                     st.error("لا يمكن إتمام البيع، المبلغ المستلم غير كافٍ.")
                 else:
-                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, shift_status) VALUES (?, ?, ?, ?, 'open')", (b_id, st.session_state["user_id"], grand_total, pay_method))
+                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, notes, shift_status) VALUES (?, ?, ?, ?, ?, 'open')", (b_id, st.session_state["user_id"], grand_total, pay_method, inv_notes.strip()))
                     for c_item in st.session_state["cart"]:
                         conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
                     conn.commit(); st.session_state["cart"] = []
-                    log_action(st.session_state["user_id"], "مبيعات POS", f"إتمام فاتورة بمبلغ {grand_total} عبر {pay_method}")
+                    log_action(st.session_state["user_id"], "مبيعات POS", f"إتمام فاتورة بمبلغ {grand_total} عبر {pay_method} - ملاحظات: {inv_notes}")
                     st.success("تم إتمام البيع بنجاح!"); st.rerun()
             if hold_submit:
                 st.session_state["held_carts"].append(st.session_state["cart"]); st.session_state["cart"] = []; st.rerun()
@@ -894,7 +897,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                 if st.form_submit_button("إتمام المرتجع (Enter)"):
                     item_data_ret = items_options_ret[ret_item]
                     refund_total = item_data_ret['sale_price'] * ret_qty
-                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, shift_status) VALUES (?, ?, ?, 'مرتجع', 'open')", (b_id, st.session_state["user_id"], -refund_total, 'كاش'))
+                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, notes, shift_status) VALUES (?, ?, ?, 'مرتجع', 'مرتجع صنف', 'open')", (b_id, st.session_state["user_id"], -refund_total, 'كاش'))
                     conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (ret_qty, item_data_ret['id']))
                     conn.commit(); st.session_state["return_auth"] = False; log_action(st.session_state["user_id"], "مرتجع POS", f"إرجاع صنف بخصم {refund_total}"); st.success("تم الإرجاع بنجاح."); st.rerun()
 
