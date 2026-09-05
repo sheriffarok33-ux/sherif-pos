@@ -366,7 +366,7 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
       b_dict = {f"{b['company_name']} ➔ {b['branch_name']}": b["id"] for b in branches}
 
       if not is_viewer:
-          with st.expander("➕ إضافة مستخدم جديد", expanded=False):
+          with st.expander("➕ إضافة مستخدم جديد (مدير، مشرف، أو كاشير)", expanded=False):
             with st.form("user_form", clear_on_submit=True):
               u = st.text_input("اسم المستخدم")
               phone = st.text_input("رقم الهاتف (إجباري ومميز لكل موظف)")
@@ -380,21 +380,33 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
               assigned_c = None
               assigned_b = []
               
-              if db_role == "General_Supervisor" and comps_dict:
-                  assigned_c_name = st.selectbox("الشركة التابعة له:", list(comps_dict.keys()))
+              # اختيار الشركة والفرع بحسب الرتبة لتظهر وتتربط بشكل سليم تماماً
+              if db_role in ["General_Supervisor", "Branch_Supervisor", "Cashier"] and comps_dict:
+                  assigned_c_name = st.selectbox("اختر الشركة التابعة لها الموظف:", list(comps_dict.keys()))
                   assigned_c = comps_dict[assigned_c_name]
-              elif db_role == "Branch_Supervisor" and b_dict:
-                  assigned_b = st.multiselect("الفروع المخصصة:", list(b_dict.keys()))
-              # ملاحظة: رتبة Cashier لا تظهر لها فروع عند الإنشاء بناءً على طلبك
+                  
+                  # جلب فروع هذه الشركة فقط
+                  co_branches = conn.execute("SELECT id, branch_name FROM branches WHERE company_id = ?", (assigned_c,)).fetchall()
+                  co_b_dict = {b["branch_name"]: b["id"] for b in co_branches}
+                  
+                  if db_role == "Cashier" and co_b_dict:
+                      assigned_cashier_branch = st.selectbox("اختر فرع العمل للكاشير:", list(co_b_dict.keys()))
+                      assigned_b = [co_b_dict[assigned_cashier_branch]]
+                  elif db_role == "Branch_Supervisor" and co_b_dict:
+                      multi_b = st.multiselect("الفروع المخصصة للإشراف عليها:", list(co_b_dict.keys()))
+                      assigned_b = [co_b_dict[b] for b in multi_b]
               
               if st.form_submit_button("💾 حفظ المستخدم") and u and p and phone:
                 try:
                     cur = conn.cursor()
-                    cur.execute("INSERT INTO users (username, phone, password, role, company_id) VALUES (?, ?, ?, ?, ?)", (u.strip(), phone.strip(), p, db_role, assigned_c))
+                    # ضبط الفرع الافتراضي لو كان كاشير
+                    default_branch_id = assigned_b[0] if (db_role == "Cashier" and assigned_b) else None
+                    cur.execute("INSERT INTO users (username, phone, password, role, company_id, branch_id) VALUES (?, ?, ?, ?, ?, ?)", (u.strip(), phone.strip(), p, db_role, assigned_c, default_branch_id))
                     new_user_id = cur.lastrowid
-                    if db_role == "Branch_Supervisor":
-                        for branch_str in assigned_b: cur.execute("INSERT INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_dict[branch_str]))
-                    conn.commit(); log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}"); st.success("🎉 تم حفظ المستخدم بنجاح!")
+                    if db_role in ["Branch_Supervisor", "Cashier"]:
+                        for b_id_val in assigned_b: 
+                            cur.execute("INSERT OR IGNORE INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_id_val))
+                    conn.commit(); log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}"); st.success("🎉 تم حفظ المستخدم وربطه بالشركة والفرع بنجاح!")
                 except Exception as e: st.error(f"🎭 **هَنّي روحك.. خطأ أثناء إضافة المستخدم!**\nالسبب: {e}")
 
       st.markdown("---")
@@ -406,7 +418,6 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
       
       if not users_df.empty:
           st.info("💡 يمكنك تعديل الاسم، رقم الهاتف، كلمة المرور، **الرتبة**، أو حالة النشاط مباشرة من الجدول ثم اضغط حفظ التعديلات.")
-          # تم السماح بتعديل عمود 'الرتبة' مباشرة من الجدول
           edited_users = st.data_editor(users_df, hide_index=True, disabled=is_viewer or ["id"], key="u_editor")
           if not is_viewer:
               c1, c2 = st.columns([2,1])
