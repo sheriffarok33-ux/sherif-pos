@@ -17,15 +17,15 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap');
     html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; }
     .main { background-color: #f4f7f6; }
-    div.stButton > button { border-radius: 10px; font-weight: 700; transition: all 0.3s ease; }
+    div.stButton > button { border-radius: 10px; font-weight: 700; transition: all 0.3s ease; height: 45px; }
     [data-testid="stSidebar"] .stButton>button {
         background-color: #ffffff; color: #1e293b; border: 1px solid #e2e8f0;
         border-radius: 12px; padding: 10px 15px; text-align: right; font-weight: bold;
-        transition: all 0.3s ease; margin-bottom: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); font-size: 16px;
+        transition: all 0.3s ease; margin-bottom: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); font-size: 16px; height: auto;
     }
     [data-testid="stSidebar"] .stButton>button:hover { background-color: #2563eb; color: white; border-color: #2563eb; transform: translateX(-5px); }
     .card { padding: 20px; border-radius: 12px; color: white; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px; }
-    input:focus { border: 2px solid #2563eb !important; background-color: #eff6ff !important; }
+    .pos-btn { background-color: #0ea5e9; color: white; border-radius: 10px; padding: 15px; text-align: center; font-weight: bold; font-size: 16px; margin-bottom: 8px; border: none; cursor: pointer; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -164,6 +164,7 @@ if "held_carts" not in st.session_state: st.session_state["held_carts"] = []
 if "return_auth" not in st.session_state: st.session_state["return_auth"] = False
 if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
 if "barcode_scan" not in st.session_state: st.session_state["barcode_scan"] = ""
+if "last_invoice" not in st.session_state: st.session_state["last_invoice"] = None
 
 def set_page(page_name): st.session_state["page"] = page_name
 
@@ -865,9 +866,9 @@ elif choice == "📊 التقارير الشاملة والمخازن":
 
   with tab3:
       if st.session_state["role"] in ["Admin", "CEO"]:
-          expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON expenses.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id", conn)
+          expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id", conn)
       else:
-          expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON expenses.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id WHERE companies.id = ?", conn, params=(st.session_state["company_id"],))
+          expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id WHERE companies.id = ?", conn, params=(st.session_state["company_id"],))
           
       if not expenses_df.empty: st.dataframe(expenses_df, use_container_width=True)
       else: st.info("لا توجد مصروفات مسجلة حتى الآن.")
@@ -938,7 +939,7 @@ elif choice == "🥜 التحميص والخلط والتصنيع":
           if sel_new_roast == "➕ إضافة صنف جديد تماماً للقائمة...": new_roast = st.text_input("اسم الصنف المحمص:")
               
           if st.form_submit_button("⚙️ تنفيذ التحميص (Enter)"):
-            final_roast_name = new_roast.strip() if sel_new_roast == "➕ إضافة صنف جديد تماماً للقائمة..." else sel_new_roast
+            final_roast_name = new_roast.strip() if sel_new_roast == "➕ إضافة صنف جديد تماماً للقائمة..." else sel_roast
             if final_roast_name and sel_item:
               old_price = items_dict[sel_item]["sale_price"]
               new_unit_price = (in_qty * old_price) / out_qty
@@ -967,165 +968,190 @@ elif choice == "🥜 التحميص والخلط والتصنيع":
     conn.close()
 
 elif choice == "🛒 نقطة البيع (POS)":
-  st.header("🛒 شاشة الكاشير (POS)")
-  tab1, tab2, tab3 = st.tabs(["🛒 شاشة البيع", "📦 المرتجعات", "📊 الوردية (X/Z-READ)"])
-  b_id = st.session_state.get("selected_branch_id")
-  conn = get_db_connection()
+  st.header("🛒 نقطة البيع السريعة (POS Cashier)")
   
-  branch_items = conn.execute("SELECT * FROM items WHERE branch_id = ?", (b_id,)).fetchall()
+  conn_pos = get_db_connection()
+  
+  # السماح للأدمن أو CEO باختيار الشركة والفرع لمتابعة المبيعات، بينما الكاشير يعمل على فرعه مباشرة
+  if st.session_state["role"] in ["Admin", "CEO"]:
+      col_p1, col_p2 = st.columns(2)
+      pos_comps = conn_pos.execute("SELECT id, company_name FROM companies").fetchall()
+      pos_c_dict = {c["company_name"]: c["id"] for c in pos_comps}
+      if pos_c_dict:
+          with col_p1:
+              sel_pos_c_name = st.selectbox("🏢 اختر الشركة لعرض مبيعاتها:", list(pos_c_dict.keys()), key="pos_sel_comp")
+              sel_pos_c_id = pos_c_dict[sel_pos_c_name]
+          with col_p2:
+              pos_branches = conn_pos.execute("SELECT id, branch_name FROM branches WHERE company_id = ?", (sel_pos_c_id,)).fetchall()
+              pos_b_dict = {b["branch_name"]: b["id"] for b in pos_branches}
+              if pos_b_dict:
+                  sel_pos_b_name = st.selectbox("📍 اختر الفرع:", list(pos_b_dict.keys()), key="pos_sel_branch")
+                  b_id = pos_b_dict[sel_pos_b_name]
+              else:
+                  st.warning("⚠️ هذه الشركة لا توجد لها فروع مسجلة.")
+                  b_id = None
+      else:
+          st.warning("⚠️ لا توجد شركات مسجلة في النظام بعد.")
+          b_id = None
+  else:
+      b_id = st.session_state.get("selected_branch_id")
+
+  if b_id:
+      branch_items = conn_pos.execute("SELECT * FROM items WHERE branch_id = ?", (b_id,)).fetchall()
       
-  with tab1:
-    st.text_input("🔍 مسح الباركود (Scanner):", key="barcode_scan", on_change=process_barcode)
-    
-    # --- قسم إضافة صنف عادي أو (صنف عام / حر يدوي) ---
-    with st.expander("🏷️ إضافة صنف عادي أو صنف عام (يدوي بالكيلو أو بالعدد)", expanded=False):
-        add_type = st.radio("اختر طريقة الإضافة:", ["بحث صنف من المخزون", "➕ صنف عام / حر يدوي"])
-        if add_type == "بحث صنف من المخزون":
-            with st.form("pos_form", clear_on_submit=True):
-                col_search, col_qty, col_btn = st.columns([3, 1, 1])
-                with col_search:
-                    items_options = {f"[{i['item_code']}] {i['item_name']} - {i['sale_price']} د.ل": i for i in branch_items} if branch_items else {}
-                    chosen_item = st.selectbox("ابحث عن الصنف يدوياً:", [""] + list(items_options.keys()))
-                with col_qty: qty = st.number_input("الكمية (تقبل الكسور كالكيلو 0.5)", min_value=0.01, value=1.0, step=0.1, key="q_norm")
-                with col_btn:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    if st.form_submit_button("➕ إضافة", use_container_width=True) and chosen_item:
-                        item_data = items_options[chosen_item]
-                        st.session_state["cart"].append({
-                            "id": item_data["id"], "code": item_data["item_code"], "name": item_data["item_name"], 
-                            "price": float(item_data["sale_price"]), "qty": float(qty), "total": float(item_data["sale_price"]) * float(qty)
-                        })
-                        st.rerun()
-        else:
-            with st.form("general_item_form", clear_on_submit=True):
-                g_name = st.text_input("اسم أو وصف الصنف العام (مثال: صنف بديل / خدمة عامة)")
-                g_price = st.number_input("السعر (د.ل)", min_value=0.1, value=5.0)
-                g_qty = st.number_input("الكمية", min_value=0.01, value=1.0, step=0.1)
-                reason_note = st.text_input("⚠️ تنبيه/سبب إضافة الصنف يدوياً:")
-                if st.form_submit_button("➕ إضافة الصنف العام للسلة"):
-                    if g_name:
-                        st.session_state["cart"].append({
-                            "id": 999999, "code": "GEN-000", "name": f"[عام/حر] {g_name} (ملاحظة: {reason_note})",
-                            "price": float(g_price), "qty": float(g_qty), "total": float(g_price) * float(g_qty)
-                        })
-                        st.success("تمت إضافة الصنف العام وتوثيق الملاحظة بنجاح!")
-                        st.rerun()
-                    else:
-                        st.warning("الرجاء كتابة اسم الصنف العام.")
+      tab1, tab2, tab3 = st.tabs(["🛒 شاشة البيع السريعة", "📦 المرتجعات", "📊 الوردية (X/Z-READ)"])
+      
+      with tab1:
+          col_grid, col_cart = st.columns([2, 1])
+          
+          with col_grid:
+              st.subheader("📦 شبكة أصناف المخزن المتاحة للبيع")
+              st.text_input("🔍 بحث أو مسح باركود صنف:", key="barcode_scan", on_change=process_barcode)
+              
+              if branch_items:
+                  grid_cols = st.columns(3)
+                  for idx, item in enumerate(branch_items):
+                      with grid_cols[idx % 3]:
+                          st.markdown(f"""
+                              <div class="pos-item-card">
+                                  <h4>{item['item_name']}</h4>
+                                  <p style="color: #10b981; font-weight: bold; font-size: 18px;">{item['sale_price']} د.ل</p>
+                                  <p style="color: #64748b; font-size: 12px;">المتاح: {item['quantity']}</p>
+                              </div>
+                          """, unsafe_allow_html=True)
+                          if st.button(f"➕ إضافة ({item['item_name']})", key=f"grid_add_{item['id']}"):
+                              st.session_state["cart"].append({
+                                  "id": item["id"], "code": item["item_code"], "name": item["item_name"],
+                                  "price": float(item["sale_price"]), "qty": 1.0, "total": float(item["sale_price"]) * 1.0
+                              })
+                              st.rerun()
+              else:
+                  st.info("⚠️ لا توجد أصناف مضافة لهذا الفرع حالياً. قم بتحويل أو استيراد أصناف له.")
 
-    st.markdown("---")
-    if st.session_state["cart"]:
-        df_cart = pd.DataFrame(st.session_state["cart"])
-        st.data_editor(df_cart[["code", "name", "price", "qty", "total"]], disabled=True, use_container_width=True)
-        grand_total = sum([x["total"] for x in st.session_state["cart"]])
-        st.metric("الإجمالي النهائي", f"{grand_total:,.2f} د.ل")
-        
-        with st.form("checkout_form"):
-            pay_method = st.selectbox("طريقة الدفع:", ["كاش (نقدي)", "بطاقة (شبكة)", "تحويل بنكي"])
-            cash_paid = st.number_input("المبلغ المستلم من العميل (د.ل):", min_value=0.0, value=grand_total)
-            inv_notes = st.text_input("📝 ملاحظات الفاتورة / رقم الإيصال / بيان المنصرف:")
-            
-            change_due = cash_paid - grand_total if pay_method == "كاش (نقدي)" else 0.0
-            if pay_method == "كاش (نقدي)":
-                st.info(f"💵 المتبقي (الباقي للعميل): **{change_due:,.2f} د.ل**")
-                if change_due < 0:
-                    st.error("⚠️ المبلغ المستلم أقل من الإجمالي المطلوب!")
-            
-            c_act1, c_act2, c_act3, c_act4 = st.columns(4)
-            with c_act1:
-                checkout_submit = st.form_submit_button("🖨️ إتمام وطباعة", use_container_width=True)
-            with c_act2:
-                reprint_submit = st.form_submit_button("📜 إعادة طباعة آخر فاتورة", use_container_width=True)
-            with c_act3:
-                hold_submit = st.form_submit_button("⏸️ تعليق", use_container_width=True)
-            with c_act4:
-                clear_submit = st.form_submit_button("🗑️ تفريغ", use_container_width=True)
-                
-            if checkout_submit:
-                if pay_method == "كاش (نقدي)" and change_due < 0:
-                    st.error("🎭 **هَنّي روحك.. المبلغ المدفوع غير كافٍ لإتمام الفاتورة!** (خطأ نقص نقدية)")
-                else:
-                    cur_ins = conn.cursor()
-                    cur_ins.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, notes, shift_status) VALUES (?, ?, ?, ?, ?, 'open')", (b_id, st.session_state["user_id"], grand_total, pay_method, inv_notes.strip()))
-                    inv_id_val = cur_ins.lastrowid
-                    for c_item in st.session_state["cart"]:
-                        if c_item["id"] != 999999:
-                            conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
-                    conn.commit()
-                    
-                    st.session_state["last_invoice"] = {
-                        "id": inv_id_val, "total": grand_total, "method": pay_method, 
-                        "notes": inv_notes, "items": list(st.session_state["cart"]), "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    }
-                    st.session_state["cart"] = []
-                    log_action(st.session_state["user_id"], "مبيعات POS", f"إتمام فاتورة بمبلغ {grand_total} عبر {pay_method} - ملاحظات: {inv_notes}")
-                    st.success(f"🎉 تم إتمام البيع بنجاح برقم فاتورة: #{inv_id_val}!")
-                    st.rerun()
-            if reprint_submit:
-                if st.session_state.get("last_invoice"):
-                    inv = st.session_state["last_invoice"]
-                    st.info(f"📜 **نسخة مكررة - تفاصيل آخر فاتورة (#{inv['id']}):**\n* التاريخ: {inv['time']}\n* الإجمالي: {inv['total']:,.2f} د.ل\n* طريقة الدفع: {inv['method']}\n* ملاحظات: {inv['notes']}")
-                else:
-                    st.warning("🎭 **هَنّي روحك.. لا توجد أي فاتورة مسجلة في الذاكرة لإعادة طباعتها حتى الآن!**")
-            if hold_submit:
-                st.session_state["held_carts"].append(st.session_state["cart"])
-                st.session_state["cart"] = []
-                st.success("⏸️ تم تعليق الفاتورة بنجاح.")
-                st.rerun()
-            if clear_submit:
-                st.session_state["cart"] = []
-                st.rerun()
+              # إضافة صنف عام / حر يدوي
+              with st.expander("➕ إضافة صنف عام / حر يدوي (ليس له كود)", expanded=False):
+                  with st.form("gen_pos_form", clear_on_submit=True):
+                      g_name = st.text_input("اسم الصنف العام")
+                      g_price = st.number_input("السعر (د.ل)", min_value=0.1, value=5.0)
+                      g_qty = st.number_input("الكمية (تقبل الكسور)", min_value=0.01, value=1.0, step=0.1)
+                      if st.form_submit_button("➕ إضافة للسلة"):
+                          if g_name:
+                              st.session_state["cart"].append({
+                                  "id": 999999, "code": "GEN-000", "name": f"[عام/حر] {g_name}",
+                                  "price": float(g_price), "qty": float(g_qty), "total": float(g_price) * float(g_qty)
+                              })
+                              st.success("تمت إضافة الصنف العام بنجاح!")
+                              st.rerun()
 
-    if st.session_state["held_carts"] and st.button("▶️ استرجاع فاتورة معلقة"):
-        if not st.session_state["cart"]: 
-            st.session_state["cart"] = st.session_state["held_carts"].pop()
-            st.rerun()
+          with col_cart:
+              st.subheader("🛒 فاتورة البيع الحالية")
+              if st.session_state["cart"]:
+                  df_cart = pd.DataFrame(st.session_state["cart"])
+                  st.data_editor(df_cart[["name", "price", "qty", "total"]], disabled=True, use_container_width=True, key="cart_editor")
+                  grand_total = sum([x["total"] for x in st.session_state["cart"]])
+                  st.metric("الإجمالي المطلوب", f"{grand_total:,.2f} د.ل")
+                  
+                  with st.form("checkout_form_side"):
+                      pay_method = st.selectbox("طريقة الدفع:", ["كاش (نقدي)", "بطاقة (شبكة)", "تحويل بنكي"])
+                      cash_paid = st.number_input("المبلغ المستلم:", min_value=0.0, value=grand_total)
+                      inv_notes = st.text_input("📝 ملاحظات / اسم العميل:")
+                      
+                      change_due = cash_paid - grand_total if pay_method == "كاش (نقدي)" else 0.0
+                      if pay_method == "كاش (نقدي)":
+                          st.info(f"💵 المتبقي للعميل: **{change_due:,.2f} د.ل**")
+                      
+                      col_b1, col_b2 = st.columns(2)
+                      with col_b1:
+                          checkout_btn = st.form_submit_button("🖨️ إتمام وطباعة", use_container_width=True)
+                          hold_btn = st.form_submit_button("⏸️ تعليق", use_container_width=True)
+                      with col_b2:
+                          reprint_btn = st.form_submit_button("📜 إعادة طباعة", use_container_width=True)
+                          clear_btn = st.form_submit_button("🗑️ تفريغ", use_container_width=True)
+                          
+                      if checkout_btn:
+                          if pay_method == "كاش (نقدي)" and change_due < 0:
+                              st.error("🎭 **هَنّي روحك.. المبلغ غير كافٍ!**")
+                          else:
+                              cur_ins = conn_pos.cursor()
+                              cur_ins.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, notes, shift_status) VALUES (?, ?, ?, ?, ?, 'open')", (b_id, st.session_state["user_id"], grand_total, pay_method, inv_notes.strip()))
+                              inv_id_val = cur_ins.lastrowid
+                              for c_item in st.session_state["cart"]:
+                                  if c_item["id"] != 999999:
+                                      conn_pos.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
+                              conn_pos.commit()
+                              
+                              st.session_state["last_invoice"] = {
+                                  "id": inv_id_val, "total": grand_total, "method": pay_method, 
+                                  "notes": inv_notes, "items": list(st.session_state["cart"]), "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                              }
+                              st.session_state["cart"] = []
+                              log_action(st.session_state["user_id"], "مبيعات POS", f"إتمام فاتورة #{inv_id_val} بمبلغ {grand_total}")
+                              st.success(f"🎉 تم إتمام البيع بنجاح برقم فاتورة: #{inv_id_val}!")
+                              st.rerun()
+                      if reprint_btn:
+                          if st.session_state.get("last_invoice"):
+                              inv = st.session_state["last_invoice"]
+                              st.info(f"📜 **نسخة مكررة للفاتورة (#{inv['id']}):**\n* التاريخ: {inv['time']}\n* الإجمالي: {inv['total']:,.2f} د.ل\n* الدفع: {inv['method']}")
+                          else:
+                              st.warning("🎭 **هَنّي روحك.. لا توجد فاتورة مسجلة لإعادة طباعتها!**")
+                      if hold_btn:
+                          st.session_state["held_carts"].append(st.session_state["cart"])
+                          st.session_state["cart"] = []
+                          st.success("⏸️ تم تعليق الفاتورة.")
+                          st.rerun()
+                      if clear_btn:
+                          st.session_state["cart"] = []
+                          st.rerun()
+              else:
+                  st.info("السلة فارغة. اختر صنفاً للبدء.")
 
-  with tab2:
-    if not st.session_state["return_auth"]:
-        with st.form("auth_form", clear_on_submit=True):
-            auth_pass = st.text_input("الرقم السري للمشرف لفتح المرتجعات:", type="password")
-            if st.form_submit_button("فتح شاشة المرتجعات (Enter)"):
-                if conn.execute("SELECT role FROM users WHERE password = ? AND role IN ('Admin', 'CEO', 'General_Supervisor', 'Branch_Supervisor')", (auth_pass,)).fetchone():
-                    st.session_state["return_auth"] = True; st.rerun()
-                else: st.error("🎭 **هَنّي روحك.. الرقم السري للمشرف غير صحيح!** (خطأ مصادقة)")
-    else:
-        st.success("✅ صلاحية المرتجع مفتوحة.")
-        if branch_items:
-            with st.form("return_form", clear_on_submit=True):
-                items_options_ret = {f"[{i['item_code']}] {i['item_name']} - {i['sale_price']} د.ل": i for i in branch_items}
-                ret_item = st.selectbox("اختر الصنف المرتجع:", list(items_options_ret.keys()))
-                ret_qty = st.number_input("الكمية المرتجعة", min_value=0.01, value=1.0, step=0.1)
-                if st.form_submit_button("إتمام المرتجع (Enter)"):
-                    item_data_ret = items_options_ret[ret_item]
-                    refund_total = float(item_data_ret['sale_price']) * float(ret_qty)
-                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, notes, shift_status) VALUES (?, ?, ?, 'مرتجع', 'مرتجع صنف', 'open')", (b_id, st.session_state["user_id"], -refund_total))
-                    conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (ret_qty, item_data_ret['id']))
-                    conn.commit(); st.session_state["return_auth"] = False; log_action(st.session_state["user_id"], "مرتجع POS", f"إرجاع صنف بخصم {refund_total}"); st.success("📦 تم إرجاع الصنف وتعديل المخزون بنجاح.")
-                    st.rerun()
+              if st.session_state["held_carts"] and st.button("▶️ استرجاع فاتورة معلقة"):
+                  if not st.session_state["cart"]: 
+                      st.session_state["cart"] = st.session_state["held_carts"].pop()
+                      st.rerun()
 
-  with tab3:
-    open_sales = conn.execute("SELECT SUM(total_amount) as total FROM invoices WHERE branch_id = ? AND shift_status = 'open'", (b_id,)).fetchone()
-    shift_total = open_sales["total"] if open_sales["total"] else 0.0
-    col_x, col_z = st.columns(2)
-    with col_x: st.markdown(f"""<div class="card" style="background-color: #0284c7;"><h3>X-READ (مبيعات الوردية)</h3><h2>{shift_total:,.2f} د.ل</h2></div>""", unsafe_allow_html=True)
-    with col_z:
-        st.markdown(f"""<div class="card" style="background-color: #be123c;">### Z-READ (تصفير الوردية وإيداع)</div>""", unsafe_allow_html=True)
-        treasuries_branch = conn.execute("SELECT id, treasury_name FROM treasuries WHERE branch_id = ? OR (branch_id IS NULL AND company_id = (SELECT company_id FROM branches WHERE id=?))", (b_id, b_id)).fetchall()
-        t_dict_z = {t["treasury_name"]: t["id"] for t in treasuries_branch}
-        if t_dict_z:
-            with st.form("zread_form", clear_on_submit=True):
-                sel_t_z = st.selectbox("إيداع النقدية في:", list(t_dict_z.keys()))
-                if st.form_submit_button("🛑 تنفيذ Z-READ (Enter)"):
-                    if shift_total > 0:
-                        t_id_z = t_dict_z[sel_t_z]
-                        conn.execute("UPDATE invoices SET shift_status = 'closed' WHERE branch_id = ? AND shift_status = 'open'", (b_id,))
-                        conn.execute("UPDATE treasuries SET balance = balance + ? WHERE id = ?", (shift_total, t_id_z))
-                        conn.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, 'إيداع', ?, 'إغلاق وردية Z-READ')", (t_id_z, st.session_state["user_id"], shift_total))
-                        conn.commit(); log_action(st.session_state["user_id"], "إغلاق وردية", "تم تنفيذ Z-Read وإيداع المبالغ"); st.success("📊 تم إغلاق الوردية وترحيل المبالغ للخزينة بنجاح!")
-                        st.rerun()
-                    else: st.info("🎭 **هَنّي روحك.. الوردية مصفرة بالفعل ولا توجد مبيعات لإغلاقها!** (تنبيه وردية فارغة)")
-  conn.close()
+      with tab2:
+          st.subheader("📦 شاشة المرتجعات السريعة")
+          recent_invoices = conn_pos.execute("SELECT id, total_amount, created_at, notes FROM invoices WHERE branch_id = ? ORDER BY id DESC LIMIT 50", (b_id,)).fetchall()
+          if recent_invoices:
+              inv_opts = {f"فاتورة رقم #{inv['id']} | الإجمالي: {inv['total_amount']} د.ل | التاريخ: {inv['created_at']}": inv['id'] for inv in recent_invoices}
+              sel_inv_label = st.selectbox("اختر الفاتورة لارتجاعها:", list(inv_opts.keys()))
+              sel_inv_id = inv_opts[sel_inv_label]
+              
+              if st.button("🗑️ تأكيد ارتجاع هذه الفاتورة بالكامل"):
+                  conn_pos.execute("UPDATE invoices SET notes = 'تم الارتجاع بالكامل' WHERE id = ?", (sel_inv_id,))
+                  conn_pos.commit()
+                  log_action(st.session_state["user_id"], "مرتجع فاتورة", f"ارتجاع الفاتورة #{sel_inv_id}")
+                  st.success(f"📦 تم ارتجاع الفاتورة رقم #{sel_inv_id} بنجاح!")
+                  st.rerun()
+          else:
+              st.info("لا توجد فواتير مسجلة لهذا الفرع.")
+
+      with tab3:
+          open_sales = conn_pos.execute("SELECT SUM(total_amount) as total FROM invoices WHERE branch_id = ? AND shift_status = 'open'", (b_id,)).fetchone()
+          shift_total = open_sales["total"] if open_sales["total"] else 0.0
+          col_x, col_z = st.columns(2)
+          with col_x: st.markdown(f"""<div class="card" style="background-color: #0284c7;"><h3>X-READ (مبيعات الوردية)</h3><h2>{shift_total:,.2f} د.ل</h2></div>""", unsafe_allow_html=True)
+          with col_z:
+              st.markdown(f"""<div class="card" style="background-color: #be123c;"><h3>Z-READ (تصفير الوردية وإيداع)</h3></div>""", unsafe_allow_html=True)
+              treasuries_branch = conn_pos.execute("SELECT id, treasury_name FROM treasuries WHERE branch_id = ? OR (branch_id IS NULL AND company_id = (SELECT company_id FROM branches WHERE id=?))", (b_id, b_id)).fetchall()
+              t_dict_z = {t["treasury_name"]: t["id"] for t in treasuries_branch}
+              if t_dict_z:
+                  with st.form("zread_form_pos", clear_on_submit=True):
+                      sel_t_z = st.selectbox("إيداع النقدية في خزينة:", list(t_dict_z.keys()))
+                      if st.form_submit_button("🛑 تنفيذ Z-READ وإغلاق الوردية"):
+                          if shift_total > 0:
+                              t_id_z = t_dict_z[sel_t_z]
+                              conn_pos.execute("UPDATE invoices SET shift_status = 'closed' WHERE branch_id = ? AND shift_status = 'open'", (b_id,))
+                              conn_pos.execute("UPDATE treasuries SET balance = balance + ? WHERE id = ?", (shift_total, t_id_z))
+                              conn_pos.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, 'إيداع', ?, 'إغلاق وردية Z-READ')", (t_id_z, st.session_state["user_id"], shift_total))
+                              conn_pos.commit(); log_action(st.session_state["user_id"], "إغلاق وردية", "تم تنفيذ Z-Read وإيداع المبالغ")
+                              st.success("📊 تم إغلاق الوردية وترحيل المبالغ للخزينة بنجاح وثبات!")
+                              st.rerun()
+                          else: st.info("🎭 **هَنّي روحك.. الوردية مصفرة بالفعل ولا توجد مبيعات لإغلاقها!**")
+  else:
+      st.warning("⚠️ يرجى اختيار الشركة والفرع أولاً لعرض نقطة البيع.")
+  conn_pos.close()
 
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
