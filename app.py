@@ -57,6 +57,7 @@ CEO_MENUS = [
 
 def initialize_database():
   conn = sqlite3.connect("abu_zaid_system.db", timeout=10)
+  conn.row_factory = sqlite3.Row
   cursor = conn.cursor()
 
   cursor.execute("CREATE TABLE IF NOT EXISTS companies (id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT UNIQUE NOT NULL, company_title TEXT NOT NULL, logo_path TEXT)")
@@ -127,12 +128,16 @@ def initialize_database():
 
   conn.commit()
   
-  # التأكد من وجود خزينة افتراضية لكل فرع لكي يعمل زر Z-READ فوراً بدون تحذيرات
+  # التأكد من وجود خزينة افتراضية لكل فرع بدقة تامة
   all_branches = cursor.execute("SELECT id, company_id, branch_name FROM branches").fetchall()
   for br in all_branches:
-      chk_t = cursor.execute("SELECT COUNT(*) FROM treasuries WHERE branch_id = ?", (br["id"],)).fetchone()[0]
+      b_id_val = br["id"] if isinstance(br, sqlite3.Row) else br[0]
+      b_comp_id = br["company_id"] if isinstance(br, sqlite3.Row) else br[1]
+      b_name_val = br["branch_name"] if isinstance(br, sqlite3.Row) else br[2]
+      
+      chk_t = cursor.execute("SELECT COUNT(*) FROM treasuries WHERE branch_id = ?", (b_id_val,)).fetchone()[0]
       if chk_t == 0:
-          cursor.execute("INSERT INTO treasuries (company_id, branch_id, treasury_name, treasury_type, balance) VALUES (?, ?, ?, 'كاش', 0.0)", (br["company_id"], br["id"], f"خزينة فرع {br['branch_name']}"))
+          cursor.execute("INSERT INTO treasuries (company_id, branch_id, treasury_name, treasury_type, balance) VALUES (?, ?, ?, 'كاش', 0.0)", (b_comp_id, b_id_val, f"خزينة فرع {b_name_val}"))
   conn.commit()
   conn.close()
 
@@ -207,7 +212,7 @@ if not st.session_state["logged_in"]:
           user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
           if user:
               if user["is_active"] == 0:
-                  st.error("🚫 هذا الحساب موقوف! راجع الإدارة.")
+                  st.error("🚫 هذا حساب موقوف! راجع الإدارة.")
                   conn.close(); st.stop()
                   
               st.session_state["logged_in"] = True
@@ -356,7 +361,6 @@ elif choice == "🏢 إدارة الشركات والفروع":
                   cur_b = conn.cursor()
                   cur_b.execute("INSERT INTO branches (company_id, branch_name) VALUES (?, ?)", (comps_dict[sel_c], b_name.strip()))
                   new_b_id = cur_b.lastrowid
-                  # إنشاء خزينة افتراضية للفرع الجديد فوراً
                   cur_b.execute("INSERT INTO treasuries (company_id, branch_id, treasury_name, treasury_type, balance) VALUES (?, ?, ?, 'كاش', 0.0)", (comps_dict[sel_c], new_b_id, f"خزينة فرع {b_name}"))
                   conn.commit(); log_action(st.session_state["user_id"], "إضافة فرع", f"تم إضافة فرع {b_name} للشركة {sel_c}"); st.success("🎉 تم حفظ الفرع وخزينته بنجاح!")
                   st.rerun()
@@ -794,7 +798,7 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                               dst_branch_name = st.selectbox("إلى فرع الوجهة:", list(dst_b_dict.keys()), key="dst_b")
                               dst_branch_id = dst_b_dict[dst_branch_name]
                               
-                          transfer_qty = st.number_input("الكمية المراد نقلها", min_value=0.01, value=1.0, step=0.1, format="%.3f")
+                          transfer_qty = st.number_input("الكمية المراد نقلها", min_value=0.1, value=1.0)
                           if st.button("🚀 تنفيذ النقل الفردي"):
                               if transfer_qty > curr_item["quantity"]:
                                   st.warning("🎭 **هَنّي روحك.. الكمية المراد نقلها أكبر من المتاح في المخزن!** (خطأ كمية غير كافية)")
@@ -878,9 +882,9 @@ elif choice == "📊 التقارير الشاملة والمخازن":
 
   with tab3:
       if st.session_state["role"] in ["Admin", "CEO"]:
-          expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id", conn)
+          expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON expenses.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id", conn)
       else:
-          expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id WHERE companies.id = ?", conn, params=(st.session_state["company_id"],))
+          expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON expenses.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id WHERE companies.id = ?", conn, params=(st.session_state["company_id"],))
           
       if not expenses_df.empty: st.dataframe(expenses_df, use_container_width=True)
       else: st.info("لا توجد مصروفات مسجلة حتى الآن.")
@@ -984,7 +988,7 @@ elif choice == "🛒 نقطة البيع (POS)":
   
   conn_pos = get_db_connection()
   
-  # اختيار الشركة والفرع (للأدمن والـ CEO)
+  # اختيار الشركة والفرع للأدمن والـ CEO
   if st.session_state["role"] in ["Admin", "CEO"]:
       col_pos_c, col_pos_b = st.columns(2)
       pos_comps = conn_pos.execute("SELECT id, company_name FROM companies").fetchall()
@@ -1045,7 +1049,6 @@ elif choice == "🛒 نقطة البيع (POS)":
                               </div>
                           """, unsafe_allow_html=True)
                           
-                          # تحسين إدخال الوزن والكمية المباشرة لكل صنف
                           with st.form(key=f"item_qty_form_{item['id']}", clear_on_submit=True):
                               item_qty_input = st.number_input(f"الكمية ({item['item_name']}):", min_value=0.01, value=1.0, step=0.1, format="%.2f", key=f"qty_in_{item['id']}")
                               if st.form_submit_button(f"➕ إضافة للسلة"):
