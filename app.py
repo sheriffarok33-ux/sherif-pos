@@ -359,14 +359,11 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
   is_viewer = (st.session_state["role"] == "Viewer")
   
   with tab1:
-      comps = get_allowed_companies(conn)
-      comps_dict = {c["company_name"]: c["id"] for c in comps}
-      if st.session_state["role"] == "Admin": branches = conn.execute("SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id").fetchall()
-      else: branches = conn.execute("SELECT branches.id, branches.branch_name, companies.company_name FROM branches JOIN companies ON branches.company_id = companies.id WHERE companies.id = ?", (st.session_state["company_id"],)).fetchall()
-      b_dict = {f"{b['company_name']} ➔ {b['branch_name']}": b["id"] for b in branches}
+      all_comps = conn.execute("SELECT id, company_name FROM companies").fetchall()
+      all_comps_dict = {c["company_name"]: c["id"] for c in all_comps}
 
       if not is_viewer:
-          with st.expander("➕ إضافة مستخدم جديد (تحديد الشركة والفرع بوضوح)", expanded=True):
+          with st.expander("➕ إضافة مستخدم جديد", expanded=False):
             with st.form("user_form", clear_on_submit=True):
               u = st.text_input("اسم المستخدم")
               phone = st.text_input("رقم الهاتف (إجباري ومميز لكل موظف)")
@@ -380,25 +377,27 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
               assigned_c = None
               assigned_b = []
               
-              # تحديد الشركة والفرع بوضوح لجميع الرتب التي تتطلب ذلك منذ البداية
-              if comps_dict:
-                  assigned_c_name = st.selectbox("🏢 اختر الشركة التابعة لها:", list(comps_dict.keys()))
-                  assigned_c = comps_dict[assigned_c_name]
-                  
-                  # جلب فروع هذه الشركة المحددة فقط
-                  co_branches = conn.execute("SELECT id, branch_name FROM branches WHERE company_id = ?", (assigned_c,)).fetchall()
-                  co_b_dict = {b["branch_name"]: b["id"] for b in co_branches}
-                  
-                  if db_role in ["Branch_Supervisor", "Cashier"] and co_b_dict:
-                      if db_role == "Cashier":
+              # المنطق الجديد الدقيق: الأدمن العام لا تظهر له خيارات شركات أو فروع لأنه يدير البرنامج بالكامل
+              if db_role != "Admin":
+                  if all_comps_dict:
+                      assigned_c_name = st.selectbox("🏢 اختر الشركة التابعة لها:", list(all_comps_dict.keys()))
+                      assigned_c = all_comps_dict[assigned_c_name]
+                      
+                      # جلب فروع الشركة المختارة حصرياً
+                      co_branches = conn.execute("SELECT id, branch_name FROM branches WHERE company_id = ?", (assigned_c,)).fetchall()
+                      co_b_dict = {b["branch_name"]: b["id"] for b in co_branches}
+                      
+                      if db_role == "Cashier" and co_b_dict:
                           selected_b_name = st.selectbox("📍 اختر فرع العمل للكاشير:", list(co_b_dict.keys()))
                           assigned_b = [co_b_dict[selected_b_name]]
-                      else:
-                          multi_b = st.multiselect("📍 اختر الفروع المخصصة للإشراف:", list(co_b_dict.keys()))
+                      elif db_role in ["Branch_Supervisor", "General_Supervisor"] and co_b_dict:
+                          multi_b = st.multiselect("📍 اختر الفروع المخصصة:", list(co_b_dict.keys()))
                           assigned_b = [co_b_dict[b] for b in multi_b]
-                  elif db_role in ["Branch_Supervisor", "Cashier"] and not co_b_dict:
-                      st.warning("⚠️ هذه الشركة ليس لها فروع مسجلة بعد. أنشئ لها فرعاً أولاً من إدارة الشركات والفروع.")
-              
+                      elif not co_b_dict:
+                          st.warning("⚠️ هذه الشركة ليس لها فروع مسجلة. أنشئ لها فرعاً أولاً من إدارة الشركات والفروع.")
+              else:
+                  st.info("ℹ️ حساب (Admin - مدير النظام) يمتلك صلاحيات كاملة على البرنامج بالكامل ولا يتقيد بشركة أو فرع محدد.")
+
               if st.form_submit_button("💾 حفظ المستخدم") and u and p and phone:
                 try:
                     cur = conn.cursor()
@@ -408,7 +407,7 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
                     if assigned_b:
                         for b_id_val in assigned_b: 
                             cur.execute("INSERT OR IGNORE INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_id_val))
-                    conn.commit(); log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}"); st.success("🎉 تم حفظ المستخدم وربطه بالشركة والفرع بنجاح!")
+                    conn.commit(); log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}"); st.success("🎉 تم حفظ المستخدم وربطه بالصلاحيات بنجاح!")
                 except Exception as e: st.error(f"🎭 **هَنّي روحك.. خطأ أثناء إضافة المستخدم!**\nالسبب: {e}")
 
       st.markdown("---")
