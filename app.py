@@ -387,8 +387,11 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
               phone = st.text_input("رقم الهاتف (إجباري ومميز لكل موظف)")
               p = st.text_input("كلمة المرور")
               
-              if st.session_state["role"] in ["Admin", "CEO"]: 
+              # حماية رتبة Admin: الـ CEO لا يمكنه إنشاء يوزر بصلاحية Admin نهائياً
+              if st.session_state["role"] == "Admin": 
                   roles = ["Admin (مدير النظام)", "CEO (رئيس مجلس الإدارة)", "General_Supervisor (مدير شركة)", "Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
+              elif st.session_state["role"] == "CEO":
+                  roles = ["CEO (رئيس مجلس الإدارة)", "General_Supervisor (مدير شركة)", "Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
               else: 
                   roles = ["Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
               
@@ -399,7 +402,7 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
               assigned_b = []
               
               if db_role in ["Admin", "CEO"]:
-                  st.info(f"ℹ️ حساب ({db_role}) يمتلك صلاحية كاملة على النظام بالكامل ولا يتقيد بشركة أو فرع.")
+                  st.info(f"ℹ️ حساب ({db_role}) يمتلك صلاحية كاملة ولا يتقيد بشركة أو فرع محدد.")
               else:
                   if all_comps_dict:
                       assigned_c_name = st.selectbox("🏢 اختر الشركة التابعة لها:", list(all_comps_dict.keys()))
@@ -416,8 +419,6 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
                           assigned_b = [co_b_dict[b] for b in multi_b]
                       elif not co_b_dict:
                           st.warning("⚠️ هذه الشركة ليس لها فروع مسجلة. أنشئ لها فرعاً أولاً من إدارة الشركات والفروع.")
-                  else:
-                      st.warning("⚠️ لا توجد شركات مسجلة في النظام.")
 
               if st.form_submit_button("💾 حفظ المستخدم") and u and p and phone:
                 try:
@@ -432,26 +433,43 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
                 except Exception as e: st.error(f"🎭 **هَنّي روحك.. خطأ أثناء إضافة المستخدم!**\nالسبب: {e}")
 
       st.markdown("---")
-      st.subheader("📋 قائمة المستخدمين (مع صلاحية تعديل الرتبة مباشرة)")
-      if st.session_state["role"] in ["Admin", "CEO"]: users_df = pd.read_sql("SELECT id, username AS 'اسم المستخدم', phone AS 'رقم الهاتف', password AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users", conn)
+      st.subheader("📋 قائمة المستخدمين (الأرقام السرية محمية ومخفية للأمان)")
+      
+      # إخفاء الأرقام السرية وعرضها كنجوم للأمان لكل المستخدمين عدا الأدمن الرئيسي
+      if st.session_state["role"] in ["Admin", "CEO"]: 
+          users_df = pd.read_sql("SELECT id, username AS 'اسم المستخدم', phone AS 'رقم الهاتف', '********' AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users", conn)
       else:
-          q = "SELECT id, username AS 'اسم المستخدم', phone AS 'رقم الهاتف', password AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users WHERE company_id = ? OR id IN (SELECT user_id FROM user_branches ub JOIN branches b ON ub.branch_id = b.id WHERE b.company_id = ?)"
+          q = "SELECT id, username AS 'اسم المستخدم', phone AS 'رقم الهاتف', '********' AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users WHERE company_id = ? OR id IN (SELECT user_id FROM user_branches ub JOIN branches b ON ub.branch_id = b.id WHERE b.company_id = ?)"
           users_df = pd.read_sql(q, conn, params=(st.session_state["company_id"], st.session_state["company_id"]))
       
       if not users_df.empty:
-          st.info("💡 يمكنك تعديل الاسم، رقم الهاتف، كلمة المرور، **الرتبة**، أو حالة النشاط مباشرة من الجدول ثم اضغط حفظ التعديلات.")
-          edited_users = st.data_editor(users_df, hide_index=True, disabled=is_viewer or ["id"], key="u_editor")
+          st.info("💡 يمكنك تعديل الاسم، رقم الهاتف، **الرتبة**، أو حالة النشاط مباشرة من الجدول ثم اضغط حفظ التعديلات. (الأرقام السرية محمية ولا تظهر).")
+          edited_users = st.data_editor(users_df, hide_index=True, disabled=is_viewer or ["id", "كلمة المرور"], key="u_editor")
           if not is_viewer:
               c1, c2 = st.columns([2,1])
               with c1:
                   if st.button("💾 حفظ تعديلات المستخدمين"):
                       for idx, row in edited_users.iterrows(): 
-                          conn.execute("UPDATE users SET username=?, phone=?, password=?, role=?, is_active=? WHERE id=?", 
-                                       (row['اسم المستخدم'], row['رقم الهاتف'], row['كلمة المرور'], row['الرتبة'], row['نشط (1=نعم/0=موقوف)'], row['id']))
-                      conn.commit(); log_action(st.session_state["user_id"], "تعديل مستخدمين", "تم تعديل بيانات ورتب المستخدمين"); st.success("🎉 تم حفظ وتحديث تعديلات المستخدمين والرتب بنجاح!")
+                          # الحماية القصوى لـ admin الرئيسي: لا يمكن تعديل رتبته أو حذفه أبداً
+                          target_uname = row['اسم المستخدم']
+                          target_role = row['الرتبة']
+                          if target_uname.strip().lower() == 'admin':
+                              target_role = 'Admin' # تثبيت رتبة الأدمن إجبارياً
+                              
+                          conn.execute("UPDATE users SET username=?, phone=?, role=?, is_active=? WHERE id=?", 
+                                       (target_uname, row['رقم الهاتف'], target_role, row['نشط (1=نعم/0=موقوف)'], row['id']))
+                      conn.commit(); log_action(st.session_state["user_id"], "تعديل مستخدمين", "تم تعديل بيانات ورتب المستخدمين"); st.success("🎉 تم حفظ وتحديث تعديلات المستخدمين بنجاح! (يوزر admin محمي تماماً)")
               with c2:
                   del_u_id = st.selectbox("اختر مستخدم للحذف النهائي:", users_df["id"].tolist(), format_func=lambda x: users_df[users_df["id"]==x]["اسم المستخدم"].values[0])
-                  if st.button("🗑️ حذف المستخدم نهائياً", type="primary") and del_u_id != 0:
+                  
+                  # منع حذف يوزر admin نهائياً
+                  selected_u_row = conn.execute("SELECT username FROM users WHERE id=?", (del_u_id,)).fetchone()
+                  is_admin_user = selected_u_row and selected_u_row["username"].strip().lower() == 'admin'
+                  
+                  if is_admin_user:
+                      st.warning("🔒 حساب (admin) محمي رسمياً ضد الحذف!")
+                  
+                  if st.button("🗑️ حذف المستخدم نهائياً", type="primary", disabled=is_admin_user) and del_u_id != 0 and not is_admin_user:
                       conn.execute("DELETE FROM users WHERE id=?", (del_u_id,)); conn.commit(); log_action(st.session_state["user_id"], "حذف مستخدم", f"تم حذف المستخدم ID:{del_u_id}"); st.success("🗑️ تم حذف المستخدم نهائياً!")
                       st.rerun()
 
@@ -492,7 +510,7 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
   else:
       st.header("📁 استيراد الأصناف عبر الإكسيل")
       is_viewer = (st.session_state["role"] == "Viewer")
-      if is_viewer: st.warning("👀 حسابك بصلاحية مشاهدة فقط (Viewer).")
+      if is_viewer: st.warning("👀 حسابك بصلاحية مشاهدة فقط (Viewer)، لا يمكنك استيراد أو تعديل البيانات.")
       
       def safe_float(val):
           try:
@@ -793,41 +811,41 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                           dst_branch_name = st.selectbox("إلى فرع الوجهة:", list(dst_b_dict.keys()), key="dst_b_bulk")
                           dst_branch_id = dst_b_dict[dst_branch_name]
 
-                      if st.button("🚀 تنفيذ نقل كافة الأصناف دفعة واحدة", use_container_width=True, type="primary"):
-                          source_items = conn.execute("SELECT * FROM items WHERE company_id=? AND branch_id IS NULL AND quantity > 0", (src_comp_id,)).fetchall() if src_branch_id is None else conn.execute("SELECT * FROM items WHERE company_id=? AND branch_id=? AND quantity > 0", (src_comp_id, src_branch_id)).fetchall()
-                          if not source_items: st.warning("🎭 **هَنّي روحك.. لا توجد أصناف بكميات متاحة في هذا المصدر لنقلها!** (مخزن فارغ)")
-                          else:
-                              transferred_count = 0
-                              for s_item in source_items:
-                                  existing = conn.execute("SELECT id FROM items WHERE company_id=? AND ((branch_id IS ? AND ? IS NULL) OR branch_id = ?) AND item_code=? AND item_name=?", (dst_comp_id, dst_branch_id, dst_branch_id, dst_branch_id, s_item["item_code"], s_item["item_name"])).fetchone()
-                                  if existing: conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (s_item["quantity"], existing["id"]))
-                                  else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)", (dst_comp_id, dst_branch_id, s_item["item_code"], s_item["item_name"], s_item["quantity"], s_item["buy_price"], s_item["sale_price"]))
-                                  conn.execute("UPDATE items SET quantity = 0 WHERE id = ?", (s_item["id"],))
-                                  transferred_count += 1
-                              conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف")
-                              st.success(f"🚀 تم نقل وتوزيع ({transferred_count}) صنف دفعة واحدة بنجاح وثبات!")
-
-                  elif transfer_type == "🗑️ حذف أصناف من المخزن":
-                      st.markdown("---")
-                      st.info("🏢 **اختر الشركة المطلوبة لتحديد وحذف الأصناف التابعة لها حصرياً:**")
-                      del_comp_name = st.selectbox("الشركة المراد محو أصنافها:", list(all_c_dict.keys()), key="del_c_sel")
-                      del_comp_id = all_c_dict[del_comp_name]
-                      
-                      del_mode = st.radio("نوع الحذف:", ["حذف صنف محدد من هذه الشركة", "حذف كافة أصناف هذه الشركة بالكامل"])
-                      
-                      company_items_df = items_df[items_df['الشركة'] == del_comp_name]
-                      
-                      if del_mode == "حذف صنف محدد من هذه الشركة" and not company_items_df.empty:
-                          del_item_sel = st.selectbox("اختر الصنف للحذف النهائي:", company_items_df["id"].tolist(), format_func=lambda x: f"[{company_items_df[company_items_df['id']==x]['الكود'].values[0]}] {company_items_df[company_items_df['id']==x]['الصنف'].values[0]} | الفرع: {company_items_df[company_items_df['id']==x]['الفرع'].values[0]}")
-                          if st.button("🗑️ حذف هذا الصنف نهائياً", type="primary"):
-                              conn.execute("DELETE FROM items WHERE id = ?", (del_item_sel,))
-                              conn.commit(); st.success(f"🗑️ تم حذف الصنف نهائياً من شركة ({del_comp_name}) بنجاح!")
-                      elif del_mode == "حذف كافة أصناف هذه الشركة بالكامل":
-                          if st.checkbox(f"أؤكد رغبتي في مسح جميع أصناف شركة ({del_comp_name})") and st.button("🚨 تنفيذ مسح كافة أصناف هذه الشركة", type="primary"):
-                              conn.execute("DELETE FROM items WHERE company_id = ?", (del_comp_id,))
-                              conn.commit(); st.success(f"🗑️ تم مسح وتصفير كافة أصناف شركة ({del_comp_name}) بنجاح وثبات!")
+                  if st.button("🚀 تنفيذ نقل كافة الأصناف دفعة واحدة", use_container_width=True, type="primary"):
+                      source_items = conn.execute("SELECT * FROM items WHERE company_id=? AND branch_id IS NULL AND quantity > 0", (src_comp_id,)).fetchall() if src_branch_id is None else conn.execute("SELECT * FROM items WHERE company_id=? AND branch_id=? AND quantity > 0", (src_comp_id, src_branch_id)).fetchall()
+                      if not source_items: st.warning("🎭 **هَنّي روحك.. لا توجد أصناف بكميات متاحة في هذا المصدر لنقلها!** (مخزن فارغ)")
                       else:
-                          st.info("لا توجد أصناف مسجلة لهذه الشركة حالياً.")
+                          transferred_count = 0
+                          for s_item in source_items:
+                              existing = conn.execute("SELECT id FROM items WHERE company_id=? AND ((branch_id IS ? AND ? IS NULL) OR branch_id = ?) AND item_code=? AND item_name=?", (dst_comp_id, dst_branch_id, dst_branch_id, dst_branch_id, s_item["item_code"], s_item["item_name"])).fetchone()
+                              if existing: conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (s_item["quantity"], existing["id"]))
+                              else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)", (dst_comp_id, dst_branch_id, s_item["item_code"], s_item["item_name"], s_item["quantity"], s_item["buy_price"], s_item["sale_price"]))
+                              conn.execute("UPDATE items SET quantity = 0 WHERE id = ?", (s_item["id"],))
+                              transferred_count += 1
+                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف")
+                          st.success(f"🚀 تم نقل وتوزيع ({transferred_count}) صنف دفعة واحدة بنجاح وثبات!")
+
+              elif transfer_type == "🗑️ حذف أصناف من المخزن":
+                  st.markdown("---")
+                  st.info("🏢 **اختر الشركة المطلوبة لتحديد وحذف الأصناف التابعة لها حصرياً:**")
+                  del_comp_name = st.selectbox("الشركة المراد محو أصنافها:", list(all_c_dict.keys()), key="del_c_sel")
+                  del_comp_id = all_c_dict[del_comp_name]
+                  
+                  del_mode = st.radio("نوع الحذف:", ["حذف صنف محدد من هذه الشركة", "حذف كافة أصناف هذه الشركة بالكامل"])
+                  
+                  company_items_df = items_df[items_df['الشركة'] == del_comp_name]
+                  
+                  if del_mode == "حذف صنف محدد من هذه الشركة" and not company_items_df.empty:
+                      del_item_sel = st.selectbox("اختر الصنف للحذف النهائي:", company_items_df["id"].tolist(), format_func=lambda x: f"[{company_items_df[company_items_df['id']==x]['الكود'].values[0]}] {company_items_df[company_items_df['id']==x]['الصنف'].values[0]} | الفرع: {company_items_df[company_items_df['id']==x]['الفرع'].values[0]}")
+                      if st.button("🗑️ حذف هذا الصنف نهائياً", type="primary"):
+                          conn.execute("DELETE FROM items WHERE id = ?", (del_item_sel,))
+                          conn.commit(); st.success(f"🗑️ تم حذف الصنف نهائياً من شركة ({del_comp_name}) بنجاح!")
+                  elif del_mode == "حذف كافة أصناف هذه الشركة بالكامل":
+                      if st.checkbox(f"أؤكد رغبتي في مسح جميع أصناف شركة ({del_comp_name})") and st.button("🚨 تنفيذ مسح كافة أصناف هذه الشركة", type="primary"):
+                          conn.execute("DELETE FROM items WHERE company_id = ?", (del_comp_id,))
+                          conn.commit(); st.success(f"🗑️ تم مسح وتصفير كافة أصناف شركة ({del_comp_name}) بنجاح وثبات!")
+                  else:
+                      st.info("لا توجد أصناف مسجلة لهذه الشركة حالياً.")
 
   with tab2:
       if st.session_state["role"] in ["Admin", "CEO"]:
@@ -841,7 +859,7 @@ elif choice == "📊 التقارير الشاملة والمخازن":
 
   with tab3:
       if st.session_state["role"] in ["Admin", "CEO"]:
-          expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON expenses.company_id = companies.id LEFT JOIN users ON expenses.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id", conn)
+          expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id", conn)
       else:
           expenses_df = pd.read_sql("SELECT expenses.id AS 'id', companies.company_name AS 'الشركة', branches.branch_name AS 'الفرع', treasuries.treasury_name AS 'خُصمت من', users.username AS 'المستخدم', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id LEFT JOIN companies ON branches.company_id = companies.id LEFT JOIN users ON invoices.user_id = users.id LEFT JOIN treasuries ON expenses.treasury_id = treasuries.id WHERE companies.id = ?", conn, params=(st.session_state["company_id"],))
           
