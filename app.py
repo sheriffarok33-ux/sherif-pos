@@ -309,7 +309,8 @@ elif choice == "🏢 إدارة الشركات والفروع":
                       logo_path = os.path.join("company_logos", logo_file.name)
                       with open(logo_path, "wb") as f: f.write(logo_file.getbuffer())
                   conn.execute("INSERT INTO companies (company_name, company_title, logo_path) VALUES (?, ?, ?)", (c_name.strip(), c_title.strip(), logo_path))
-                  conn.commit(); log_action(st.session_state["user_id"], "إضافة شركة", f"تم إضافة شركة: {c_name}"); st.success("تم الحفظ!"); st.rerun()
+                  conn.commit(); log_action(st.session_state["user_id"], "إضافة شركة", f"تم إضافة شركة: {c_name}"); st.success("🎉 تم حفظ الشركة بنجاح!")
+                  st.rerun()
 
   comps = get_allowed_companies(conn)
   comps_dict = {c["company_name"]: c["id"] for c in comps}
@@ -321,7 +322,8 @@ elif choice == "🏢 إدارة الشركات والفروع":
               b_name = st.text_input("اسم الفرع / المخزن")
               if st.form_submit_button("💾 حفظ الفرع") and b_name:
                   conn.execute("INSERT INTO branches (company_id, branch_name) VALUES (?, ?)", (comps_dict[sel_c], b_name.strip()))
-                  conn.commit(); log_action(st.session_state["user_id"], "إضافة فرع", f"تم إضافة فرع {b_name} للشركة {sel_c}"); st.success("تم الحفظ!"); st.rerun()
+                  conn.commit(); log_action(st.session_state["user_id"], "إضافة فرع", f"تم إضافة فرع {b_name} للشركة {sel_c}"); st.success("🎉 تم حفظ الفرع بنجاح!")
+                  st.rerun()
 
   st.markdown("---")
   st.subheader("📋 الهيكل التنظيمي للمجموعة")
@@ -334,16 +336,19 @@ elif choice == "🏢 إدارة الشركات والفروع":
               edited_b = st.data_editor(branches_df, disabled=is_viewer, hide_index=True, key=f"eb_{comp['id']}")
               if not is_viewer and st.button(f"💾 حفظ تعديلات فروع ({comp['company_name']})", key=f"save_b_{comp['id']}"):
                   for idx, row in edited_b.iterrows(): conn.execute("UPDATE branches SET branch_name=? WHERE id=?", (row['اسم الفرع'], row['id']))
-                  conn.commit(); log_action(st.session_state["user_id"], "تعديل فروع", f"تم تعديل فروع شركة {comp['company_name']}"); st.success("تم التحديث!"); st.rerun()
+                  conn.commit(); log_action(st.session_state["user_id"], "تعديل فروع", f"تم تعديل فروع شركة {comp['company_name']}"); st.success("🎉 تم تحديث الفروع بنجاح!")
+                  st.rerun()
           else: st.markdown("&nbsp;&nbsp;&nbsp;&nbsp;└─ ⚠️ *لا توجد فروع مسجلة لهذه الشركة.*")
       with c2:
           if not is_viewer:
               if st.session_state["role"] == "Admin" and st.button(f"🗑️ حذف الشركة ({comp['company_name']})", type="primary", key=f"del_c_{comp['id']}"):
-                  conn.execute("DELETE FROM companies WHERE id=?", (comp["id"],)); conn.commit(); log_action(st.session_state["user_id"], "حذف شركة", f"تم حذف شركة {comp['company_name']}"); st.rerun()
+                  conn.execute("DELETE FROM companies WHERE id=?", (comp["id"],)); conn.commit(); log_action(st.session_state["user_id"], "حذف شركة", f"تم حذف شركة {comp['company_name']}"); st.success("🗑️ تم حذف الشركة بنجاح!")
+                  st.rerun()
               if not branches_df.empty:
                   del_b_id = st.selectbox("اختر فرعاً للحذف:", branches_df["id"].tolist(), format_func=lambda x: branches_df[branches_df["id"]==x]["اسم الفرع"].values[0], key=f"sel_del_{comp['id']}")
                   if st.button("🗑️ حذف الفرع المحدد", key=f"btn_del_{comp['id']}"):
-                      conn.execute("DELETE FROM branches WHERE id=?", (del_b_id,)); conn.commit(); log_action(st.session_state["user_id"], "حذف فرع", f"تم حذف الفرع من شركة {comp['company_name']}"); st.success("تم الحذف!"); st.rerun()
+                      conn.execute("DELETE FROM branches WHERE id=?", (del_b_id,)); conn.commit(); log_action(st.session_state["user_id"], "حذف فرع", f"تم حذف الفرع من شركة {comp['company_name']}"); st.success("🗑️ تم حذف الفرع بنجاح!")
+                      st.rerun()
       st.markdown("<hr style='border:1px dashed #cbd5e1'>", unsafe_allow_html=True)
   conn.close()
 
@@ -388,7 +393,7 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
                     new_user_id = cur.lastrowid
                     if db_role in ["Branch_Supervisor", "Cashier"]:
                         for branch_str in assigned_b: cur.execute("INSERT INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_dict[branch_str]))
-                    conn.commit(); log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}"); st.success("تم بنجاح!")
+                    conn.commit(); log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}"); st.success("🎉 تم حفظ المستخدم بنجاح!")
                 except Exception as e: st.error(f"🎭 **هَنّي روحك.. خطأ أثناء إضافة المستخدم!**\nالسبب: {e}")
 
       st.markdown("---")
@@ -406,11 +411,12 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
               with c1:
                   if st.button("💾 حفظ تعديلات المستخدمين"):
                       for idx, row in edited_users.iterrows(): conn.execute("UPDATE users SET username=?, phone=?, password=?, is_active=? WHERE id=?", (row['اسم المستخدم'], row['رقم الهاتف'], row['كلمة المرور'], row['نشط (1=نعم/0=موقوف)'], row['id']))
-                      conn.commit(); log_action(st.session_state["user_id"], "تعديل مستخدمين", "تم تعديل بيانات المستخدمين"); st.success("تم الحفظ!")
+                      conn.commit(); log_action(st.session_state["user_id"], "تعديل مستخدمين", "تم تعديل بيانات المستخدمين"); st.success("🎉 تم حفظ التعديلات بنجاح!")
               with c2:
                   del_u_id = st.selectbox("اختر مستخدم للحذف النهائي:", users_df["id"].tolist(), format_func=lambda x: users_df[users_df["id"]==x]["اسم المستخدم"].values[0])
                   if st.button("🗑️ حذف المستخدم نهائياً", type="primary") and del_u_id != 0:
-                      conn.execute("DELETE FROM users WHERE id=?", (del_u_id,)); conn.commit(); log_action(st.session_state["user_id"], "حذف مستخدم", f"تم حذف المستخدم ID:{del_u_id}"); st.success("تم الحذف!"); st.rerun()
+                      conn.execute("DELETE FROM users WHERE id=?", (del_u_id,)); conn.commit(); log_action(st.session_state["user_id"], "حذف مستخدم", f"تم حذف المستخدم ID:{del_u_id}"); st.success("🗑️ تم حذف المستخدم نهائياً!")
+                      st.rerun()
 
   with tab2:
       st.subheader("🛡️ مدير صلاحيات العرض (POS Manager)")
@@ -429,7 +435,7 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
                       if st.checkbox(m, value=(m in allowed_list)): new_perms.append(m)
               if st.form_submit_button("💾 اعتماد الصلاحيات"):
                   conn.execute("INSERT OR REPLACE INTO role_permissions (role, allowed_menus) VALUES (?, ?)", (sel_role, ",".join(new_perms)))
-                  conn.commit(); log_action(st.session_state["user_id"], "تعديل صلاحيات", f"تم تعديل صلاحيات الرتبة {sel_role}"); st.success("تم الحفظ بنجاح!")
+                  conn.commit(); log_action(st.session_state["user_id"], "تعديل صلاحيات", f"تم تعديل صلاحيات الرتبة {sel_role}"); st.success("🎉 تم اعتماد الصلاحيات بنجاح!")
                   
   with tab3:
       st.subheader("📝 سجل نشاط المستخدمين (Audit Trail)")
@@ -501,7 +507,7 @@ elif choice == "📁 استيراد وتوزيع الأصناف":
                 cur.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, NULL, ?, ?, ?, ?, ?)", (sel_comp_id, code, name, qty, b_price, s_price))
                 added_count += 1
         except Exception: continue
-      conn.commit(); log_action(st.session_state["user_id"], "استيراد أصناف", f"استيراد للمخزن الرئيسي"); st.success(f"تم الاستيراد بنجاح! إضافة ({added_count}) صنف جديد، وتحديث ({updated_count}) صنف موجود.")
+      conn.commit(); log_action(st.session_state["user_id"], "استيراد أصناف", f"استيراد للمخزن الرئيسي"); st.success(f"📥 تم الاستيراد بنجاح!\n* عدد الأصناف المضافة حديثاً: **{added_count}**\n* عدد الأصناف المحدثة: **{updated_count}**")
   conn.close()
 
 elif choice == "🏦 إدارة الخزينة والبنوك":
@@ -525,7 +531,8 @@ elif choice == "🏦 إدارة الخزينة والبنوك":
               t_bal = st.number_input("الرصيد الافتتاحي", value=0.0)
               if st.form_submit_button("حفظ الخزينة") and t_name:
                   conn.execute("INSERT INTO treasuries (company_id, branch_id, treasury_name, treasury_type, balance) VALUES (?, ?, ?, ?, ?)", (c_dict[sel_c], b_dict[t_branch], t_name.strip(), t_type, t_bal))
-                  conn.commit(); log_action(st.session_state["user_id"], "إنشاء خزينة", f"خزينة {t_name}"); st.success("تم!"); st.rerun()
+                  conn.commit(); log_action(st.session_state["user_id"], "إنشاء خزينة", f"خزينة {t_name}"); st.success("💰 تم حفظ الخزينة بنجاح!")
+                  st.rerun()
 
   with tab2:
       if not is_viewer:
@@ -546,7 +553,8 @@ elif choice == "🏦 إدارة الخزينة والبنوك":
                       if trans_type == "إيداع": conn.execute("UPDATE treasuries SET balance = balance + ? WHERE id = ?", (amount, t_id))
                       else: conn.execute("UPDATE treasuries SET balance = balance - ? WHERE id = ?", (amount, t_id))
                       conn.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, ?, ?, ?)", (t_id, st.session_state["user_id"], trans_type, amount, desc))
-                      conn.commit(); log_action(st.session_state["user_id"], f"{trans_type} خزينة", f"{amount} - {desc}"); st.success("تم!"); st.rerun()
+                      conn.commit(); log_action(st.session_state["user_id"], f"{trans_type} خزينة", f"{amount} - {desc}"); st.success("✅ تم تنفيذ العملية المالية بنجاح وتحديث أرصدة الخزينة!")
+                      st.rerun()
 
   with tab3:
       if st.session_state["role"] == "Admin":
@@ -558,7 +566,8 @@ elif choice == "🏦 إدارة الخزينة والبنوك":
           edited_t = st.data_editor(df_t, disabled=is_viewer, hide_index=True, key="t_editor")
           if not is_viewer and st.button("💾 حفظ تعديلات الخزائن"):
               for idx, row in edited_t.iterrows(): conn.execute("UPDATE treasuries SET treasury_name=?, treasury_type=?, balance=? WHERE id=?", (row['الاسم'], row['النوع'], row['الرصيد'], row['id']))
-              conn.commit(); log_action(st.session_state["user_id"], "تعديل خزائن", "تعديل أرصدة الخزائن يدوياً"); st.success("تم الحفظ!")
+              conn.commit(); log_action(st.session_state["user_id"], "تعديل خزائن", "تعديل أرصدة الخزائن يدوياً"); st.success("💾 تم حفظ تعديلات الخزائن بنجاح!")
+              st.rerun()
           st.markdown("---")
           if st.session_state["role"] == "Admin":
               df_trans = pd.read_sql("SELECT treasury_transactions.id AS 'رقم', treasuries.treasury_name AS 'الخزينة', treasury_transactions.trans_type AS 'النوع', treasury_transactions.amount AS 'المبلغ', treasury_transactions.description AS 'البيان', users.username AS 'المستخدم', treasury_transactions.trans_date AS 'التاريخ' FROM treasury_transactions JOIN treasuries ON treasury_transactions.treasury_id = treasuries.id LEFT JOIN users ON treasury_transactions.user_id = users.id ORDER BY treasury_transactions.trans_date DESC", conn)
@@ -603,7 +612,8 @@ elif choice == "💰 تسجيل المصروفات":
                   conn.execute("INSERT INTO expenses (company_id, branch_id, user_id, treasury_id, amount, description) VALUES (?, ?, ?, ?, ?, ?)", (comps_dict[sel_comp], b_dict[sel_branch], st.session_state["user_id"], t_id, amount, final_desc))
                   conn.execute("UPDATE treasuries SET balance = balance - ? WHERE id = ?", (amount, t_id))
                   conn.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, 'سحب', ?, ?)", (t_id, st.session_state["user_id"], amount, f"مصروفات: {final_desc}"))
-                  conn.commit(); log_action(st.session_state["user_id"], "تسجيل مصروف", f"{amount} - {final_desc}"); st.success("تم!"); st.rerun()
+                  conn.commit(); log_action(st.session_state["user_id"], "تسجيل مصروف", f"{amount} - {final_desc}"); st.success("💸 تم حفظ المصروف وخصم المبلغ من الخزينة بنجاح!")
+                  st.rerun()
   conn.close()
 
 elif choice == "📊 التقارير الشاملة والمخازن":
@@ -652,11 +662,11 @@ elif choice == "📊 التقارير الشاملة والمخازن":
           edited_items = st.data_editor(filtered_df, disabled=is_viewer, hide_index=True, key="items_editor")
           if not is_viewer and st.button("💾 حفظ تعديلات المخزون المعروض"):
               for idx, row in edited_items.iterrows(): conn.execute("UPDATE items SET item_code=?, item_name=?, quantity=?, buy_price=?, sale_price=? WHERE id=?", (row['الكود'], row['الصنف'], row['الكمية'], row['سعر الشراء'], row['سعر البيع'], row['id']))
-              conn.commit(); log_action(st.session_state["user_id"], "تعديل مخزون", "تعديل بيانات الأصناف"); st.success("تم الحفظ!")
+              conn.commit(); log_action(st.session_state["user_id"], "تعديل مخزون", "تعديل بيانات الأصناف"); st.success("💾 تم حفظ تعديلات المخزون بنجاح!")
               st.rerun()
           st.download_button("📥 تصدير المخزون المعروض لـ Excel", data=to_excel(filtered_df), file_name="inventory_filtered.xlsx")
       else:
-          st.info("🎭 **هَنّي روحك.. لا توجد أصناف مطابقة لخيارات التصفية!** (مخزن فارغ)")
+          st.warning("🎭 **هَنّي روحك.. لا توجد أصناف تطابق خيارات التصفية الحالية!** (مخزن فارغ)")
 
   with tab5:
       st.subheader("🔄 نقل وتحويل المخزون (بين أي شركة أو فرع بمرونة تامة)")
@@ -713,7 +723,8 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                               existing = conn.execute("SELECT id FROM items WHERE company_id=? AND ((branch_id IS ? AND ? IS NULL) OR branch_id = ?) AND item_code=? AND item_name=?", (dst_comp_id, dst_branch_id, dst_branch_id, dst_branch_id, curr_item["item_code"], curr_item["item_name"])).fetchone()
                               if existing: conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (transfer_qty, existing["id"]))
                               else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)", (dst_comp_id, dst_branch_id, curr_item["item_code"], curr_item["item_name"], transfer_qty, curr_item["buy_price"], curr_item["sale_price"]))
-                              conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون", f"نقل {transfer_qty}"); st.success("تم النقل بنجاح!"); st.rerun()
+                              conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون", f"نقل {transfer_qty}"); st.success("🚀 تم نقل الأصناف بنجاح وتحديث المخازن!")
+                              st.rerun()
 
               elif transfer_type == "نقل كافة الأصناف دفعة واحدة":
                   col_s1, col_s2 = st.columns(2)
@@ -750,19 +761,32 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                               else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)", (dst_comp_id, dst_branch_id, s_item["item_code"], s_item["item_name"], s_item["quantity"], s_item["buy_price"], s_item["sale_price"]))
                               conn.execute("UPDATE items SET quantity = 0 WHERE id = ?", (s_item["id"],))
                               transferred_count += 1
-                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف"); st.success(f"تم نقل وتوزيع ({transferred_count}) صنف بنجاح!"); st.rerun()
+                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف"); st.success(f"🚀 تم نقل وتوزيع ({transferred_count}) صنف دفعة واحدة بنجاح!")
+                          st.rerun()
 
               elif transfer_type == "🗑️ حذف أصناف من المخزن":
-                  del_mode = st.radio("نوع الحذف:", ["حذف صنف محدد", "حذف كافة الأصناف بالكامل (تصفير شامل)"])
-                  if del_mode == "حذف صنف محدد" and not items_df.empty:
-                      del_item_sel = st.selectbox("اختر صنفاً للحذف النهائي:", items_df["id"].tolist(), format_func=lambda x: f"[{items_df[items_df['id']==x]['الكود'].values[0]}] {items_df[items_df['id']==x]['الصنف'].values[0]} ({items_df[items_df['id']==x]['الشركة'].values[0]})")
+                  st.markdown("---")
+                  st.info("🏢 **اختر الشركة المستهدفة لتنفيذ عملية الحذف منها بدقة:**")
+                  del_comp_name = st.selectbox("الشركة المراد محو أصنافها:", list(all_c_dict.keys()), key="del_c_sel")
+                  del_comp_id = all_c_dict[del_comp_name]
+                  
+                  del_mode = st.radio("نوع الحذف:", ["حذف صنف محدد من هذه الشركة", "حذف كافة أصناف هذه الشركة بالكامل"])
+                  
+                  company_items_df = items_df[items_df['الشركة'] == del_comp_name]
+                  
+                  if del_mode == "حذف صنف محدد من هذه الشركة" and not company_items_df.empty:
+                      del_item_sel = st.selectbox("اختر الصنف للحذف النهائي:", company_items_df["id"].tolist(), format_func=lambda x: f"[{company_items_df[company_items_df['id']==x]['الكود'].values[0]}] {company_items_df[company_items_df['id']==x]['الصنف'].values[0]} | الفرع: {company_items_df[company_items_df['id']==x]['الفرع'].values[0]}")
                       if st.button("🗑️ حذف هذا الصنف نهائياً", type="primary"):
                           conn.execute("DELETE FROM items WHERE id = ?", (del_item_sel,))
-                          conn.commit(); st.success("تم حذف الصنف بنجاح!"); st.rerun()
-                  elif del_mode == "حذف كافة الأصناف بالكامل (تصفير شامل)":
-                      if st.checkbox("أؤكد رغبتي في حذف جميع الأصناف من قاعدة البيانات") and st.button("🚨 حذف وتصفير جميع الأصناف فوراً", type="primary"):
-                          conn.execute("DELETE FROM items")
-                          conn.commit(); st.success("تم مسح جميع الأصناف بنجاح!"); st.rerun()
+                          conn.commit(); st.success("🗑️ تم حذف الصنف نهائياً من سجلات هذه الشركة!")
+                          st.rerun()
+                  elif del_mode == "حذف كافة أصناف هذه الشركة بالكامل":
+                      if st.checkbox(f"أؤكد رغبتي في مسح جميع أصناف شركة ({del_comp_name})") and st.button("🚨 تنفيذ مسح كافة أصناف هذه الشركة", type="primary"):
+                          conn.execute("DELETE FROM items WHERE company_id = ?", (del_comp_id,))
+                          conn.commit(); st.success(f"🗑️ تم مسح وتصفير كافة أصناف شركة ({del_comp_name}) بنجاح!")
+                          st.rerun()
+                  else:
+                      st.info("لا توجد أصناف مسجلة لهذه الشركة حالياً.")
 
   with tab2:
       if st.session_state["role"] == "Admin":
@@ -785,9 +809,41 @@ elif choice == "📊 التقارير الشاملة والمخازن":
       st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(expenses_df), file_name="expenses.xlsx")
 
   with tab4:
-      if not is_viewer and st.checkbox("أؤكد التصفير") and st.button("🚨 تصفير السنة المالية"):
-          conn.execute("DELETE FROM invoices"); conn.execute("DELETE FROM expenses"); conn.execute("DELETE FROM treasury_transactions")
-          conn.commit(); st.success("تم التصفير!"); st.rerun()
+      st.subheader("⚙️ خيارات تصفير البيانات المالية والتشغيلية")
+      all_companies_list = conn.execute("SELECT id, company_name FROM companies").fetchall()
+      reset_c_dict = {c['company_name']: c["id"] for c in all_companies_list}
+      
+      if reset_c_dict:
+          with st.form("reset_form"):
+              st.info("⚠️ يمكنك تصفير فواتير ومبيعات وشفتات شركة محددة أو فرع معين بدقة تامة:")
+              reset_comp_name = st.selectbox("اختر الشركة للتصفير:", list(reset_c_dict.keys()))
+              reset_comp_id = reset_c_dict[reset_comp_name]
+              
+              reset_branches = conn.execute("SELECT id, branch_name FROM branches WHERE company_id=?", (reset_comp_id,)).fetchall()
+              reset_b_dict = {"تصفير كافة فروع الشركة دفعة واحدة": "ALL"}
+              reset_b_dict.update({b["branch_name"]: b["id"] for b in reset_branches})
+              reset_branch_sel = st.selectbox("اختر الفرع للتصفير:", list(reset_b_dict.keys()))
+              reset_branch_id = reset_b_dict[reset_branch_sel]
+              
+              confirm_check = st.checkbox("أؤكد رغبتي في مسح وتصفير فواتير وشفتات هذه الجهة نهائياً وإعادة تعيين العدادات")
+              
+              if st.form_submit_button("🚨 تنفيذ التصفير الشامل للجهة المحددة", type="primary"):
+                  if confirm_check:
+                      if reset_branch_id == "ALL":
+                          branch_ids_list = [b["id"] for b in reset_branches]
+                          if branch_ids_list:
+                              placeholders_b = ','.join('?' for _ in branch_ids_list)
+                              conn.execute(f"DELETE FROM invoices WHERE branch_id IN ({placeholders_b})", branch_ids_list)
+                          conn.commit()
+                      else:
+                          conn.execute("DELETE FROM invoices WHERE branch_id = ?", (reset_branch_id,))
+                          conn.commit()
+                      st.success(f"⚙️ تم تصفير بيانات وفواتير الجهة ({reset_comp_name} - {reset_branch_sel}) بنجاح وإعادة تعيين الشفتات!")
+                      st.rerun()
+                  else:
+                      st.warning("🎭 **هَنّي روحك.. يرجى تحديد مربّع التأكيد لتنفيذ عملية التصفير!**")
+      else:
+          st.warning("لا توجد شركات مسجلة في النظام للتصفير.")
   conn.close()
 
 elif choice == "🥜 التحميص والخلط والتصنيع":
@@ -820,7 +876,7 @@ elif choice == "🥜 التحميص والخلط والتصنيع":
               old_price = items_dict[sel_item]["sale_price"]
               new_unit_price = (in_qty * old_price) / out_qty
               conn.execute("INSERT INTO items (company_id, branch_id, item_name, sale_price, quantity) VALUES ((SELECT company_id FROM branches WHERE id=?), ?, ?, ?, ?)", (b_id, b_id, final_roast_name, round(new_unit_price, 2), out_qty))
-              conn.commit(); log_action(st.session_state["user_id"], "تحميص", f"تم تحميص {final_roast_name}"); st.success(f"تم التحميص! السعر: {new_unit_price:.2f}")
+              conn.commit(); log_action(st.session_state["user_id"], "تحميص", f"تم تحميص {final_roast_name}"); st.success(f"🥜 تم تنفيذ عملية التحميص بنجاح! السعر الناتج: {new_unit_price:.2f} د.ل")
     conn.close()
   with tab2:
     with st.form("mix_form", clear_on_submit=True):
@@ -840,7 +896,7 @@ elif choice == "🥜 التحميص والخلط والتصنيع":
             final_price = total_cost * (1 + (profit_margin / 100))
             b_id = list(branch_dict.values())[0] if branch_dict else None
             conn.execute("INSERT INTO items (company_id, branch_id, item_name, sale_price) VALUES ((SELECT company_id FROM branches WHERE id=?), ?, ?, ?)", (b_id, b_id, final_mix_name, round(final_price, 2)))
-            conn.commit(); log_action(st.session_state["user_id"], "خلط وتصنيع", f"تم اعتماد {final_mix_name}"); st.success(f"تم الاعتماد بسعر: {final_price:.2f}")
+            conn.commit(); log_action(st.session_state["user_id"], "خلط وتصنيع", f"تم اعتماد {final_mix_name}"); st.success(f"✨ تم اعتماد وإنتاج صنف المكسرات بنجاح بسعر: {final_price:.2f} د.ل")
     conn.close()
 
 elif choice == "🛒 نقطة البيع (POS)":
@@ -907,7 +963,7 @@ elif choice == "🛒 نقطة البيع (POS)":
             if hold_submit:
                 st.session_state["held_carts"].append(st.session_state["cart"])
                 st.session_state["cart"] = []
-                st.success("تم تعليق الفاتورة.")
+                st.success("⏸️ تم تعليق الفاتورة بنجاح.")
                 st.rerun()
             if clear_submit:
                 st.session_state["cart"] = []
@@ -938,7 +994,8 @@ elif choice == "🛒 نقطة البيع (POS)":
                     refund_total = item_data_ret['sale_price'] * ret_qty
                     conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, shift_status) VALUES (?, ?, ?, 'مرتجع', 'open')", (b_id, st.session_state["user_id"], -refund_total, 'كاش'))
                     conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (ret_qty, item_data_ret['id']))
-                    conn.commit(); st.session_state["return_auth"] = False; log_action(st.session_state["user_id"], "مرتجع POS", f"إرجاع صنف بخصم {refund_total}"); st.success("تم الإرجاع بنجاح."); st.rerun()
+                    conn.commit(); st.session_state["return_auth"] = False; log_action(st.session_state["user_id"], "مرتجع POS", f"إرجاع صنف بخصم {refund_total}"); st.success("📦 تم إرجاع الصنف وتعديل المخزون بنجاح.")
+                    st.rerun()
 
   with tab3:
     open_sales = conn.execute("SELECT SUM(total_amount) as total FROM invoices WHERE branch_id = ? AND shift_status = 'open'", (b_id,)).fetchone()
@@ -958,7 +1015,8 @@ elif choice == "🛒 نقطة البيع (POS)":
                         conn.execute("UPDATE invoices SET shift_status = 'closed' WHERE branch_id = ? AND shift_status = 'open'", (b_id,))
                         conn.execute("UPDATE treasuries SET balance = balance + ? WHERE id = ?", (shift_total, t_id_z))
                         conn.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, 'إيداع', ?, 'إغلاق وردية Z-READ')", (t_id_z, st.session_state["user_id"], shift_total))
-                        conn.commit(); log_action(st.session_state["user_id"], "إغلاق وردية", "تم تنفيذ Z-Read وإيداع المبالغ"); st.success("تم الترحيل بنجاح!"); st.rerun()
+                        conn.commit(); log_action(st.session_state["user_id"], "إغلاق وردية", "تم تنفيذ Z-Read وإيداع المبالغ"); st.success("📊 تم إغلاق الوردية وترحيل المبالغ للخزينة بنجاح!")
+                        st.rerun()
                     else: st.info("🎭 **هَنّي روحك.. الوردية مصفرة بالفعل ولا توجد مبيعات لإغلاقها!** (تنبيه وردية فارغة)")
   conn.close()
 
