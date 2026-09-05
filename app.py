@@ -628,11 +628,11 @@ elif choice == "📊 التقارير الشاملة والمخازن":
               conn.commit(); log_action(st.session_state["user_id"], "تعديل مخزون", "تعديل بيانات الأصناف"); st.success("تم الحفظ!")
           st.download_button("📥 تصدير المخزون لـ Excel", data=to_excel(items_df), file_name="inventory.xlsx")
 
-  # --- شاشة توزيع ونقل المخزون (محسنة بالكامل لتعرض الشركات بوضوح) ---
+  # --- شاشة توزيع ونقل المخزون (بين شركة إلى شركة، أو شركة إلى فرع بحرية تامة) ---
   with tab5:
-      st.subheader("🔄 توزيع ونقل المخزون (بين مخزن الشركة الرئيسي والفروع)")
+      st.subheader("🔄 نقل وتحويل المخزون (بين الشركات أو الفروع)")
       if not is_viewer:
-          transfer_type = st.radio("نوع العملية:", ["نقل صنف محدد (فردي)", "نقل كافة الأصناف دفعة واحدة", "🗑️ حذف أصناف من المخزن"])
+          transfer_type = st.radio("نوع العملية:", ["نقل صنف محدد (فردي)", "نقل كافة الأصناف (من شركة إلى أخرى أو فرع)", "🗑️ حذف أصناف من المخزن"])
           
           all_companies_list = conn.execute("SELECT id, company_name FROM companies").fetchall()
           all_c_dict = {f"🏢 شركة: {c['company_name']} (المخزن الرئيسي)": c["id"] for c in all_companies_list}
@@ -651,53 +651,51 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                   with col_dest2:
                       if target_comp_id:
                           target_branches = conn.execute("SELECT id, branch_name FROM branches WHERE company_id=?", (target_comp_id,)).fetchall()
-                          b_dict = {b["branch_name"]: b["id"] for b in target_branches}
-                          if b_dict:
-                              target_branch_name = st.selectbox("إلى الفرع التابع:", list(b_dict.keys()), key="tb1")
-                              target_branch_id = b_dict[target_branch_name]
-                          else:
-                              st.warning("⚠️ هذه الشركة ليس لها فروع مسجلة. أنشئ فرعاً لها أولاً.")
-                              target_branch_id = None
+                          b_dict = {"مخزن الشركة الرئيسي (بدون فرع معين)": None}
+                          b_dict.update({b["branch_name"]: b["id"] for b in target_branches})
+                          target_branch_name = st.selectbox("إلى الفرع (اختياري):", list(b_dict.keys()), key="tb1")
+                          target_branch_id = b_dict[target_branch_name]
                       else: target_branch_id = None
                   
                   transfer_qty = st.number_input("الكمية المراد نقلها", min_value=0.1, value=1.0)
-                  if st.button("🚀 تنفيذ النقل الفردي") and target_branch_id:
+                  if st.button("🚀 تنفيذ النقل الفردي") and target_comp_id:
                       curr_item = conn.execute("SELECT * FROM items WHERE id = ?", (sel_item_id,)).fetchone()
                       if curr_item and curr_item["quantity"] >= transfer_qty:
                           conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (transfer_qty, sel_item_id))
-                          existing = conn.execute("SELECT id FROM items WHERE company_id=? AND branch_id = ? AND item_code=? AND item_name=?", (target_comp_id, target_branch_id, curr_item["item_code"], curr_item["item_name"])).fetchone()
+                          existing = conn.execute("SELECT id FROM items WHERE company_id=? AND ((branch_id IS ? AND ? IS NULL) OR branch_id = ?) AND item_code=? AND item_name=?", (target_comp_id, target_branch_id, target_branch_id, target_branch_id, curr_item["item_code"], curr_item["item_name"])).fetchone()
                           if existing: conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (transfer_qty, existing["id"]))
                           else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)", (target_comp_id, target_branch_id, curr_item["item_code"], curr_item["item_name"], transfer_qty, curr_item["buy_price"], curr_item["sale_price"]))
-                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون", f"نقل {transfer_qty}"); st.success("تم النقل بنجاح إلى الفرع المستهدف!"); st.rerun()
+                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون", f"نقل {transfer_qty}"); st.success("تم النقل بنجاح إلى الشركة/الفرع المستهدف!"); st.rerun()
                       else: st.error("الكمية غير كافية بالمخزن!")
 
-              elif transfer_type == "نقل كافة الأصناف دفعة واحدة":
-                  st.markdown("**🎯 نقل كامل أصناف المخزن الرئيسي للشركة إلى أحد فروعها**")
+              elif transfer_type == "نقل كافة الأصناف (من شركة إلى أخرى أو فرع)":
+                  st.markdown("**🎯 نقل وتوزيع كافة أصناف مخزن شركة إلى مخزن شركة أخرى أو أحد فروعها**")
                   col_src, col_dst = st.columns(2)
                   with col_src:
-                      source_comp_label = st.selectbox("📦 من شركة (المخزن الرئيسي):", list(all_c_dict.keys()), key="src_comp")
+                      source_comp_label = st.selectbox("📦 من شركة (المصدر الرئيسي):", list(all_c_dict.keys()), key="src_comp")
                       source_comp_id = all_c_dict[source_comp_label] if source_comp_label else None
                   with col_dst:
-                      target_comp_label = st.selectbox("🎯 إلى شركة:", list(all_c_dict.keys()), key="dst_comp")
+                      target_comp_label = st.selectbox("🎯 إلى شركة (الوجهة):", list(all_c_dict.keys()), key="dst_comp")
                       target_comp_id = all_c_dict[target_comp_label] if target_comp_label else None
                       
                       target_branches = conn.execute("SELECT id, branch_name FROM branches WHERE company_id=?", (target_comp_id,)).fetchall() if target_comp_id else []
-                      dst_b_dict = {b["branch_name"]: b["id"] for b in target_branches}
-                      dst_branch_name = st.selectbox("📍 إلى الفرع المخصص:", list(dst_b_dict.keys())) if dst_b_dict else None
+                      dst_b_dict = {"مخزن الشركة الرئيسي (بدون فرع معين)": None}
+                      dst_b_dict.update({b["branch_name"]: b["id"] for b in target_branches})
+                      dst_branch_name = st.selectbox("📍 إلى الفرع (اختياري):", list(dst_b_dict.keys()))
                       dst_branch_id = dst_b_dict[dst_branch_name] if dst_branch_name else None
 
-                  if st.button("🚀 تنفيذ نقل كافة الأصناف دفعة واحدة", use_container_width=True, type="primary") and dst_branch_id:
+                  if st.button("🚀 تنفيذ نقل كافة الأصناف دفعة واحدة", use_container_width=True, type="primary") and target_comp_id:
                       source_items = conn.execute("SELECT * FROM items WHERE company_id = ? AND branch_id IS NULL AND quantity > 0", (source_comp_id,)).fetchall()
                       if not source_items: st.warning("لا توجد أصناف متاحة في المخزن الرئيسي لهذه الشركة.")
                       else:
                           transferred_count = 0
                           for s_item in source_items:
-                              existing = conn.execute("SELECT id FROM items WHERE company_id=? AND branch_id = ? AND item_code=? AND item_name=?", (target_comp_id, dst_branch_id, s_item["item_code"], s_item["item_name"])).fetchone()
+                              existing = conn.execute("SELECT id FROM items WHERE company_id=? AND ((branch_id IS ? AND ? IS NULL) OR branch_id = ?) AND item_code=? AND item_name=?", (target_comp_id, dst_branch_id, dst_branch_id, dst_branch_id, s_item["item_code"], s_item["item_name"])).fetchone()
                               if existing: conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (s_item["quantity"], existing["id"]))
                               else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)", (target_comp_id, dst_branch_id, s_item["item_code"], s_item["item_name"], s_item["quantity"], s_item["buy_price"], s_item["sale_price"]))
                               conn.execute("UPDATE items SET quantity = 0 WHERE id = ?", (s_item["id"],))
                               transferred_count += 1
-                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف"); st.success(f"تم نقل ({transferred_count}) صنف إلى الفرع بنجاح!"); st.rerun()
+                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف"); st.success(f"تم نقل وتوزيع ({transferred_count}) صنف بنجاح!"); st.rerun()
 
               elif transfer_type == "🗑️ حذف أصناف من المخزن":
                   st.markdown("**🗑️ خيارات حذف الأصناف**")
