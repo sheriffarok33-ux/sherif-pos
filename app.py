@@ -103,7 +103,6 @@ def initialize_database():
   try: cursor.execute("ALTER TABLE invoices ADD COLUMN notes TEXT")
   except: pass
 
-  # تأكيد وجود حساب أدمن افتراضي دائماً لعدم انغلاق البرنامج
   admin_chk = cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin' AND is_active = 1").fetchone()[0]
   if admin_chk == 0:
       cursor.execute("INSERT OR IGNORE INTO users (username, phone, password, role, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', 1)")
@@ -158,18 +157,10 @@ def process_barcode():
         item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
         conn.close()
         if item:
-            found = False
-            for c in st.session_state["cart"]:
-                if c["id"] == item["id"]:
-                    c["qty"] += 1.0
-                    c["total"] = c["price"] * c["qty"]
-                    found = True
-                    break
-            if not found:
-                st.session_state["cart"].append({
-                    "id": item["id"], "code": item["item_code"], "name": item["item_name"],
-                    "price": float(item["sale_price"]), "qty": 1.0, "total": float(item["sale_price"]) * 1.0
-                })
+            st.session_state["cart"].append({
+                "id": item["id"], "code": item["item_code"], "name": item["item_name"],
+                "price": item["sale_price"], "qty": 1, "total": item["sale_price"] * 1
+            })
     st.session_state.barcode_scan = ""
 
 # --- تسجيل الدخول ---
@@ -216,7 +207,7 @@ if not st.session_state["logged_in"]:
               conn.close(); st.error("خطأ في اسم المستخدم أو كلمة المرور!")
   st.stop()
 
-# --- التحقق من الفرع (التحسين الجذري: الأدمن يتخطى اختيار الفرع تماماً) ---
+# --- التحقق من الفرع ---
 if not st.session_state["branch_verified"]:
   if st.session_state["role"] in ["Admin", "Viewer"]:
       st.session_state["branch_verified"] = True
@@ -262,7 +253,7 @@ else: logo_row = conn.execute("SELECT logo_path FROM companies WHERE id = ? AND 
 conn.close()
 
 if logo_row and os.path.exists(logo_row["logo_path"]): st.sidebar.image(logo_row["logo_path"], use_container_width=True)
-else: st.sidebar.markdown("<h2 style='text-align: center;'>🏢 مجموعة أبو زيد (القابضة)</h2>", unsafe_allow_html=True)
+else: st.sidebar.markdown("<h2 style='text-align: center;'>🏢 مجموعة أبو زيد التجارية (القابضة)</h2>", unsafe_allow_html=True)
 
 st.sidebar.markdown(f"**👤 {st.session_state['username']} | `{st.session_state['role']}`**")
 st.sidebar.markdown("---")
@@ -292,7 +283,7 @@ dashboard_cards = {
 
 # --- محتوى الصفحات ---
 if choice == "🏠 الرئيسية واللوحة":
-  st.title("🌟 لوحة التحكم الرئيسية")
+  st.title("🌟 مجموعة أبو زيد التجارية (القابضة) - لوحة التحكم الرئيسية")
   admin_options = [m for m in menu_to_show if m not in ["🏠 الرئيسية واللوحة", "🚪 تسجيل الخروج"]]
   cols = st.columns(3)
   for i, item in enumerate(admin_options):
@@ -303,14 +294,14 @@ if choice == "🏠 الرئيسية واللوحة":
           st.markdown("<br>", unsafe_allow_html=True)
 
 elif choice == "🏢 إدارة الشركات والفروع":
-  st.header("🏢 إدارة الشركات والفروع")
+  st.header("🏢 إدارة الشركات والفروع (تحت مجموعة أبو زيد القابضة)")
   conn = get_db_connection()
   is_viewer = (st.session_state["role"] == "Viewer")
   
   if st.session_state["role"] == "Admin" and not is_viewer:
-      with st.expander("➕ إضافة شركة جديدة", expanded=False):
+      with st.expander("➕ إضافة شركة جديدة تابعة للمجموعة", expanded=False):
           with st.form("add_comp_form", clear_on_submit=True):
-              c_name = st.text_input("اسم الشركة البرمجي")
+              c_name = st.text_input("اسم الشركة البرمجي (مثال: محامص أبو زيد)")
               c_title = st.text_input("الاسم الرسمي للفاتورة")
               logo_file = st.file_uploader("شعار الشركة", type=["png", "jpg", "jpeg"])
               if st.form_submit_button("💾 حفظ الشركة") and c_name:
@@ -325,9 +316,9 @@ elif choice == "🏢 إدارة الشركات والفروع":
   comps_dict = {c["company_name"]: c["id"] for c in comps}
   
   if comps_dict and not is_viewer:
-      with st.expander("➕ إضافة فرع جديد", expanded=False):
+      with st.expander("➕ إضافة فرع جديد لأي شركة", expanded=False):
           with st.form("add_branch_form", clear_on_submit=True):
-              sel_c = st.selectbox("اختر الشركة للفرع", list(comps_dict.keys()))
+              sel_c = st.selectbox("اختر الشركة التابعة لها الفرع", list(comps_dict.keys()))
               b_name = st.text_input("اسم الفرع / المخزن")
               if st.form_submit_button("💾 حفظ الفرع") and b_name:
                   conn.execute("INSERT INTO branches (company_id, branch_name) VALUES (?, ?)", (comps_dict[sel_c], b_name.strip()))
@@ -336,7 +327,7 @@ elif choice == "🏢 إدارة الشركات والفروع":
   st.markdown("---")
   st.subheader("📋 الهيكل التنظيمي للمجموعة")
   for comp in comps:
-      st.markdown(f"### 📁 شركة: **{comp['company_name']}**")
+      st.markdown(f"### 📁 شركة تابعة: **{comp['company_name']}**")
       branches_df = pd.read_sql("SELECT id, branch_name AS 'اسم الفرع' FROM branches WHERE company_id = ?", conn, params=(comp["id"],))
       c1, c2 = st.columns([2, 1])
       with c1:
@@ -345,10 +336,10 @@ elif choice == "🏢 إدارة الشركات والفروع":
               if not is_viewer and st.button(f"💾 حفظ تعديلات فروع ({comp['company_name']})", key=f"save_b_{comp['id']}"):
                   for idx, row in edited_b.iterrows(): conn.execute("UPDATE branches SET branch_name=? WHERE id=?", (row['اسم الفرع'], row['id']))
                   conn.commit(); log_action(st.session_state["user_id"], "تعديل فروع", f"تم تعديل فروع شركة {comp['company_name']}"); st.success("تم التحديث!"); st.rerun()
-          else: st.markdown("&nbsp;&nbsp;&nbsp;&nbsp;└─ ⚠️ *لا توجد فروع مسجلة.*")
+          else: st.markdown("&nbsp;&nbsp;&nbsp;&nbsp;└─ ⚠️ *لا توجد فروع مسجلة لهذه الشركة.*")
       with c2:
           if not is_viewer:
-              if st.session_state["role"] == "Admin" and st.button(f"🗑️ حذف شركة ({comp['company_name']})", type="primary", key=f"del_c_{comp['id']}"):
+              if st.session_state["role"] == "Admin" and st.button(f"🗑️ حذف الشركة ({comp['company_name']})", type="primary", key=f"del_c_{comp['id']}"):
                   conn.execute("DELETE FROM companies WHERE id=?", (comp["id"],)); conn.commit(); log_action(st.session_state["user_id"], "حذف شركة", f"تم حذف شركة {comp['company_name']}"); st.rerun()
               if not branches_df.empty:
                   del_b_id = st.selectbox("اختر فرعاً للحذف:", branches_df["id"].tolist(), format_func=lambda x: branches_df[branches_df["id"]==x]["اسم الفرع"].values[0], key=f"sel_del_{comp['id']}")
@@ -637,68 +628,86 @@ elif choice == "📊 التقارير الشاملة والمخازن":
               conn.commit(); log_action(st.session_state["user_id"], "تعديل مخزون", "تعديل بيانات الأصناف"); st.success("تم الحفظ!")
           st.download_button("📥 تصدير المخزون لـ Excel", data=to_excel(items_df), file_name="inventory.xlsx")
 
-  # --- شاشة توزيع ونقل المخزون ---
+  # --- شاشة توزيع ونقل المخزون (مع خيارات الحذف والتعديل وتصحيح الخطأ تماماً) ---
   with tab5:
-      st.subheader("🔄 توزيع ونقل المخزون (بين المخازن الرئيسية والشركات والفروع)")
+      st.subheader("🔄 توزيع ونقل المخزون (بين مخزن الشركة الرئيسي والفروع)")
       if not is_viewer:
-          transfer_type = st.radio("نوع النقل:", ["نقل صنف محدد (فردي)", "نقل كافة الأصناف دفعة واحدة (شامل من المخزن الرئيسي)"])
+          transfer_type = st.radio("نوع العملية:", ["نقل صنف محدد (فردي)", "نقل كافة الأصناف دفعة واحدة", "🗑️ حذف أصناف من المخزن"])
           
           all_companies_list = conn.execute("SELECT id, company_name FROM companies").fetchall()
-          all_c_dict = {f"🏢 مخزن شركة: {c['company_name']} (المخزن الرئيسي للشركة الأم)": c["id"] for c in all_companies_list}
+          all_c_dict = {f"🏢 شركة: {c['company_name']} (المخزن الرئيسي)": c["id"] for c in all_companies_list}
           
           if transfer_type == "نقل صنف محدد (فردي)" and not items_df.empty:
               item_ids = items_df["id"].tolist()
               sel_item_id = st.selectbox("اختر الصنف:", item_ids, format_func=lambda x: f"[{items_df[items_df['id'] == x]['الكود'].values[0]}] {items_df[items_df['id'] == x]['الصنف'].values[0]} | المصدر: {items_df[items_df['id'] == x]['الشركة'].values[0]} - {items_df[items_df['id'] == x]['الفرع'].values[0]} | متاح: {items_df[items_df['id'] == x]['الكمية'].values[0]}")
               
               col_dest1, col_dest2 = st.columns(2)
-              with col_dest1: target_comp_label = st.selectbox("إلى شركة / جهة:", list(all_c_dict.keys()), key="tc1")
+              with col_dest1: target_comp_label = st.selectbox("إلى شركة:", list(all_c_dict.keys()), key="tc1")
               target_comp_id = all_c_dict[target_comp_label] if target_comp_label else None
               
               with col_dest2:
                   if target_comp_id:
                       target_branches = conn.execute("SELECT id, branch_name FROM branches WHERE company_id=?", (target_comp_id,)).fetchall()
-                      b_dict = {"المخزن الرئيسي للشركة (بدون فرع)": None}
-                      b_dict.update({b["branch_name"]: b["id"] for b in target_branches})
-                      target_branch_name = st.selectbox("إلى الفرع التابع:", list(b_dict.keys()), key="tb1")
-                      target_branch_id = b_dict[target_branch_name]
+                      b_dict = {b["branch_name"]: b["id"] for b in target_branches}
+                      if b_dict:
+                          target_branch_name = st.selectbox("إلى الفرع التابع:", list(b_dict.keys()), key="tb1")
+                          target_branch_id = b_dict[target_branch_name]
+                      else:
+                          st.warning("⚠️ هذه الشركة ليس لها فروع مسجلة. أنشئ فرعاً لها أولاً.")
+                          target_branch_id = None
                   else: target_branch_id = None
               
               transfer_qty = st.number_input("الكمية المراد نقلها", min_value=0.1, value=1.0)
-              if st.button("🚀 تنفيذ النقل الفردي"):
+              if st.button("🚀 تنفيذ النقل الفردي") and target_branch_id:
                   curr_item = conn.execute("SELECT * FROM items WHERE id = ?", (sel_item_id,)).fetchone()
                   if curr_item and curr_item["quantity"] >= transfer_qty:
                       conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (transfer_qty, sel_item_id))
-                      existing = conn.execute("SELECT id FROM items WHERE company_id=? AND branch_id IS ? AND item_code=? AND item_name=?", (target_comp_id, target_branch_id, curr_item["item_code"], curr_item["item_name"])).fetchone()
+                      existing = conn.execute("SELECT id FROM items WHERE company_id=? AND branch_id = ? AND item_code=? AND item_name=?", (target_comp_id, target_branch_id, curr_item["item_code"], curr_item["item_name"])).fetchone()
                       if existing: conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (transfer_qty, existing["id"]))
                       else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)", (target_comp_id, target_branch_id, curr_item["item_code"], curr_item["item_name"], transfer_qty, curr_item["buy_price"], curr_item["sale_price"]))
-                      conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون", f"نقل {transfer_qty}"); st.success("تم النقل بنجاح!"); st.rerun()
+                      conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون", f"نقل {transfer_qty}"); st.success("تم النقل بنجاح إلى الفرع المستهدف!"); st.rerun()
                   else: st.error("الكمية غير كافية بالمخزن!")
 
           elif transfer_type == "نقل كافة الأصناف دفعة واحدة (شامل من المخزن الرئيسي)":
-              st.markdown("**🎯 نقل كامل أصناف المخزن الرئيسي دفعة واحدة إلى مخزن الشركة التابعة**")
+              st.markdown("**🎯 نقل كامل أصناف المخزن الرئيسي للشركة إلى أحد فروعها**")
               col_src, col_dst = st.columns(2)
-              
               with col_src:
-                  source_comp_label = st.selectbox("📦 من (المخزن الرئيسي للشركة المصدرة / الأم):", list(all_c_dict.keys()), key="src_comp")
+                  source_comp_label = st.selectbox("📦 من شركة (المخزن الرئيسي):", list(all_c_dict.keys()), key="src_comp")
                   source_comp_id = all_c_dict[source_comp_label] if source_comp_label else None
               with col_dst:
-                  target_comp_label = st.selectbox("🎯 إلى (مخزن الشركة المستهدفة / التابعة):", list(all_c_dict.keys()), key="dst_comp")
+                  target_comp_label = st.selectbox("🎯 إلى شركة:", list(all_c_dict.keys()), key="dst_comp")
                   target_comp_id = all_c_dict[target_comp_label] if target_comp_label else None
-              
-              if st.button("🚀 تنفيذ نقل كافة الأصناف دفعة واحدة", use_container_width=True, type="primary"):
-                  if source_comp_id == target_comp_id: st.error("لا يمكن النقل لنفس الشركة!")
+                  
+                  target_branches = conn.execute("SELECT id, branch_name FROM branches WHERE company_id=?", (target_comp_id,)).fetchall() if target_comp_id else []
+                  dst_b_dict = {b["branch_name"]: b["id"] for b in target_branches}
+                  dst_branch_name = st.selectbox("📍 إلى الفرع المخصص:", list(dst_b_dict.keys())) if dst_b_dict else None
+                  dst_branch_id = dst_b_dict[dst_branch_name] if dst_branch_name else None
+
+              if st.button("🚀 تنفيذ نقل كافة الأصناف دفعة واحدة", use_container_width=True, type="primary") and dst_branch_id:
+                  source_items = conn.execute("SELECT * FROM items WHERE company_id = ? AND branch_id IS NULL AND quantity > 0", (source_comp_id,)).fetchall()
+                  if not source_items: st.warning("لا توجد أصناف متاحة في المخزن الرئيسي لهذه الشركة.")
                   else:
-                      source_items = conn.execute("SELECT * FROM items WHERE company_id = ? AND branch_id IS NULL AND quantity > 0", (source_comp_id,)).fetchall()
-                      if not source_items: st.warning("لا توجد أصناف بكميات متاحة في المخزن الرئيسي لهذه الشركة.")
-                      else:
-                          transferred_count = 0
-                          for s_item in source_items:
-                              existing = conn.execute("SELECT id FROM items WHERE company_id=? AND branch_id IS NULL AND item_code=? AND item_name=?", (target_comp_id, s_item["item_code"], s_item["item_name"])).fetchone()
-                              if existing: conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (s_item["quantity"], existing["id"]))
-                              else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, NULL, ?, ?, ?, ?, ?)", (target_comp_id, target_branch_id, s_item["item_code"], s_item["item_name"], s_item["quantity"], s_item["buy_price"], s_item["sale_price"]))
-                              conn.execute("UPDATE items SET quantity = 0 WHERE id = ?", (s_item["id"],))
-                              transferred_count += 1
-                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف"); st.success(f"تم نقل ({transferred_count}) صنف بنجاح!"); st.rerun()
+                      transferred_count = 0
+                      for s_item in source_items:
+                          existing = conn.execute("SELECT id FROM items WHERE company_id=? AND branch_id = ? AND item_code=? AND item_name=?", (target_comp_id, dst_branch_id, s_item["item_code"], s_item["item_name"])).fetchone()
+                          if existing: conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (s_item["quantity"], existing["id"]))
+                          else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)", (target_comp_id, dst_branch_id, s_item["item_code"], s_item["item_name"], s_item["quantity"], s_item["buy_price"], s_item["sale_price"]))
+                          conn.execute("UPDATE items SET quantity = 0 WHERE id = ?", (s_item["id"],))
+                          transferred_count += 1
+                      conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف"); st.success(f"تم نقل ({transferred_count}) صنف إلى الفرع بنجاح!"); st.rerun()
+
+          elif transfer_type == "🗑️ حذف أصناف من المخزن":
+              st.markdown("**🗑️ خيارات حذف الأصناف**")
+              del_mode = st.radio("نوع الحذف:", ["حذف صنف محدد", "حذف كافة الأصناف (تصفير المخزن)"])
+              if del_mode == "حذف صنف محدد" and not items_df.empty:
+                  del_item_sel = st.selectbox("اختر صنفاً للحذف النهائي:", items_df["id"].tolist(), format_func=lambda x: f"[{items_df[items_df['id']==x]['الكود'].values[0]}] {items_df[items_df['id']==x]['الصنف'].values[0]} ({items_df[items_df['id']==x]['الشركة'].values[0]})")
+                  if st.button("🗑️ حذف هذا الصنف نهائياً", type="primary"):
+                      conn.execute("DELETE FROM items WHERE id = ?", (del_item_sel,))
+                      conn.commit(); st.success("تم حذف الصنف بنجاح!"); st.rerun()
+              elif del_mode == "حذف كافة الأصناف (تصفير المخزن)":
+                  if st.checkbox("أؤكد رغبتي في حذف جميع الأصناف من قاعدة البيانات") and st.button("🚨 حذف وتصفير جميع الأصناف فوراً", type="primary"):
+                      conn.execute("DELETE FROM items")
+                      conn.commit(); st.success("تم مسح جميع الأصناف بنجاح!"); st.rerun()
 
   with tab2:
       if st.session_state["role"] == "Admin":
@@ -812,6 +821,7 @@ elif choice == "🛒 نقطة البيع (POS)":
         with st.form("checkout_form"):
             pay_method = st.selectbox("طريقة الدفع:", ["كاش (نقدي)", "بطاقة (شبكة)", "تحويل بنكي"])
             cash_paid = st.number_input("المبلغ المستلم من العميل (د.ل):", min_value=0.0, value=grand_total)
+            inv_notes = st.text_input("📝 ملاحظات الفاتورة / رقم الإيصال / بيان المنصرف:")
             
             change_due = cash_paid - grand_total if pay_method == "كاش (نقدي)" else 0.0
             if pay_method == "كاش (نقدي)":
@@ -831,11 +841,11 @@ elif choice == "🛒 نقطة البيع (POS)":
                 if pay_method == "كاش (نقدي)" and change_due < 0:
                     st.error("لا يمكن إتمام البيع، المبلغ المستلم غير كافٍ.")
                 else:
-                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, shift_status) VALUES (?, ?, ?, ?, 'open')", (b_id, st.session_state["user_id"], grand_total, pay_method))
+                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, notes, shift_status) VALUES (?, ?, ?, ?, ?, 'open')", (b_id, st.session_state["user_id"], grand_total, pay_method, inv_notes.strip()))
                     for c_item in st.session_state["cart"]:
                         conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
                     conn.commit(); st.session_state["cart"] = []
-                    log_action(st.session_state["user_id"], "مبيعات POS", f"إتمام فاتورة بمبلغ {grand_total} عبر {pay_method}")
+                    log_action(st.session_state["user_id"], "مبيعات POS", f"إتمام فاتورة بمبلغ {grand_total} عبر {pay_method} - ملاحظات: {inv_notes}")
                     st.success("تم إتمام البيع بنجاح!"); st.rerun()
             if hold_submit:
                 st.session_state["held_carts"].append(st.session_state["cart"]); st.session_state["cart"] = []; st.rerun()
@@ -863,7 +873,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                 if st.form_submit_button("إتمام المرتجع (Enter)"):
                     item_data_ret = items_options_ret[ret_item]
                     refund_total = item_data_ret['sale_price'] * ret_qty
-                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, shift_status) VALUES (?, ?, ?, 'مرتجع', 'open')", (b_id, st.session_state["user_id"], -refund_total, 'كاش'))
+                    conn.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, notes, shift_status) VALUES (?, ?, ?, 'مرتجع', 'مرتجع صنف', 'open')", (b_id, st.session_state["user_id"], -refund_total, 'كاش'))
                     conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (ret_qty, item_data_ret['id']))
                     conn.commit(); st.session_state["return_auth"] = False; log_action(st.session_state["user_id"], "مرتجع POS", f"إرجاع صنف بخصم {refund_total}"); st.success("تم الإرجاع بنجاح."); st.rerun()
 
@@ -871,7 +881,7 @@ elif choice == "🛒 نقطة البيع (POS)":
     open_sales = conn.execute("SELECT SUM(total_amount) as total FROM invoices WHERE branch_id = ? AND shift_status = 'open'", (b_id,)).fetchone()
     shift_total = open_sales["total"] if open_sales["total"] else 0.0
     col_x, col_z = st.columns(2)
-    with col_x: st.markdown(f"""<div class="card" style="background-color: #0284c7;"><h3>X-READ (مبيعات الوردية)</h3><h2>{shift_total:.2f} د.ل</h2></div>""", unsafe_allow_html=True)
+    with col_x: st.markdown(f"""<div class="card" style="background-color: #0284c7;"><h3>X-READ (مبيعات الوردية)</h3><h2>{shift_total:.2f} د.ل</h2></div>""", unsafe_allow_html=Thread if 'Thread' in globals() else type('',(),{})())
     with col_z:
         st.markdown(f"""<div class="card" style="background-color: #be123c;"><h3>Z-READ (تصفير الوردية وإيداع)</h3></div>""", unsafe_allow_html=True)
         treasuries_branch = conn.execute("SELECT id, treasury_name FROM treasuries WHERE branch_id = ? OR (branch_id IS NULL AND company_id = (SELECT company_id FROM branches WHERE id=?))", (b_id, b_id)).fetchall()
