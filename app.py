@@ -24,8 +24,8 @@ st.markdown("""
         transition: all 0.3s ease; margin-bottom: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); font-size: 16px; height: auto;
     }
     [data-testid="stSidebar"] .stButton>button:hover { background-color: #2563eb; color: white; border-color: #2563eb; transform: translateX(-5px); }
-    .card { padding: 20px; border-radius: 12px; color: white; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px; }
-    .pos-btn { background-color: #0ea5e9; color: white; border-radius: 10px; padding: 15px; text-align: center; font-weight: bold; font-size: 16px; margin-bottom: 8px; border: none; cursor: pointer; }
+    .card { padding: 15px; border-radius: 12px; color: white; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px; }
+    .pos-item-card { background: white; padding: 12px; border-radius: 10px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin-bottom: 8px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -79,7 +79,6 @@ def initialize_database():
   
   cursor.execute("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_id INTEGER DEFAULT NULL, item_code TEXT, item_name TEXT NOT NULL, quantity REAL DEFAULT 0.0, buy_price REAL DEFAULT 0.0, sale_price REAL NOT NULL, image_path TEXT, FOREIGN KEY (company_id) REFERENCES companies(id), FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE)")
   cursor.execute("CREATE TABLE IF NOT EXISTS invoices (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, total_amount REAL, payment_method TEXT DEFAULT 'كاش', notes TEXT, shift_status TEXT DEFAULT 'open', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-  cursor.execute("CREATE TABLE IF NOT EXISTS invoice_items (id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_id INTEGER, item_name TEXT, price REAL, qty REAL, total REAL, FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE)")
   cursor.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_id INTEGER, user_id INTEGER, treasury_id INTEGER, amount REAL NOT NULL, description TEXT NOT NULL, expense_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (company_id) REFERENCES companies(id), FOREIGN KEY (branch_id) REFERENCES branches(id))")
   cursor.execute("CREATE TABLE IF NOT EXISTS treasuries (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, branch_id INTEGER, treasury_name TEXT NOT NULL, treasury_type TEXT NOT NULL, balance REAL DEFAULT 0.0)")
   cursor.execute("CREATE TABLE IF NOT EXISTS treasury_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, treasury_id INTEGER, user_id INTEGER, trans_type TEXT NOT NULL, amount REAL NOT NULL, description TEXT, trans_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
@@ -162,9 +161,10 @@ if "allowed_menus" not in st.session_state: st.session_state["allowed_menus"] = 
 if "cart" not in st.session_state: st.session_state["cart"] = []
 if "held_carts" not in st.session_state: st.session_state["held_carts"] = []
 if "return_auth" not in st.session_state: st.session_state["return_auth"] = False
+if "xread_auth" not in st.session_state: st.session_state["xread_auth"] = False
+if "zread_auth" not in st.session_state: st.session_state["zread_auth"] = False
 if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
 if "barcode_scan" not in st.session_state: st.session_state["barcode_scan"] = ""
-if "last_invoice" not in st.session_state: st.session_state["last_invoice"] = None
 
 def set_page(page_name): st.session_state["page"] = page_name
 
@@ -968,25 +968,25 @@ elif choice == "🥜 التحميص والخلط والتصنيع":
     conn.close()
 
 elif choice == "🛒 نقطة البيع (POS)":
-  st.header("🛒 نقطة البيع السريعة (POS Cashier)")
+  st.header("🛒 شاشة الكاشير السريعة (POS)")
   
   conn_pos = get_db_connection()
   
-  # السماح للأدمن أو CEO باختيار الشركة والفرع لمتابعة المبيعات، بينما الكاشير يعمل على فرعه مباشرة
+  # --- اختيار الشركة والفرع في شاشة المبيعات (للأدمن والـ CEO) ---
   if st.session_state["role"] in ["Admin", "CEO"]:
-      col_p1, col_p2 = st.columns(2)
+      col_pos_c, col_pos_b = st.columns(2)
       pos_comps = conn_pos.execute("SELECT id, company_name FROM companies").fetchall()
-      pos_c_dict = {c["company_name"]: c["id"] for c in pos_comps}
-      if pos_c_dict:
-          with col_p1:
-              sel_pos_c_name = st.selectbox("🏢 اختر الشركة لعرض مبيعاتها:", list(pos_c_dict.keys()), key="pos_sel_comp")
-              sel_pos_c_id = pos_c_dict[sel_pos_c_name]
-          with col_p2:
-              pos_branches = conn_pos.execute("SELECT id, branch_name FROM branches WHERE company_id = ?", (sel_pos_c_id,)).fetchall()
-              pos_b_dict = {b["branch_name"]: b["id"] for b in pos_branches}
-              if pos_b_dict:
-                  sel_pos_b_name = st.selectbox("📍 اختر الفرع:", list(pos_b_dict.keys()), key="pos_sel_branch")
-                  b_id = pos_b_dict[sel_pos_b_name]
+      pos_comps_dict = {c["company_name"]: c["id"] for c in pos_comps}
+      if pos_comps_dict:
+          with col_pos_c:
+              selected_pos_comp_name = st.selectbox("🏢 اختر الشركة لعرض مبيعاتها:", list(pos_comps_dict.keys()), key="pos_main_comp_sel")
+              selected_pos_comp_id = pos_comps_dict[selected_pos_comp_name]
+          with col_pos_b:
+              pos_branches = conn_pos.execute("SELECT id, branch_name FROM branches WHERE company_id = ?", (selected_pos_comp_id,)).fetchall()
+              pos_branches_dict = {b["branch_name"]: b["id"] for b in pos_branches}
+              if pos_branches_dict:
+                  selected_pos_branch_name = st.selectbox("📍 اختر الفرع:", list(pos_branches_dict.keys()), key="pos_main_branch_sel")
+                  b_id = pos_branches_dict[selected_pos_branch_name]
               else:
                   st.warning("⚠️ هذه الشركة لا توجد لها فروع مسجلة.")
                   b_id = None
@@ -999,14 +999,27 @@ elif choice == "🛒 نقطة البيع (POS)":
   if b_id:
       branch_items = conn_pos.execute("SELECT * FROM items WHERE branch_id = ?", (b_id,)).fetchall()
       
-      tab1, tab2, tab3 = st.tabs(["🛒 شاشة البيع السريعة", "📦 المرتجعات", "📊 الوردية (X/Z-READ)"])
+      # رأس الشاشة الاحترافي (معلومات الكاشير، الفرع، الشفت، الوقت، ورقم الفاتورة التالية)
+      next_inv_id = conn_pos.execute("SELECT IFNULL(MAX(id), 0) + 1 FROM invoices").fetchone()[0]
+      current_shift = conn_pos.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND shift_status = 'open'", (b_id,)).fetchone()[0] + 1
+      
+      st.markdown(f"""
+          <div style="background: #1e293b; color: white; padding: 12px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; font-size: 15px;">
+              <div>👤 <b>الكاشير:</b> {st.session_state['username']}</div>
+              <div>🏢 <b>الفرع ID:</b> {b_id} | 🔄 <b>الشفت الحالي:</b> #{current_shift}</div>
+              <div>📅 <b>التاريخ والوقت:</b> {datetime.now().strftime('%Y-%m-%d %I:%M %p')}</div>
+              <div style="background: #e2e8f0; color: #0f172a; padding: 4px 10px; border-radius: 6px; font-weight: bold;">#INV-{next_inv_id:05d}</div>
+          </div>
+      """, unsafe_allow_html=True)
+
+      tab1, tab2, tab3 = st.tabs(["🛒 شاشة البيع (Grid POS)", "📦 المرتجعات", "📊 الوردية (X/Z-READ)"])
       
       with tab1:
-          col_grid, col_cart = st.columns([2, 1])
+          col_items_grid, col_checkout_panel = st.columns([2, 1])
           
-          with col_grid:
-              st.subheader("📦 شبكة أصناف المخزن المتاحة للبيع")
-              st.text_input("🔍 بحث أو مسح باركود صنف:", key="barcode_scan", on_change=process_barcode)
+          with col_items_grid:
+              st.markdown("#### 🛍️ شبكة أصناف المبيعات السريعة")
+              st.text_input("🔍 مسح الباركود أو البحث السريع:", key="barcode_scan", on_change=process_barcode)
               
               if branch_items:
                   grid_cols = st.columns(3)
@@ -1014,63 +1027,64 @@ elif choice == "🛒 نقطة البيع (POS)":
                       with grid_cols[idx % 3]:
                           st.markdown(f"""
                               <div class="pos-item-card">
-                                  <h4>{item['item_name']}</h4>
-                                  <p style="color: #10b981; font-weight: bold; font-size: 18px;">{item['sale_price']} د.ل</p>
-                                  <p style="color: #64748b; font-size: 12px;">المتاح: {item['quantity']}</p>
+                                  <h4 style="margin:0; font-size: 16px;">{item['item_name']}</h4>
+                                  <p style="color: #10b981; font-weight: bold; font-size: 16px; margin: 5px 0;">{item['sale_price']} د.ل</p>
+                                  <p style="color: #64748b; font-size: 11px; margin:0;">متاح: {item['quantity']}</p>
                               </div>
                           """, unsafe_allow_html=True)
-                          if st.button(f"➕ إضافة ({item['item_name']})", key=f"grid_add_{item['id']}"):
+                          if st.button(f"➕ إضافة ({item['item_name']})", key=f"grid_btn_{item['id']}"):
                               st.session_state["cart"].append({
                                   "id": item["id"], "code": item["item_code"], "name": item["item_name"],
                                   "price": float(item["sale_price"]), "qty": 1.0, "total": float(item["sale_price"]) * 1.0
                               })
                               st.rerun()
               else:
-                  st.info("⚠️ لا توجد أصناف مضافة لهذا الفرع حالياً. قم بتحويل أو استيراد أصناف له.")
+                  st.info("⚠️ لا توجد أصناف متاحة للبيع في هذا الفرع.")
 
               # إضافة صنف عام / حر يدوي
-              with st.expander("➕ إضافة صنف عام / حر يدوي (ليس له كود)", expanded=False):
-                  with st.form("gen_pos_form", clear_on_submit=True):
-                      g_name = st.text_input("اسم الصنف العام")
+              with st.expander("➕ إضافة صنف عام / حر يدوي (سعر أو خدمة طارئة)", expanded=False):
+                  with st.form("gen_pos_grid_form", clear_on_submit=True):
+                      g_name = st.text_input("اسم أو وصف الصنف العام")
                       g_price = st.number_input("السعر (د.ل)", min_value=0.1, value=5.0)
-                      g_qty = st.number_input("الكمية (تقبل الكسور)", min_value=0.01, value=1.0, step=0.1)
-                      if st.form_submit_button("➕ إضافة للسلة"):
+                      g_qty = st.number_input("الكمية (أو الوزن بالكيلو)", min_value=0.01, value=1.0, step=0.1)
+                      if st.form_submit_button("➕ إضافة للسلة فوراً"):
                           if g_name:
                               st.session_state["cart"].append({
                                   "id": 999999, "code": "GEN-000", "name": f"[عام/حر] {g_name}",
                                   "price": float(g_price), "qty": float(g_qty), "total": float(g_price) * float(g_qty)
                               })
-                              st.success("تمت إضافة الصنف العام بنجاح!")
+                              st.success("تمت إضافة الصنف العام للسلة!")
                               st.rerun()
 
-          with col_cart:
-              st.subheader("🛒 فاتورة البيع الحالية")
+          with col_checkout_panel:
+              st.markdown("#### 🧾 سلة المبيعات الحالية")
               if st.session_state["cart"]:
                   df_cart = pd.DataFrame(st.session_state["cart"])
-                  st.data_editor(df_cart[["name", "price", "qty", "total"]], disabled=True, use_container_width=True, key="cart_editor")
+                  st.data_editor(df_cart[["name", "price", "qty", "total"]], disabled=True, use_container_width=True, key="cart_grid_editor")
+                  
                   grand_total = sum([x["total"] for x in st.session_state["cart"]])
                   st.metric("الإجمالي المطلوب", f"{grand_total:,.2f} د.ل")
                   
-                  with st.form("checkout_form_side"):
+                  with st.form("checkout_panel_form"):
                       pay_method = st.selectbox("طريقة الدفع:", ["كاش (نقدي)", "بطاقة (شبكة)", "تحويل بنكي"])
-                      cash_paid = st.number_input("المبلغ المستلم:", min_value=0.0, value=grand_total)
-                      inv_notes = st.text_input("📝 ملاحظات / اسم العميل:")
+                      cash_paid = st.number_input("المبلغ المدفوع من العميل:", min_value=0.0, value=grand_total)
+                      inv_notes = st.text_input("📝 ملاحظات الفاتورة / اسم العميل:")
                       
                       change_due = cash_paid - grand_total if pay_method == "كاش (نقدي)" else 0.0
                       if pay_method == "كاش (نقدي)":
-                          st.info(f"💵 المتبقي للعميل: **{change_due:,.2f} د.ل**")
+                          st.info(f"💵 المتبقي (الباقي للعميل): **{change_due:,.2f} د.ل**")
                       
-                      col_b1, col_b2 = st.columns(2)
-                      with col_b1:
+                      # الأزرار الجانبية العصرية للوحة الكاشير
+                      col_pa1, col_pa2 = st.columns(2)
+                      with col_pa1:
                           checkout_btn = st.form_submit_button("🖨️ إتمام وطباعة", use_container_width=True)
                           hold_btn = st.form_submit_button("⏸️ تعليق", use_container_width=True)
-                      with col_b2:
-                          reprint_btn = st.form_submit_button("📜 إعادة طباعة", use_container_width=True)
+                      with col_pa2:
                           clear_btn = st.form_submit_button("🗑️ تفريغ", use_container_width=True)
                           
                       if checkout_btn:
                           if pay_method == "كاش (نقدي)" and change_due < 0:
-                              st.error("🎭 **هَنّي روحك.. المبلغ غير كافٍ!**")
+                              st.error("🎭 **هَنّي روحك.. المبلغ المدفوع غير كافٍ لإتمام الفاتورة!**")
                           else:
                               cur_ins = conn_pos.cursor()
                               cur_ins.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method, notes, shift_status) VALUES (?, ?, ?, ?, ?, 'open')", (b_id, st.session_state["user_id"], grand_total, pay_method, inv_notes.strip()))
@@ -1088,12 +1102,6 @@ elif choice == "🛒 نقطة البيع (POS)":
                               log_action(st.session_state["user_id"], "مبيعات POS", f"إتمام فاتورة #{inv_id_val} بمبلغ {grand_total}")
                               st.success(f"🎉 تم إتمام البيع بنجاح برقم فاتورة: #{inv_id_val}!")
                               st.rerun()
-                      if reprint_btn:
-                          if st.session_state.get("last_invoice"):
-                              inv = st.session_state["last_invoice"]
-                              st.info(f"📜 **نسخة مكررة للفاتورة (#{inv['id']}):**\n* التاريخ: {inv['time']}\n* الإجمالي: {inv['total']:,.2f} د.ل\n* الدفع: {inv['method']}")
-                          else:
-                              st.warning("🎭 **هَنّي روحك.. لا توجد فاتورة مسجلة لإعادة طباعتها!**")
                       if hold_btn:
                           st.session_state["held_carts"].append(st.session_state["cart"])
                           st.session_state["cart"] = []
@@ -1102,8 +1110,24 @@ elif choice == "🛒 نقطة البيع (POS)":
                       if clear_btn:
                           st.session_state["cart"] = []
                           st.rerun()
+
+                  # زر إعادة طباعة لأي فاتورة سابقة (عدد غير محدود طوال السنة المالية)
+                  st.markdown("---")
+                  st.subheader("📜 أرشيف وإعادة طباعة الفواتير")
+                  all_invoices_list = conn_pos.execute("SELECT id, total_amount, created_at FROM invoices WHERE branch_id = ? ORDER BY id DESC", (b_id,)).fetchall()
+                  if all_invoices_list:
+                      inv_print_opts = {f"فاتورة رقم #{inv['id']} | الإجمالي: {inv['total_amount']} د.ل | {inv['created_at']}": inv['id'] for inv in all_invoices_list}
+                      sel_print_label = st.selectbox("اختر فاتورة لإعادة طباعتها:", list(inv_print_opts.keys()), key="reprint_sel_box")
+                      if st.button("🖨️ طباعة الفاتورة المحددة"):
+                          chosen_inv_id = inv_print_opts[sel_print_label]
+                          inv_data = conn_pos.execute("SELECT * FROM invoices WHERE id = ?", (chosen_inv_id,)).fetchone()
+                          if inv_data:
+                              st.info(f"📜 **نسخة مطبوعة رسمية (فاتورة #{inv_data['id']}):**\n* التاريخ: {inv_data['created_at']}\n* إجمالي المبلغ: {inv_data['total_amount']:,.2f} د.ل\n* طريقة الدفع: {inv_data['payment_method']}\n* ملاحظات: {inv_data['notes']}")
+                  else:
+                      st.text("لا توجد فواتير للأرشيف.")
+
               else:
-                  st.info("السلة فارغة. اختر صنفاً للبدء.")
+                  st.info("🛒 السلة فارغة. اختر أصنافاً للبدء.")
 
               if st.session_state["held_carts"] and st.button("▶️ استرجاع فاتورة معلقة"):
                   if not st.session_state["cart"]: 
@@ -1115,7 +1139,7 @@ elif choice == "🛒 نقطة البيع (POS)":
           recent_invoices = conn_pos.execute("SELECT id, total_amount, created_at, notes FROM invoices WHERE branch_id = ? ORDER BY id DESC LIMIT 50", (b_id,)).fetchall()
           if recent_invoices:
               inv_opts = {f"فاتورة رقم #{inv['id']} | الإجمالي: {inv['total_amount']} د.ل | التاريخ: {inv['created_at']}": inv['id'] for inv in recent_invoices}
-              sel_inv_label = st.selectbox("اختر الفاتورة لارتجاعها:", list(inv_opts.keys()))
+              sel_inv_label = st.selectbox("اختر الفاتورة المراد ارتجاعها:", list(inv_opts.keys()))
               sel_inv_id = inv_opts[sel_inv_label]
               
               if st.button("🗑️ تأكيد ارتجاع هذه الفاتورة بالكامل"):
@@ -1128,29 +1152,46 @@ elif choice == "🛒 نقطة البيع (POS)":
               st.info("لا توجد فواتير مسجلة لهذا الفرع.")
 
       with tab3:
+          st.subheader("📊 إدارة الوردية وتقارير X و Z-READ")
           open_sales = conn_pos.execute("SELECT SUM(total_amount) as total FROM invoices WHERE branch_id = ? AND shift_status = 'open'", (b_id,)).fetchone()
           shift_total = open_sales["total"] if open_sales["total"] else 0.0
+          
           col_x, col_z = st.columns(2)
-          with col_x: st.markdown(f"""<div class="card" style="background-color: #0284c7;"><h3>X-READ (مبيعات الوردية)</h3><h2>{shift_total:,.2f} د.ل</h2></div>""", unsafe_allow_html=True)
+          with col_x: 
+              st.markdown(f"""<div class="card" style="background-color: #0284c7;"><h3>X-READ (مبيعات الوردية الحالية)</h3><h2>{shift_total:,.2f} د.ل</h2></div>""", unsafe_allow_html=True)
           with col_z:
-              st.markdown(f"""<div class="card" style="background-color: #be123c;"><h3>Z-READ (تصفير الوردية وإيداع)</h3></div>""", unsafe_allow_html=True)
+              st.markdown(f"""<div class="card" style="background-color: #be123c;"><h3>Z-READ (إغلاق الوردية وتصفيرها)</h3></div>""", unsafe_allow_html=True)
+              
               treasuries_branch = conn_pos.execute("SELECT id, treasury_name FROM treasuries WHERE branch_id = ? OR (branch_id IS NULL AND company_id = (SELECT company_id FROM branches WHERE id=?))", (b_id, b_id)).fetchall()
               t_dict_z = {t["treasury_name"]: t["id"] for t in treasuries_branch}
+              
               if t_dict_z:
-                  with st.form("zread_form_pos", clear_on_submit=True):
-                      sel_t_z = st.selectbox("إيداع النقدية في خزينة:", list(t_dict_z.keys()))
-                      if st.form_submit_button("🛑 تنفيذ Z-READ وإغلاق الوردية"):
-                          if shift_total > 0:
-                              t_id_z = t_dict_z[sel_t_z]
-                              conn_pos.execute("UPDATE invoices SET shift_status = 'closed' WHERE branch_id = ? AND shift_status = 'open'", (b_id,))
-                              conn_pos.execute("UPDATE treasuries SET balance = balance + ? WHERE id = ?", (shift_total, t_id_z))
-                              conn_pos.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, 'إيداع', ?, 'إغلاق وردية Z-READ')", (t_id_z, st.session_state["user_id"], shift_total))
-                              conn_pos.commit(); log_action(st.session_state["user_id"], "إغلاق وردية", "تم تنفيذ Z-Read وإيداع المبالغ")
-                              st.success("📊 تم إغلاق الوردية وترحيل المبالغ للخزينة بنجاح وثبات!")
-                              st.rerun()
-                          else: st.info("🎭 **هَنّي روحك.. الوردية مصفرة بالفعل ولا توجد مبيعات لإغلاقها!**")
+                  with st.form("zread_secure_form"):
+                      st.markdown("🔒 **إغلاق وردية الكاشير (يستوجب الرقم السري للمشرف/الأدمن):**")
+                      sel_t_z = st.selectbox("إيداع إيراد الوردية في خزينة:", list(t_dict_z.keys()))
+                      supervisor_pass = st.text_input("الرقم السري للمشرف للإغلاق:", type="password")
+                      
+                      if st.form_submit_button("🛑 تنفيذ Z-READ وإغلاق الشفت", type="primary"):
+                          # التحقق من الرقم السري
+                          auth_check = conn_pos.execute("SELECT role FROM users WHERE password = ? AND role IN ('Admin', 'CEO', 'General_Supervisor', 'Branch_Supervisor')", (supervisor_pass,)).fetchone()
+                          if auth_check:
+                              if shift_total > 0:
+                                  t_id_z = t_dict_z[sel_t_z]
+                                  conn_pos.execute("UPDATE invoices SET shift_status = 'closed' WHERE branch_id = ? AND shift_status = 'open'", (b_id,))
+                                  conn_pos.execute("UPDATE treasuries SET balance = balance + ? WHERE id = ?", (shift_total, t_id_z))
+                                  conn_pos.execute("INSERT INTO treasury_transactions (treasury_id, user_id, trans_type, amount, description) VALUES (?, ?, 'إيداع', ?, 'إغلاق وردية Z-READ')", (t_id_z, st.session_state["user_id"], shift_total))
+                                  conn_pos.commit()
+                                  log_action(st.session_state["user_id"], "إغلاق وردية Z-Read", f"تم قراءة وإغلاق الشفت بمبلغ {shift_total}")
+                                  st.success("📊 تم قراءة وإغلاق الشفت الحالي بنجاح، وترحيل المبالغ للخزينة، وبدء وردية جديدة نظيفة!")
+                                  st.rerun()
+                              else:
+                                  st.info("🎭 **هَنّي روحك.. الوردية مصفرة بالفعل ولا توجد مبيعات لإغلاقها!**")
+                          else:
+                              st.error("🎭 **هَنّي روحك.. الرقم السري للمشرف غير صحيح!**")
+              else:
+                  st.warning("⚠️ لا توجد خزائن معرفة لهذا الفرع لإيداع الإيراد بها. قم بتعريف خزينة أولاً.")
   else:
-      st.warning("⚠️ يرجى اختيار الشركة والفرع أولاً لعرض نقطة البيع.")
+      st.warning("⚠️ يرجى اختيار الشركة والفرع أولاً لعرض نقطة البيع ومتابعة المبيعات.")
   conn_pos.close()
 
 st.sidebar.markdown("---")
