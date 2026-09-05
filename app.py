@@ -377,13 +377,15 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
               assigned_c = None
               assigned_b = []
               
-              # المنطق الجديد الدقيق: الأدمن العام لا تظهر له خيارات شركات أو فروع لأنه يدير البرنامج بالكامل
-              if db_role != "Admin":
+              # المنطق الهندسي الصحيح: الأدمن لا تظهر له شركات ولا فروع لأنه يدير المنظومة بالكامل
+              if db_role == "Admin":
+                  st.info("ℹ️ حساب (Admin) يمتلك صلاحية كاملة على النظام بالكامل ولا يتقيد بشركة أو فرع.")
+              else:
                   if all_comps_dict:
                       assigned_c_name = st.selectbox("🏢 اختر الشركة التابعة لها:", list(all_comps_dict.keys()))
                       assigned_c = all_comps_dict[assigned_c_name]
                       
-                      # جلب فروع الشركة المختارة حصرياً
+                      # جلب فروع هذه الشركة حصرياً
                       co_branches = conn.execute("SELECT id, branch_name FROM branches WHERE company_id = ?", (assigned_c,)).fetchall()
                       co_b_dict = {b["branch_name"]: b["id"] for b in co_branches}
                       
@@ -395,8 +397,6 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
                           assigned_b = [co_b_dict[b] for b in multi_b]
                       elif not co_b_dict:
                           st.warning("⚠️ هذه الشركة ليس لها فروع مسجلة. أنشئ لها فرعاً أولاً من إدارة الشركات والفروع.")
-              else:
-                  st.info("ℹ️ حساب (Admin - مدير النظام) يمتلك صلاحيات كاملة على البرنامج بالكامل ولا يتقيد بشركة أو فرع محدد.")
 
               if st.form_submit_button("💾 حفظ المستخدم") and u and p and phone:
                 try:
