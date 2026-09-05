@@ -363,52 +363,59 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
       all_comps_dict = {c["company_name"]: c["id"] for c in all_comps}
 
       if not is_viewer:
-          with st.expander("➕ إضافة مستخدم جديد", expanded=False):
-            with st.form("user_form", clear_on_submit=True):
-              u = st.text_input("اسم المستخدم")
-              phone = st.text_input("رقم الهاتف (إجباري ومميز لكل موظف)")
-              p = st.text_input("كلمة المرور")
+          with st.expander("➕ إضافة مستخدم جديد", expanded=True):
+              u = st.text_input("اسم المستخدم", key="new_u_name")
+              phone = st.text_input("رقم الهاتف (إجباري ومميز لكل موظف)", key="new_u_phone")
+              p = st.text_input("كلمة المرور", key="new_u_pass")
               
-              if st.session_state["role"] == "Admin": roles = ["Admin (مدير النظام)", "General_Supervisor (مدير شركة)", "Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
-              else: roles = ["Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
-              r = st.selectbox("الرتبة:", roles)
+              if st.session_state["role"] == "Admin": 
+                  roles = ["Admin (مدير النظام)", "General_Supervisor (مدير شركة)", "Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
+              else: 
+                  roles = ["Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مُشاهد فقط)"]
               
+              r = st.selectbox("الرتبة:", roles, key="new_u_role")
               db_role = r.split(" ")[0]
+              
               assigned_c = None
               assigned_b = []
               
-              # المنطق الهندسي الصحيح: الأدمن لا تظهر له شركات ولا فروع لأنه يدير المنظومة بالكامل
-              if db_role == "Admin":
-                  st.info("ℹ️ حساب (Admin) يمتلك صلاحية كاملة على النظام بالكامل ولا يتقيد بشركة أو فرع.")
-              else:
+              # التصحيح الدقيق: إذا لم يكن أدمن، يتم عرض الشركات والفروع بوضوح تام
+              if db_role != "Admin":
                   if all_comps_dict:
-                      assigned_c_name = st.selectbox("🏢 اختر الشركة التابعة لها:", list(all_comps_dict.keys()))
+                      assigned_c_name = st.selectbox("🏢 اختر الشركة التابعة لها:", list(all_comps_dict.keys()), key="new_u_comp")
                       assigned_c = all_comps_dict[assigned_c_name]
                       
-                      # جلب فروع هذه الشركة حصرياً
                       co_branches = conn.execute("SELECT id, branch_name FROM branches WHERE company_id = ?", (assigned_c,)).fetchall()
                       co_b_dict = {b["branch_name"]: b["id"] for b in co_branches}
                       
                       if db_role == "Cashier" and co_b_dict:
-                          selected_b_name = st.selectbox("📍 اختر فرع العمل للكاشير:", list(co_b_dict.keys()))
+                          selected_b_name = st.selectbox("📍 اختر فرع العمل للكاشير:", list(co_b_dict.keys()), key="new_u_branch_cashier")
                           assigned_b = [co_b_dict[selected_b_name]]
                       elif db_role in ["Branch_Supervisor", "General_Supervisor"] and co_b_dict:
-                          multi_b = st.multiselect("📍 اختر الفروع المخصصة:", list(co_b_dict.keys()))
+                          multi_b = st.multiselect("📍 اختر الفروع المخصصة للإشراف عليها:", list(co_b_dict.keys()), key="new_u_branches_sup")
                           assigned_b = [co_b_dict[b] for b in multi_b]
                       elif not co_b_dict:
                           st.warning("⚠️ هذه الشركة ليس لها فروع مسجلة. أنشئ لها فرعاً أولاً من إدارة الشركات والفروع.")
+                  else:
+                      st.warning("⚠️ لا توجد شركات مسجلة في النظام. أضف شركات وفروع أولاً.")
+              else:
+                  st.info("ℹ️ حساب (Admin - مدير النظام) يمتلك صلاحية كاملة على البرنامج بالكامل ولا يتقيد بشركة أو فرع محدد.")
 
-              if st.form_submit_button("💾 حفظ المستخدم") and u and p and phone:
-                try:
-                    cur = conn.cursor()
-                    default_branch_id = assigned_b[0] if assigned_b else None
-                    cur.execute("INSERT INTO users (username, phone, password, role, company_id, branch_id) VALUES (?, ?, ?, ?, ?, ?)", (u.strip(), phone.strip(), p, db_role, assigned_c, default_branch_id))
-                    new_user_id = cur.lastrowid
-                    if assigned_b:
-                        for b_id_val in assigned_b: 
-                            cur.execute("INSERT OR IGNORE INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_id_val))
-                    conn.commit(); log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}"); st.success("🎉 تم حفظ المستخدم وربطه بالصلاحيات بنجاح!")
-                except Exception as e: st.error(f"🎭 **هَنّي روحك.. خطأ أثناء إضافة المستخدم!**\nالسبب: {e}")
+              if st.button("💾 حفظ وإضافة المستخدم الجديد", key="btn_save_new_user"):
+                if u and p and phone:
+                    try:
+                        cur = conn.cursor()
+                        default_branch_id = assigned_b[0] if assigned_b else None
+                        cur.execute("INSERT INTO users (username, phone, password, role, company_id, branch_id) VALUES (?, ?, ?, ?, ?, ?)", (u.strip(), phone.strip(), p, db_role, assigned_c, default_branch_id))
+                        new_user_id = cur.lastrowid
+                        if assigned_b:
+                            for b_id_val in assigned_b: 
+                                cur.execute("INSERT OR IGNORE INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_id_val))
+                        conn.commit(); log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}"); st.success("🎉 تم حفظ المستخدم وربطه بالصلاحيات بنجاح!")
+                        st.rerun()
+                    except Exception as e: st.error(f"🎭 **هَنّي روحك.. خطأ أثناء إضافة المستخدم!**\nالسبب: {e}")
+                else:
+                    st.warning("⚠️ الرجاء ملء جميع الحقول الإجبارية (الاسم، الهاتف، كلمة المرور).")
 
       st.markdown("---")
       st.subheader("📋 قائمة المستخدمين (مع صلاحية تعديل الرتبة مباشرة)")
