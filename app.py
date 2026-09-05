@@ -383,35 +383,39 @@ elif choice == "👥 إدارة المستخدمين والصلاحيات":
               if db_role == "General_Supervisor" and comps_dict:
                   assigned_c_name = st.selectbox("الشركة التابعة له:", list(comps_dict.keys()))
                   assigned_c = comps_dict[assigned_c_name]
-              elif db_role in ["Branch_Supervisor", "Cashier"] and b_dict:
+              elif db_role == "Branch_Supervisor" and b_dict:
                   assigned_b = st.multiselect("الفروع المخصصة:", list(b_dict.keys()))
+              # ملاحظة: رتبة Cashier لا تظهر لها فروع عند الإنشاء بناءً على طلبك
               
               if st.form_submit_button("💾 حفظ المستخدم") and u and p and phone:
                 try:
                     cur = conn.cursor()
                     cur.execute("INSERT INTO users (username, phone, password, role, company_id) VALUES (?, ?, ?, ?, ?)", (u.strip(), phone.strip(), p, db_role, assigned_c))
                     new_user_id = cur.lastrowid
-                    if db_role in ["Branch_Supervisor", "Cashier"]:
+                    if db_role == "Branch_Supervisor":
                         for branch_str in assigned_b: cur.execute("INSERT INTO user_branches (user_id, branch_id) VALUES (?, ?)", (new_user_id, b_dict[branch_str]))
                     conn.commit(); log_action(st.session_state["user_id"], "إضافة مستخدم", f"تم إنشاء حساب للمستخدم {u}"); st.success("🎉 تم حفظ المستخدم بنجاح!")
                 except Exception as e: st.error(f"🎭 **هَنّي روحك.. خطأ أثناء إضافة المستخدم!**\nالسبب: {e}")
 
       st.markdown("---")
-      st.subheader("📋 قائمة المستخدمين")
+      st.subheader("📋 قائمة المستخدمين (مع صلاحية تعديل الرتبة مباشرة)")
       if st.session_state["role"] == "Admin": users_df = pd.read_sql("SELECT id, username AS 'اسم المستخدم', phone AS 'رقم الهاتف', password AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users", conn)
       else:
           q = "SELECT id, username AS 'اسم المستخدم', phone AS 'رقم الهاتف', password AS 'كلمة المرور', role AS 'الرتبة', is_active AS 'نشط (1=نعم/0=موقوف)' FROM users WHERE company_id = ? OR id IN (SELECT user_id FROM user_branches ub JOIN branches b ON ub.branch_id = b.id WHERE b.company_id = ?)"
           users_df = pd.read_sql(q, conn, params=(st.session_state["company_id"], st.session_state["company_id"]))
       
       if not users_df.empty:
-          st.info("💡 يمكنك تعديل الاسم، رقم الهاتف، كلمة المرور، أو حالة النشاط مباشرة بالضغط على الخانة ثم اضغط حفظ.")
-          edited_users = st.data_editor(users_df, hide_index=True, disabled=is_viewer or ["الرتبة", "id"], key="u_editor")
+          st.info("💡 يمكنك تعديل الاسم، رقم الهاتف، كلمة المرور، **الرتبة**، أو حالة النشاط مباشرة من الجدول ثم اضغط حفظ التعديلات.")
+          # تم السماح بتعديل عمود 'الرتبة' مباشرة من الجدول
+          edited_users = st.data_editor(users_df, hide_index=True, disabled=is_viewer or ["id"], key="u_editor")
           if not is_viewer:
               c1, c2 = st.columns([2,1])
               with c1:
                   if st.button("💾 حفظ تعديلات المستخدمين"):
-                      for idx, row in edited_users.iterrows(): conn.execute("UPDATE users SET username=?, phone=?, password=?, is_active=? WHERE id=?", (row['اسم المستخدم'], row['رقم الهاتف'], row['كلمة المرور'], row['نشط (1=نعم/0=موقوف)'], row['id']))
-                      conn.commit(); log_action(st.session_state["user_id"], "تعديل مستخدمين", "تم تعديل بيانات المستخدمين"); st.success("🎉 تم حفظ التعديلات بنجاح!")
+                      for idx, row in edited_users.iterrows(): 
+                          conn.execute("UPDATE users SET username=?, phone=?, password=?, role=?, is_active=? WHERE id=?", 
+                                       (row['اسم المستخدم'], row['رقم الهاتف'], row['كلمة المرور'], row['الرتبة'], row['نشط (1=نعم/0=موقوف)'], row['id']))
+                      conn.commit(); log_action(st.session_state["user_id"], "تعديل مستخدمين", "تم تعديل بيانات ورتب المستخدمين"); st.success("🎉 تم حفظ وتحديث تعديلات المستخدمين والرتب بنجاح!")
               with c2:
                   del_u_id = st.selectbox("اختر مستخدم للحذف النهائي:", users_df["id"].tolist(), format_func=lambda x: users_df[users_df["id"]==x]["اسم المستخدم"].values[0])
                   if st.button("🗑️ حذف المستخدم نهائياً", type="primary") and del_u_id != 0:
@@ -723,8 +727,8 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                               existing = conn.execute("SELECT id FROM items WHERE company_id=? AND ((branch_id IS ? AND ? IS NULL) OR branch_id = ?) AND item_code=? AND item_name=?", (dst_comp_id, dst_branch_id, dst_branch_id, dst_branch_id, curr_item["item_code"], curr_item["item_name"])).fetchone()
                               if existing: conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (transfer_qty, existing["id"]))
                               else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)", (dst_comp_id, dst_branch_id, curr_item["item_code"], curr_item["item_name"], transfer_qty, curr_item["buy_price"], curr_item["sale_price"]))
-                              conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون", f"نقل {transfer_qty}"); st.success("🚀 تم نقل الأصناف بنجاح وتحديث المخازن!")
-                              st.rerun()
+                              conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون", f"نقل {transfer_qty}")
+                              st.success("🚀 تم نقل الأصناف وتحديث المخازن بنجاح وثبات!")
 
               elif transfer_type == "نقل كافة الأصناف دفعة واحدة":
                   col_s1, col_s2 = st.columns(2)
@@ -761,12 +765,12 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                               else: conn.execute("INSERT INTO items (company_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?, ?)", (dst_comp_id, dst_branch_id, s_item["item_code"], s_item["item_name"], s_item["quantity"], s_item["buy_price"], s_item["sale_price"]))
                               conn.execute("UPDATE items SET quantity = 0 WHERE id = ?", (s_item["id"],))
                               transferred_count += 1
-                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف"); st.success(f"🚀 تم نقل وتوزيع ({transferred_count}) صنف دفعة واحدة بنجاح!")
-                          st.rerun()
+                          conn.commit(); log_action(st.session_state["user_id"], "نقل مخزون شامل", f"تم نقل {transferred_count} صنف")
+                          st.success(f"🚀 تم نقل وتوزيع ({transferred_count}) صنف دفعة واحدة بنجاح وثبات!")
 
               elif transfer_type == "🗑️ حذف أصناف من المخزن":
                   st.markdown("---")
-                  st.info("🏢 **اختر الشركة المستهدفة لتنفيذ عملية الحذف منها بدقة:**")
+                  st.info("🏢 **اختر الشركة المطلوبة لتحديد وحذف الأصناف التابعة لها حصرياً:**")
                   del_comp_name = st.selectbox("الشركة المراد محو أصنافها:", list(all_c_dict.keys()), key="del_c_sel")
                   del_comp_id = all_c_dict[del_comp_name]
                   
@@ -778,13 +782,11 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                       del_item_sel = st.selectbox("اختر الصنف للحذف النهائي:", company_items_df["id"].tolist(), format_func=lambda x: f"[{company_items_df[company_items_df['id']==x]['الكود'].values[0]}] {company_items_df[company_items_df['id']==x]['الصنف'].values[0]} | الفرع: {company_items_df[company_items_df['id']==x]['الفرع'].values[0]}")
                       if st.button("🗑️ حذف هذا الصنف نهائياً", type="primary"):
                           conn.execute("DELETE FROM items WHERE id = ?", (del_item_sel,))
-                          conn.commit(); st.success("🗑️ تم حذف الصنف نهائياً من سجلات هذه الشركة!")
-                          st.rerun()
+                          conn.commit(); st.success(f"🗑️ تم حذف الصنف نهائياً من شركة ({del_comp_name}) بنجاح!")
                   elif del_mode == "حذف كافة أصناف هذه الشركة بالكامل":
                       if st.checkbox(f"أؤكد رغبتي في مسح جميع أصناف شركة ({del_comp_name})") and st.button("🚨 تنفيذ مسح كافة أصناف هذه الشركة", type="primary"):
                           conn.execute("DELETE FROM items WHERE company_id = ?", (del_comp_id,))
-                          conn.commit(); st.success(f"🗑️ تم مسح وتصفير كافة أصناف شركة ({del_comp_name}) بنجاح!")
-                          st.rerun()
+                          conn.commit(); st.success(f"🗑️ تم مسح وتصفير كافة أصناف شركة ({del_comp_name}) بنجاح وثبات!")
                   else:
                       st.info("لا توجد أصناف مسجلة لهذه الشركة حالياً.")
 
@@ -839,7 +841,6 @@ elif choice == "📊 التقارير الشاملة والمخازن":
                           conn.execute("DELETE FROM invoices WHERE branch_id = ?", (reset_branch_id,))
                           conn.commit()
                       st.success(f"⚙️ تم تصفير بيانات وفواتير الجهة ({reset_comp_name} - {reset_branch_sel}) بنجاح وإعادة تعيين الشفتات!")
-                      st.rerun()
                   else:
                       st.warning("🎭 **هَنّي روحك.. يرجى تحديد مربّع التأكيد لتنفيذ عملية التصفير!**")
       else:
