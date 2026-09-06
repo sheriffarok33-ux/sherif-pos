@@ -35,6 +35,8 @@ ALL_MENUS = [
     "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
     "📦 إدارة المخزن الرئيسي والفروع",
+    "🏢 تعديل وإدارة أسماء الفروع",
+    "📁 استيراد الأصناف من Excel",
     "📥 المشتريات والموردين",
     "🥜 التحميص والخلط والتصنيع",
     "📊 الأرباح والخسائر والتقارير",
@@ -46,7 +48,6 @@ def initialize_database():
   conn.row_factory = sqlite3.Row
   cursor = conn.cursor()
 
-  # جدول الفروع (المخزن الرئيسي + 4 فروع قابلة للزيادة)
   cursor.execute("""
       CREATE TABLE IF NOT EXISTS branches (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +56,6 @@ def initialize_database():
       )
   """)
 
-  # جدول المستخدمين (مع حماية الأدمن)
   cursor.execute("""
       CREATE TABLE IF NOT EXISTS users (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,7 +69,6 @@ def initialize_database():
       )
   """)
 
-  # جدول الأصناف الموحد (الأسعار تعمم لحظياً، والكميات لكل فرع/مخزن)
   cursor.execute("""
       CREATE TABLE IF NOT EXISTS items (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,7 +82,6 @@ def initialize_database():
       )
   """)
 
-  # جدول المشتريات
   cursor.execute("""
       CREATE TABLE IF NOT EXISTS purchases (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,7 +105,6 @@ def initialize_database():
       )
   """)
 
-  # جدول الفواتير والمبيعات
   cursor.execute("""
       CREATE TABLE IF NOT EXISTS invoices (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,7 +134,6 @@ def initialize_database():
   for b_name, b_type in default_branches:
       cursor.execute("INSERT OR IGNORE INTO branches (branch_name, branch_type) VALUES (?, ?)", (b_name, b_type))
 
-  # التأكد من وجود يوزر الأدمن الافتراضي
   admin_chk = cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin' AND is_active = 1").fetchone()[0]
   if admin_chk == 0:
       cursor.execute("INSERT OR IGNORE INTO users (username, phone, password, role, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', 1)")
@@ -239,10 +235,10 @@ choice = st.session_state["page"]
 dashboard_cards = {
     "🛒 نقطة البيع (POS)": {"icon": "🛒", "color": "linear-gradient(135deg, #f59e0b, #ea580c)", "desc": "شاشة الكاشير والمبيعات"},
     "📦 إدارة المخزن الرئيسي والفروع": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإضافة الفائض بالمخازن"},
-    "📥 المشتريات والموردين": {"icon": "📥", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "تسجيل فواتير المشتريات البضائع"},
-    "🥜 التحميص والخلط والتصنيع": {"icon": "🥜", "color": "linear-gradient(135deg, #d946ef, #a21caf)", "desc": "تحويل الني إلى طايب وتغيير الأسماء والأحجام"},
-    "📊 الأرباح والخسائر والتقارير": {"icon": "📊", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "مراقبة الأرباح والخسائر والمبيعات"},
-    "👥 إدارة المستخدمين وصلاحياتهم": {"icon": "👥", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "حسابات الكاشير والمشرفين"}
+    "🏢 تعديل وإدارة أسماء الفروع": {"icon": "🏢", "color": "linear-gradient(135deg, #0ea5e9, #0369a1)", "desc": "إضافة وتعديل أسماء المخزن والفروع"},
+    "📁 استيراد الأصناف من Excel": {"icon": "📁", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "تحميل واستيراد الأصناف بالإكسيل"},
+    "📥 المشتريات والموردين": {"icon": "📥", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "فواتير المشتريات للمخزن/الفروع"},
+    "🥜 التحميص والخلط والتصنيع": {"icon": "🥜", "color": "linear-gradient(135deg, #d946ef, #a21caf)", "desc": "تحويل الني إلى طايب وتغيير الأسماء"}
 }
 
 # --- محتوى الصفحات ---
@@ -255,8 +251,73 @@ if choice == "🏠 الرئيسية واللوحة":
           st.button(f"دخول ➔", key=f"btn_{i}", on_click=set_page, args=(item,), use_container_width=True)
           st.markdown("<br>", unsafe_allow_html=True)
 
+elif choice == "🏢 تعديل وإدارة أسماء الفروع":
+  st.header("🏢 إدارة وتغيير أسماء الفروع والمخزن الرئيسي")
+  conn = get_db_connection()
+  
+  with st.expander("➕ إضافة فرع جديد قابل للزيادة", expanded=False):
+      with st.form("new_branch_form", clear_on_submit=True):
+          nb_name = st.text_input("اسم الفرع الجديد (مثال: فرع 5 / فرع السوق)")
+          nb_type = st.selectbox("النوع:", ["فرع", "مخزن"])
+          if st.form_submit_button("💾 حفظ الفرع الجديد") and nb_name:
+              conn.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", (nb_name.strip(), nb_type))
+              conn.commit()
+              st.success(f"🎉 تم إضافة الفرع ({nb_name}) بنجاح!")
+              st.rerun()
+
+  st.markdown("---")
+  st.subheader("📋 تعديل أو إعادة تسمية الفروع الحالية")
+  branches_df = pd.read_sql("SELECT id, branch_name AS 'اسم الفرع', branch_type AS 'النوع' FROM branches", conn)
+  if not branches_df.empty:
+      edited_branches = st.data_editor(branches_df, hide_index=True, key="branches_editor")
+      if st.button("💾 حفظ التعديلات على أسماء الفروع"):
+          for idx, row in edited_branches.iterrows():
+              conn.execute("UPDATE branches SET branch_name=?, branch_type=? WHERE id=?", (row['اسم الفرع'], row['النوع'], row['id']))
+          conn.commit()
+          st.success("🎉 تم تحديث أسماء الفروع بنجاح وتعميمها في النظام!")
+          st.rerun()
+  conn.close()
+
+elif choice == "📁 استيراد الأصناف من Excel":
+  st.header("📁 استيراد وتوزيع الأصناف عبر ملف Excel")
+  st.info("💡 قم برفع ملف إكسيل (.xlsx) يحتوي على أعمدة: (الكود، اسم الصنف، الكمية، سعر الشراء، سعر البيع) ليتم إضافتها مباشرة للمخزن أو الفرع المختار.")
+  
+  conn = get_db_connection()
+  branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
+  b_dict = {b["branch_name"]: b["id"] for b in branches}
+  
+  sel_target_branch = st.selectbox("اختر الفرع أو المخزن المستهدف لتنزيل الأصناف فيه:", list(b_dict.keys()))
+  target_b_id = b_dict[sel_target_branch]
+  
+  up_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
+  if up_excel and st.button("📥 تنفيذ استيراد وتحميل الأصناف"):
+      try:
+          df_exc = pd.read_excel(up_excel, header=None)
+          cur_ex = conn.cursor()
+          count_imp = 0
+          for idx, row in df_exc.iterrows():
+              if row.isna().all(): continue
+              name = str(row.iloc[1]).strip() if len(row)>1 and not pd.isna(row.iloc[1]) else ""
+              if not name or name.lower() in ["nan", "null", "item"] or name in ["الصنف", "اسم الصنف", "صنف"]: continue
+              code = str(row.iloc[0]).strip() if len(row)>0 and not pd.isna(row.iloc[0]) else "GEN-01"
+              try: qty = float(row.iloc[2]) if len(row)>2 and not pd.isna(row.iloc[2]) else 0.0
+              except: qty = 0.0
+              try: b_pr = float(row.iloc[3]) if len(row)>3 and not pd.isna(row.iloc[3]) else 0.0
+              except: b_pr = 0.0
+              try: s_pr = float(row.iloc[4]) if len(row)>4 and not pd.isna(row.iloc[4]) else 10.0
+              except: s_pr = 10.0
+              
+              cur_ex.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)", 
+                             (target_b_id, code, name, qty, b_pr, s_pr))
+              count_imp += 1
+          conn.commit()
+          st.success(f"🎉 تم استيراد وتحميل ({count_imp}) صنف بنجاح إلى مخزن/فرع ({sel_target_branch})!")
+      except Exception as e:
+          st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
+  conn.close()
+
 elif choice == "📦 إدارة المخزن الرئيسي والفروع":
-  st.header("📦 إدارة المخازن والفروع وإضافة الفائض")
+  st.header("📦 إدارة المخزن الرئيسي والفروع وإضافة الفائض")
   conn = get_db_connection()
   
   branches = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
@@ -275,9 +336,7 @@ elif choice == "📦 إدارة المخزن الرئيسي والفروع":
           edited_items = st.data_editor(items_df, hide_index=True, key="inv_editor")
           if st.button("💾 حفظ تعديلات الأسعار (تعميم فوري للفروع) أو الكميات"):
               for idx, row in edited_items.iterrows():
-                  # تحديث السعر والكمية للصنف المختار
                   conn.execute("UPDATE items SET quantity=?, sale_price=? WHERE id=?", (row['الكمية (كيلو/عدد)'], row['سعر البيع (د.ل)'], row['id']))
-                  # تعميم تعديل السعر لحظياً على نفس الصنف في باقي الفروع لو أردت
                   conn.execute("UPDATE items SET sale_price=? WHERE item_name=?", (row['سعر البيع (د.ل)'], row['اسم الصنف']))
               conn.commit()
               st.success("🎉 تم التحديث والتعميم الفوري للأسعار على مستوى الفروع بنجاح!")
@@ -300,7 +359,6 @@ elif choice == "📦 إدارة المخزن الرئيسي والفروع":
               
               if st.form_submit_button("💾 اعتماد وإضافة الفائض للفرع"):
                   z_item = z_options[chosen_z_label]
-                  # التحقق هل الصنف موجود برصيد صفر أم يضاف كجديد
                   existing_z = conn.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (current_b_id, z_item['item_name'])).fetchone()
                   if existing_z:
                       conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (surplus_qty, existing_z['id']))
@@ -326,7 +384,6 @@ elif choice == "📥 المشتريات والموردين":
       supplier = st.text_input("اسم المورد / الشركة الموردة")
       
       st.markdown("---")
-      st.write("أصناف الفاتورة:")
       col1, col2, col3 = st.columns(3)
       with col1: p_item_name = st.text_input("اسم الصنف المشتري")
       with col2: p_qty = st.number_input("الكمية", min_value=0.01, value=1.0, step=0.1)
@@ -342,7 +399,6 @@ elif choice == "📥 المشتريات والموردين":
               p_id = cur.lastrowid
               cur.execute("INSERT INTO purchase_items (purchase_id, item_name, qty, buy_price, total) VALUES (?, ?, ?, ?, ?)", (p_id, p_item_name.strip(), p_qty, p_buy_price, total_p_cost))
               
-              # إضافة أو تحديث المخزون في الفرع
               b_target_id = b_dict[p_branch]
               exist_item = cur.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (b_target_id, p_item_name.strip())).fetchone()
               if exist_item:
@@ -387,10 +443,8 @@ elif choice == "🥜 التحميص والخلط والتصنيع":
           if st.form_submit_button("⚙️ تنفيذ التحميص وتحديث المخزون (خصم الخام وإضافة الناتج)"):
               if new_item_name and raw_qty_used <= raw_item['quantity']:
                   cur_r = conn.cursor()
-                  # خصم الكمية الخام
                   cur_r.execute("UPDATE items SET quantity = quantity - ? WHERE branch_id = ? AND item_name = ?", (raw_qty_used, b_id_val, raw_item['item_name'].split(' (')[0]))
                   
-                  # إضافة الصنف الناتج بالاسم الجديد والسعر والكمية الجديدة
                   exist_out = cur_r.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (b_id_val, new_item_name.strip())).fetchone()
                   if exist_out:
                       cur_r.execute("UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE id = ?", (new_item_qty, new_item_price, exist_out['id']))
@@ -415,15 +469,13 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
       st.subheader("تقرير الأرباح والخسائر المالي")
       total_sales = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE shift_status != 'canceled'").fetchone()[0] or 0.0
       total_purchases = conn.execute("SELECT SUM(total_cost) FROM purchases").fetchone()[0] or 0.0
-      total_expenses = conn.execute("SELECT SUM(amount) FROM expenses").fetchone()[0] or 0.0
       
-      net_profit = total_sales - (total_purchases + total_expenses)
+      net_profit = total_sales - total_purchases
       
-      col1, col2, col3, col4 = st.columns(4)
+      col1, col2, col3 = st.columns(3)
       with col1: st.metric("إجمالي المبيعات", f"{total_sales:,.2f} د.ل")
       with col2: st.metric("إجمالي المشتريات", f"{total_purchases:,.2f} د.ل")
-      with col3: st.metric("إجمالي المصروفات", f"{total_expenses:,.2f} د.ل")
-      with col4: st.metric("صافي الربح / الخسارة", f"{net_profit:,.2f} د.ل", delta=f"{net_profit:,.2f}")
+      with col3: st.metric("صافي الربح / الخسارة", f"{net_profit:,.2f} د.ل", delta=f"{net_profit:,.2f}")
 
   with tab2:
       st.subheader("سجل الفواتير والمبيعات")
