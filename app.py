@@ -211,6 +211,40 @@ if "barcode_scan" not in st.session_state: st.session_state["barcode_scan"] = ""
 
 def set_page(page_name): st.session_state["page"] = page_name
 
+@st.dialog("🔒 تأكيد كلمة سر الأدمن المطلوبة")
+def admin_confirm_dialog(action_type, target_id, target_name=""):
+    st.warning(f"⚠️ تحذير أمني: أنت على وشك تنفيذ عملية ({action_type}). يرجى إدخال كلمة سر الأدمن للمتابعة:")
+    admin_pass = st.text_input("كلمة سر الأدمن:", type="password", key="diag_pass_input")
+    
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        if st.button("✅ تأكيد التنفيذ", use_container_width=True):
+            if verify_admin_password(admin_pass):
+                conn = get_db_connection()
+                if action_type == "حذف فرع":
+                    conn.execute("DELETE FROM branches WHERE id = ?", (target_id,))
+                elif action_type == "حذف صنف":
+                    conn.execute("DELETE FROM items WHERE id = ?", (target_id,))
+                elif action_type == "حذف مصروف":
+                    conn.execute("DELETE FROM expenses WHERE id = ?", (target_id,))
+                elif action_type == "حذف مشتريات":
+                    conn.execute("DELETE FROM purchases WHERE id = ?", (target_id,))
+                elif action_type == "حذف فاتورة":
+                    conn.execute("DELETE FROM invoices WHERE id = ?", (target_id,))
+                elif action_type == "حذف مستخدم":
+                    conn.execute("DELETE FROM users WHERE id = ?", (target_id,))
+                
+                conn.commit()
+                conn.close()
+                log_action(st.session_state["user_id"], f"حذف آمن ({action_type})", f"تم حذف العناصر ذات الرقم {target_id}")
+                st.success(f"🗑️ تمت عملية ({action_type}) بنجاح وإغلاق النافذة!")
+                st.rerunn = st.rerun()
+            else:
+                st.error("❌ كلمة سر الأدمن غير صحيحة!")
+    with col_d2:
+        if st.button("❌ إلغاء", use_container_width=True):
+            st.rerun()
+
 def process_scale_barcode():
     code = st.session_state.barcode_scan.strip()
     if code:
@@ -323,22 +357,15 @@ elif choice == "⚙️ تخصيص وتعديل مسميات الأزرار وا�
       st.error("هذه الشاشة مخصصة للأدمن فقط.")
   else:
       conn = get_db_connection()
-      st.info("💡 يمكنك كتابة الاسم الجديد لأي زر أو قائمة في النظام بعد إدخال كلمة سر الأدمن للتأكيد.")
-      
       with st.form("custom_label_form"):
           orig_sel = st.selectbox("اختر القائمة أو الزر للتعديل:", DEFAULT_MENUS)
           current_val = get_label(orig_sel)
           new_custom_name = st.text_input("اكتب الاسم المخصص الجديد:", value=current_val)
-          admin_pass_chk = st.text_input("🔒 أدخل كلمة سر الأدمن لتأكيد التعديل:", type="password")
-          
           if st.form_submit_button("💾 حفظ وتطبيق الاسم الجديد"):
-              if verify_admin_password(admin_pass_chk):
-                  conn.execute("INSERT OR REPLACE INTO custom_labels (original_name, custom_name) VALUES (?, ?)", (orig_sel, new_custom_name.strip()))
-                  conn.commit()
-                  st.success(f"🎉 تم تحديث الاسم إلى ({new_custom_name}) بنجاح!")
-                  st.rerun()
-              else:
-                  st.error("⚠️ كلمة سر الأدمن غير صحيحة! تم إلغاء التعديل.")
+              conn.execute("INSERT OR REPLACE INTO custom_labels (original_name, custom_name) VALUES (?, ?)", (orig_sel, new_custom_name.strip()))
+              conn.commit()
+              st.success(f"🎉 تم تحديث الاسم إلى ({new_custom_name}) بنجاح!")
+              st.rerun()
       conn.close()
 
 elif choice == "🏢 إدارة وتغيير أسماء الفروع والحذف":
@@ -349,47 +376,29 @@ elif choice == "🏢 إدارة وتغيير أسماء الفروع والحذ�
       with st.form("new_branch_form", clear_on_submit=True):
           nb_name = st.text_input("اسم الفرع أو المخزن الجديد (مثال: فرع 5 / فرع السوق)")
           nb_type = st.selectbox("النوع:", ["فرع", "مخزن"])
-          admin_pass_b = st.text_input("🔒 كلمة سر الأدمن للتأكيد:", type="password")
           if st.form_submit_button("💾 حفظ الفرع الجديد") and nb_name:
-              if verify_admin_password(admin_pass_b):
-                  conn.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", (nb_name.strip(), nb_type))
-                  conn.commit()
-                  st.success(f"🎉 تم إضافة الفرع ({nb_name}) بنجاح!")
-                  st.rerun()
-              else:
-                  st.error("⚠️ كلمة سر الأدمن غير صحيحة!")
+              conn.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", (nb_name.strip(), nb_type))
+              conn.commit()
+              st.success(f"🎉 تم إضافة الفرع ({nb_name}) بنجاح!")
+              st.rerun()
 
   st.markdown("---")
-  st.subheader("📋 تعديل أسماء الفروع الحالية")
+  st.subheader("📋 تعديل أو حذف الفروع الحالية")
   branches_df = pd.read_sql("SELECT id, branch_name AS 'اسم الفرع', branch_type AS 'النوع' FROM branches", conn)
   if not branches_df.empty:
       edited_branches = st.data_editor(branches_df, hide_index=True, key="branches_editor")
-      with st.form("edit_branch_sec_form"):
-          admin_pass_eb = st.text_input("🔒 كلمة سر الأدمن لتأكيد حفظ تعديلات الفروع:", type="password")
-          if st.form_submit_button("💾 حفظ التعديلات على أسماء الفروع"):
-              if verify_admin_password(admin_pass_eb):
-                  for idx, row in edited_branches.iterrows():
-                      conn.execute("UPDATE branches SET branch_name=?, branch_type=? WHERE id=?", (row['اسم الفرع'], row['النوع'], row['id']))
-                  conn.commit()
-                  st.success("🎉 تم تحديث أسماء الفروع بنجاح وتعميمها في النظام!")
-                  st.rerun()
-              else:
-                  st.error("⚠️ كلمة سر الأدمن غير صحيحة!")
+      if st.button("💾 حفظ التعديلات على أسماء الفروع"):
+          for idx, row in edited_branches.iterrows():
+              conn.execute("UPDATE branches SET branch_name=?, branch_type=? WHERE id=?", (row['اسم الفرع'], row['النوع'], row['id']))
+          conn.commit()
+          st.success("🎉 تم تحديث أسماء الفروع بنجاح وتعميمها في النظام!")
+          st.rerun()
           
       if st.session_state["role"] == "Admin":
           st.markdown("---")
-          st.warning("⚠️ تحذير: حذف أي فرع سيؤدي لحذف الأصناف والمرتبطات الخاصة به نهائياً.")
-          with st.form("del_branch_form"):
-              del_b_id = st.selectbox("اختر فرع للحذف النهائي:", branches_df["id"].tolist(), format_func=lambda x: branches_df[branches_df["id"]==x]["اسم الفرع"].values[0])
-              admin_pass_db = st.text_input("🔒 كلمة سر الأدمن لتأكيد الحذف:", type="password")
-              if st.form_submit_button("🗑️ حذف الفرع المختار نهائياً", type="primary"):
-                  if verify_admin_password(admin_pass_db):
-                      conn.execute("DELETE FROM branches WHERE id = ?", (del_b_id,))
-                      conn.commit()
-                      st.success("🗑️ تم حذف الفرع بنجاح!")
-                      st.rerun()
-                  else:
-                      st.error("⚠️ كلمة سر الأدمن غير صحيحة!")
+          del_b_id = st.selectbox("اختر فرع للحذف النهائي:", branches_df["id"].tolist(), format_func=lambda x: branches_df[branches_df["id"]==x]["اسم الفرع"].values[0])
+          if st.button("🗑️ حذف الفرع المختار (نافذة تأكيد للأدمن)", type="primary"):
+              admin_confirm_dialog("حذف فرع", del_b_id)
   conn.close()
 
 elif choice == "💰 تسجيل المصروفات والمصروف العام":
@@ -424,17 +433,9 @@ elif choice == "💰 تسجيل المصروفات والمصروف العام":
   if not exp_df.empty:
       st.dataframe(exp_df, use_container_width=True)
       if st.session_state["role"] == "Admin":
-          with st.form("del_exp_form"):
-              del_exp_id = st.selectbox("اختر رقم المصروف للحذف:", exp_df["رقم"].tolist())
-              admin_pass_dex = st.text_input("🔒 كلمة سر الأدمن لتأكيد الحذف:", type="password")
-              if st.form_submit_button("🗑️ حذف المصروف المختار", type="primary"):
-                  if verify_admin_password(admin_pass_dex):
-                      conn.execute("DELETE FROM expenses WHERE id = ?", (del_exp_id,))
-                      conn.commit()
-                      st.success("🗑️ تم حذف المصروف بنجاح!")
-                      st.rerun()
-                  else:
-                      st.error("⚠️ كلمة سر الأدمن غير صحيحة!")
+          del_exp_id = st.selectbox("اختر رقم المصروف للحذف:", exp_df["رقم"].tolist())
+          if st.button("🗑️ حذف المصروف المختار (نافذة تأكيد للأدمن)", type="primary"):
+              admin_confirm_dialog("حذف مصروف", del_exp_id)
       st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(exp_df), file_name="expenses_report.xlsx")
   conn.close()
 
@@ -495,17 +496,9 @@ elif choice == "📦 إدارة المخزن الرئيسي والفروع":
       
       if st.session_state["role"] == "Admin":
           st.markdown("---")
-          with st.form("del_item_form"):
-              del_item_id = st.selectbox("اختر صنف للحذف النهائي:", edited_items["id"].tolist(), format_func=lambda x: edited_items[edited_items["id"]==x]["اسم الصنف"].values[0])
-              admin_pass_di = st.text_input("🔒 كلمة سر الأدمن لتأكيد الحذف:", type="password")
-              if st.form_submit_button("🗑️ حذف الصنف المختار", type="primary"):
-                  if verify_admin_password(admin_pass_di):
-                      conn.execute("DELETE FROM items WHERE id = ?", (del_item_id,))
-                      conn.commit()
-                      st.success("🗑️ تم حذف الصنف بنجاح!")
-                      st.rerun()
-                  else:
-                      st.error("⚠️ كلمة سر الأدمن غير صحيحة!")
+          del_item_id = st.selectbox("اختر صنف للحذف النهائي:", edited_items["id"].tolist(), format_func=lambda x: edited_items[edited_items["id"]==x]["اسم الصنف"].values[0])
+          if st.button("🗑️ حذف الصنف المختار (نافذة تأكيد للأدمن)", type="primary"):
+              admin_confirm_dialog("حذف صنف", del_item_id)
       st.download_button("📥 تصدير لـ Excel", data=to_excel(items_df), file_name="inventory.xlsx")
   conn.close()
 
@@ -531,17 +524,9 @@ elif choice == "📥 المشتريات والموردين":
   if not p_df.empty:
       st.dataframe(p_df, use_container_width=True)
       if st.session_state["role"] == "Admin":
-          with st.form("del_pur_form"):
-              del_p_id = st.selectbox("اختر رقم الفاتورة للحذف:", p_df["id"].tolist())
-              admin_pass_dp = st.text_input("🔒 كلمة سر الأدمن لتأكيد الحذف:", type="password")
-              if st.form_submit_button("🗑️ حذف الفاتورة المتاحة", type="primary"):
-                  if verify_admin_password(admin_pass_dp):
-                      conn.execute("DELETE FROM purchases WHERE id = ?", (del_p_id,))
-                      conn.commit()
-                      st.success("🗑️ تم الحذف!")
-                      st.rerun()
-                  else:
-                      st.error("⚠️ كلمة سر الأدمن غير صحيحة!")
+          del_p_id = st.selectbox("اختر رقم الفاتورة للحذف:", p_df["id"].tolist())
+          if st.button("🗑️ حذف الفاتورة المتاحة (نافذة تأكيد للأدمن)", type="primary"):
+              admin_confirm_dialog("حذف مشتريات", del_p_id)
       st.download_button("📥 تصدير لـ Excel", data=to_excel(p_df), file_name="purchases.xlsx")
   conn.close()
 
@@ -601,17 +586,9 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
   if not sales_df.empty:
       st.dataframe(sales_df, use_container_width=True)
       if st.session_state["role"] == "Admin":
-          with st.form("del_inv_form"):
-              del_inv_id = st.selectbox("اختر رقم الفاتورة للحذف:", sales_df["رقم"].tolist())
-              admin_pass_div = st.text_input("🔒 كلمة سر الأدمن لتأكيد الحذف:", type="password")
-              if st.form_submit_button("🗑️ حذف الفاتورة المختارة", type="primary"):
-                  if verify_admin_password(admin_pass_div):
-                      conn.execute("DELETE FROM invoices WHERE id = ?", (del_inv_id,))
-                      conn.commit()
-                      st.success("🗑️ تم الحذف!")
-                      st.rerun()
-                  else:
-                      st.error("⚠️ كلمة سر الأدمن غير صحيحة!")
+          del_inv_id = st.selectbox("اختر رقم الفاتورة للحذف:", sales_df["رقم"].tolist())
+          if st.button("🗑️ حذف الفاتورة المتاحة (نافذة تأكيد للأدمن)", type="primary"):
+              admin_confirm_dialog("حذف فاتورة", del_inv_id)
       st.download_button("📥 تصدير لـ Excel", data=to_excel(sales_df), file_name="sales.xlsx")
   conn.close()
 
@@ -626,7 +603,7 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم":
               u_name = st.text_input("اسم المستخدم")
               u_phone = st.text_input("الهاتف")
               u_pass = st.text_input("كلمة المرور")
-              u_role = st.selectbox("الرتبة:", ["Admin (مدير النظام)", "General_Supervisor (مدير عام)", "Branch_Supervisor (مدير فرع)", "Cashier (كاشير)", "Viewer (مشاهد فقط)"])
+              u_role = st.selectbox("الرتبة:", ["Admin (مدير النظام)", "General_Supervisor (مدير عام)", "Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مشاهد فقط)"])
               branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
               b_dict = {b["branch_name"]: b["id"] for b in branches}
               u_branch = st.selectbox("الفرع:", list(b_dict.keys()))
@@ -641,17 +618,9 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم":
       if not users_df.empty:
           st.dataframe(users_df, use_container_width=True)
           if st.session_state["role"] == "Admin":
-              with st.form("del_user_form"):
-                  del_user_id = st.selectbox("اختر مستخدم للحذف النهائي:", users_df["id"].tolist(), format_func=lambda x: users_df[users_df["id"]==x]["اسم المستخدم"].values[0])
-                  admin_pass_du = st.text_input("🔒 كلمة سر الأدمن لتأكيد الحذف:", type="password")
-                  if st.form_submit_button("🗑️ حذف المستخدم المختار", type="primary"):
-                      if verify_admin_password(admin_pass_du):
-                          conn.execute("DELETE FROM users WHERE id = ?", (del_user_id,))
-                          conn.commit()
-                          st.success("🗑️ تم الحذف!")
-                          st.rerun()
-                      else:
-                          st.error("⚠️ كلمة سر الأدمن غير صحيحة!")
+              del_user_id = st.selectbox("اختر مستخدم للحذف النهائي:", users_df["id"].tolist(), format_func=lambda x: users_df[users_df["id"]==x]["اسم المستخدم"].values[0])
+              if st.button("🗑️ حذف المستخدم (نافذة تأكيد للأدمن)", type="primary"):
+                  admin_confirm_dialog("حذف مستخدم", del_user_id)
 
   with tab_u2:
       st.subheader("🛡️ تعديل وتخصيص صلاحيات القوائم لكل رتبة")
