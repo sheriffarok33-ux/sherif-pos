@@ -35,6 +35,7 @@ ALL_MENUS = [
     "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
     "📦 إدارة المخزن الرئيسي والفروع",
+    "🔄 نقل وتحويل الأصناف للفروع",
     "🏢 تعديل وإدارة أسماء الفروع",
     "📁 استيراد الأصناف من Excel",
     "📥 المشتريات والموردين",
@@ -129,7 +130,6 @@ def initialize_database():
       )
   """)
 
-  # إنشاء المخزن الرئيسي و 4 فروع افتراضية لو لم تكن موجودة
   default_branches = [("المخزن الرئيسي", "مخزن"), ("فرع 1", "فرع"), ("فرع 2", "فرع"), ("فرع 3", "فرع"), ("فرع 4", "فرع")]
   for b_name, b_type in default_branches:
       cursor.execute("INSERT OR IGNORE INTO branches (branch_name, branch_type) VALUES (?, ?)", (b_name, b_type))
@@ -235,10 +235,10 @@ choice = st.session_state["page"]
 dashboard_cards = {
     "🛒 نقطة البيع (POS)": {"icon": "🛒", "color": "linear-gradient(135deg, #f59e0b, #ea580c)", "desc": "شاشة الكاشير والمبيعات"},
     "📦 إدارة المخزن الرئيسي والفروع": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإضافة الفائض بالمخازن"},
+    "🔄 نقل وتحويل الأصناف للفروع": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تحويل وتوزيع الأصناف من المخزن الرئيسي"},
     "🏢 تعديل وإدارة أسماء الفروع": {"icon": "🏢", "color": "linear-gradient(135deg, #0ea5e9, #0369a1)", "desc": "إضافة وتعديل أسماء المخزن والفروع"},
     "📁 استيراد الأصناف من Excel": {"icon": "📁", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "تحميل واستيراد الأصناف بالإكسيل"},
-    "📥 المشتريات والموردين": {"icon": "📥", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "فواتير المشتريات للمخزن/الفروع"},
-    "🥜 التحميص والخلط والتصنيع": {"icon": "🥜", "color": "linear-gradient(135deg, #d946ef, #a21caf)", "desc": "تحويل الني إلى طايب وتغيير الأسماء"}
+    "📥 المشتريات والموردين": {"icon": "📥", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "فواتير المشتريات للمخزن/الفروع"}
 }
 
 # --- محتوى الصفحات ---
@@ -250,6 +250,56 @@ if choice == "🏠 الرئيسية واللوحة":
           st.markdown(f'''<div style="background: {data['color']}; padding: 25px 15px; border-radius: 16px; color: white; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin-bottom: 10px; min-height: 150px;"><h1 style="margin:0; font-size: 45px;">{data['icon']}</h1><h3 style="margin: 10px 0 5px 0;">{item.split(" ", 1)[1]}</h3><p style="margin:0; font-size: 14px; opacity: 0.9;">{data['desc']}</p></div>''', unsafe_allow_html=True)
           st.button(f"دخول ➔", key=f"btn_{i}", on_click=set_page, args=(item,), use_container_width=True)
           st.markdown("<br>", unsafe_allow_html=True)
+
+elif choice == "🔄 نقل وتحويل الأصناف للفروع":
+  st.header("🔄 نقل وتحويل الأصناف من المخزن الرئيسي إلى الفروع")
+  st.info("💡 حدد الكمية المراد تحويلها من المخزن الرئيسي لأي فرع من الفروع وسيتم خصمها من الرئيسي وإضافتها للفرع فوراً.")
+  
+  conn = get_db_connection()
+  main_store = conn.execute("SELECT id FROM branches WHERE branch_type = 'مخزن' LIMIT 1").fetchone()
+  
+  if main_store:
+      main_id = main_store["id"]
+      main_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (main_id,)).fetchall()
+      other_branches = conn.execute("SELECT id, branch_name FROM branches WHERE id != ?", (main_id,)).fetchall()
+      
+      if main_items and other_branches:
+          with st.form("transfer_form", clear_on_submit=True):
+              m_opts = {f"[{i['item_code']}] {i['item_name']} (متاح بالمخزن: {i['quantity']} | السعر: {i['sale_price']} د.ل)": i for i in main_items}
+              sel_m_label = st.selectbox("اختر الصنف من المخزن الرئيسي للتحويل:", list(m_opts.keys()))
+              chosen_item = m_opts[sel_m_label]
+              
+              b_opts = {b["branch_name"]: b["id"] for b in other_branches}
+              sel_target_b = st.selectbox("إلى الفرع المستهدف:", list(b_opts.keys()))
+              target_b_id = b_opts[sel_target_b]
+              
+              trans_qty = st.number_input("الكمية المراد تحويلها:", min_value=0.01, value=1.0, step=0.1, format="%.2f")
+              
+              if st.form_submit_button("🚀 تنفيذ النقل والتحويل الفوري"):
+                  if trans_qty <= chosen_item["quantity"]:
+                      cur_tr = conn.cursor()
+                      # خصم الكمية من المخزن الرئيسي
+                      cur_tr.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (trans_qty, chosen_item["id"]))
+                      
+                      # إضافة أو تحديث الكمية في الفرع المستهدف
+                      dest_exist = cur_tr.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (target_b_id, chosen_item["item_name"])).fetchone()
+                      if dest_exist:
+                          cur_tr.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (trans_qty, dest_exist["id"]))
+                      else:
+                          cur_tr.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)",
+                                       (target_b_id, chosen_item["item_code"], chosen_item["item_name"], trans_qty, chosen_item["buy_price"], chosen_item["sale_price"]))
+                      
+                      conn.commit()
+                      log_action(st.session_state["user_id"], "تحويل مخزون", f"تحويل {trans_qty} من {chosen_item['item_name']} إلى {sel_target_b}")
+                      st.success(f"🚀 تم تحويل ({trans_qty}) من ({chosen_item['item_name']}) إلى ({sel_target_b}) بنجاح!")
+                      st.rerun()
+                  else:
+                      st.warning("⚠️ الكمية المراد تحويلها أكبر من المتاح في المخزن الرئيسي.")
+      else:
+          st.warning("⚠️ المخزن الرئيسي خالي من الأصناف أو لا توجد فروع أخرى للاستلام.")
+  else:
+      st.error("⚠️ لم يتم العثور على 'مخزن رئيسي' معرف في النظام.")
+  conn.close()
 
 elif choice == "🏢 تعديل وإدارة أسماء الفروع":
   st.header("🏢 إدارة وتغيير أسماء الفروع والمخزن الرئيسي")
