@@ -157,9 +157,12 @@ def initialize_database():
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Viewer', '🏠 الرئيسية واللوحة,📊 الأرباح والخسائر والتقارير')")
   except: pass
 
-  default_branches = [("المخزن الرئيسي", "مخزن"), ("فرع 1", "فرع"), ("فرع 2", "فرع"), ("فرع 3", "فرع"), ("فرع 4", "فرع")]
-  for b_name, b_type in default_branches:
-      cursor.execute("INSERT OR IGNORE INTO branches (branch_name, branch_type) VALUES (?, ?)", (b_name, b_type))
+  # إدخال الفروع الافتراضية فقط في حال كان الجدول فارغاً تماماً لمنع التكرار
+  branch_count = cursor.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
+  if branch_count == 0:
+      default_branches = [("المخزن الرئيسي", "مخزن"), ("فرع 1", "فرع"), ("فرع 2", "فرع"), ("فرع 3", "فرع"), ("فرع 4", "فرع")]
+      for b_name, b_type in default_branches:
+          cursor.execute("INSERT OR IGNORE INTO branches (branch_name, branch_type) VALUES (?, ?)", (b_name, b_type))
 
   admin_chk = cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin' AND is_active = 1").fetchone()[0]
   if admin_chk == 0:
