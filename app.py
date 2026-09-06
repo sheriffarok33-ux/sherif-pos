@@ -157,7 +157,6 @@ def initialize_database():
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Viewer', '🏠 الرئيسية واللوحة,📊 الأرباح والخسائر والتقارير')")
   except: pass
 
-  # إدخال الفروع الافتراضية فقط في حال كان الجدول فارغاً تماماً لمنع التكرار
   branch_count = cursor.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
   if branch_count == 0:
       default_branches = [("المخزن الرئيسي", "مخزن"), ("فرع 1", "فرع"), ("فرع 2", "فرع"), ("فرع 3", "فرع"), ("فرع 4", "فرع")]
@@ -398,8 +397,11 @@ elif choice == "🏢 إدارة وتغيير أسماء الفروع والحذ�
       edited_branches = st.data_editor(branches_df, hide_index=True, key="branches_editor")
       if st.button("💾 حفظ التعديلات على أسماء الفروع"):
           for idx, row in edited_branches.iterrows():
-              conn.execute("UPDATE branches SET branch_name=?, branch_type=? WHERE id=?", (row['اسم الفرع'], row['النوع'], row['id']))
-          conn.commit()
+              try:
+                  conn.execute("UPDATE branches SET branch_name=?, branch_type=? WHERE id=?", (row['اسم الفرع'], row['النوع'], row['id']))
+                  conn.commit()
+              except sqlite3.IntegrityError:
+                  st.error(f"⚠️ خطأ: اسم الفرع ({row['اسم الفرع']}) موجود مسبقاً، يرجى اختيار اسم فريد لكل فرع.")
           st.success("🎉 تم تحديث أسماء الفروع بنجاح وتعميمها في النظام!")
           st.rerun()
           
