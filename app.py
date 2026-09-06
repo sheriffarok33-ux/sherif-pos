@@ -47,6 +47,7 @@ DEFAULT_MENUS = [
 
 def initialize_database():
   conn = sqlite3.connect("abu_zaid_new_system.db", timeout=10)
+  conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = sqlite3.Row
   cursor = conn.cursor()
 
@@ -91,7 +92,7 @@ def initialize_database():
           supplier_name TEXT,
           total_cost REAL,
           invoice_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (branch_id) REFERENCES branches(id)
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
       )
   """)
 
@@ -103,7 +104,7 @@ def initialize_database():
           description TEXT NOT NULL,
           is_general_store INTEGER DEFAULT 0,
           expense_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (branch_id) REFERENCES branches(id)
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
       )
   """)
 
@@ -117,7 +118,7 @@ def initialize_database():
           notes TEXT,
           shift_status TEXT DEFAULT 'open',
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (branch_id) REFERENCES branches(id)
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
       )
   """)
 
@@ -233,12 +234,17 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
                     conn.execute("DELETE FROM invoices WHERE id = ?", (target_id,))
                 elif action_type == "حذف مستخدم":
                     conn.execute("DELETE FROM users WHERE id = ?", (target_id,))
+                elif action_type == "تصفير فواتير فرع":
+                    if target_id == "ALL":
+                        conn.execute("DELETE FROM invoices")
+                    else:
+                        conn.execute("DELETE FROM invoices WHERE branch_id = ?", (target_id,))
                 
                 conn.commit()
                 conn.close()
-                log_action(st.session_state["user_id"], f"حذف آمن ({action_type})", f"تم حذف العناصر ذات الرقم {target_id}")
-                st.success(f"🗑️ تمت عملية ({action_type}) بنجاح وإغلاق النافذة!")
-                st.rerunn = st.rerun()
+                log_action(st.session_state["user_id"], f"تنفيذ آمن ({action_type})", f"تم تنفيذ العملية على العنصر رقم {target_id}")
+                st.success(f"🗑️ تمت عملية ({action_type}) بنجاح!")
+                st.rerun()
             else:
                 st.error("❌ كلمة سر الأدمن غير صحيحة!")
     with col_d2:
@@ -559,6 +565,15 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
   sel_rep = st.selectbox("اختر الفرع لعرض تقريره:", list(rep_opts.keys()))
   t_id = rep_opts[sel_rep]
   
+  if st.session_state["role"] == "Admin":
+      st.markdown("---")
+      st.subheader("⚙️ تصفير أرقام الفواتير والشفتات للسنة الجديدة")
+      with st.form("reset_invoices_form"):
+          reset_target_branch = st.selectbox("اختر الفرع لتصفير فواتيرها (أو الكل):", ["🌐 تصفير كل الفروع بالكامل"] + list(b_dict.keys()))
+          r_id_val = "ALL" if reset_target_branch == "🌐 تصفير كل الفروع بالكامل" else b_dict[reset_target_branch]
+          if st.form_submit_button("🚨 تنفيذ تصفير أرقام الفواتير (تبدأ من INV-0001)", type="primary"):
+              admin_confirm_dialog("تصفير فواتير فرع", r_id_val)
+
   if t_id == "ALL":
       sales = conn.execute("SELECT SUM(total_amount) FROM invoices").fetchone()[0] or 0.0
       purch = conn.execute("SELECT SUM(total_cost) FROM purchases").fetchone()[0] or 0.0
