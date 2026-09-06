@@ -171,18 +171,37 @@ if "barcode_scan" not in st.session_state: st.session_state["barcode_scan"] = ""
 
 def set_page(page_name): st.session_state["page"] = page_name
 
-def process_barcode():
+def process_scale_barcode():
     code = st.session_state.barcode_scan.strip()
     if code:
         b_id = st.session_state.get("branch_id")
         conn = get_db_connection()
-        item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
+        
+        # دعم باركود الميزان القياسي (مثال: يبدأ بـ 20، كود الصنف 5 أرقام، والسعر أو الوزن 5 أرقام)
+        # مثال باركود ميزان: 201234501500 (20 + كود الصنف 12345 + السعر/الوزن 015.00)
+        item = None
+        if code.startswith("20") and len(code) >= 12:
+            item_code = code[2:7] # استخراج كود الصنف
+            scale_value = float(code[7:]) / 100.0 # استخراج القيمة (سعر أو وزن)
+            item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (item_code, b_id)).fetchone()
+            if item:
+                # حساب الكمية بناءً على السعر المستخرج من الميزان
+                unit_price = float(item["sale_price"])
+                calculated_qty = scale_value / unit_price if unit_price > 0 else 1.0
+                st.session_state["cart"].append({
+                    "id": item["id"], "code": item["item_code"], "name": item["item_name"],
+                    "price": unit_price, "qty": float(calculated_qty), "total": float(scale_value)
+                })
+        
+        if not item:
+            # البحث العادي بالباركود لو لم يكن باركود ميزان
+            item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
+            if item:
+                st.session_state["cart"].append({
+                    "id": item["id"], "code": item["item_code"], "name": item["item_name"],
+                    "price": float(item["sale_price"]), "qty": 1.0, "total": float(item["sale_price"]) * 1.0
+                })
         conn.close()
-        if item:
-            st.session_state["cart"].append({
-                "id": item["id"], "code": item["item_code"], "name": item["item_name"],
-                "price": float(item["sale_price"]), "qty": 1.0, "total": float(item["sale_price"]) * 1.0
-            })
     st.session_state.barcode_scan = ""
 
 # --- بوابة الدخول ---
@@ -233,7 +252,7 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 choice = st.session_state["page"]
 
 dashboard_cards = {
-    "🛒 نقطة البيع (POS)": {"icon": "🛒", "color": "linear-gradient(135deg, #f59e0b, #ea580c)", "desc": "شاشة الكاشير والمبيعات"},
+    "🛒 نقطة البيع (POS)": {"icon": "🛒", "color": "linear-gradient(135deg, #f59e0b, #ea580c)", "desc": "شاشة الكاشير ومبيعات الميزان"},
     "📦 إدارة المخزن الرئيسي والفروع": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإضافة الفائض بالمخازن"},
     "🔄 نقل وتحويل الأصناف للفروع": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تحويل وتوزيع الأصناف من المخزن الرئيسي"},
     "🏢 تعديل وإدارة أسماء الفروع": {"icon": "🏢", "color": "linear-gradient(135deg, #0ea5e9, #0369a1)", "desc": "إضافة وتعديل أسماء المخزن والفروع"},
@@ -253,7 +272,7 @@ if choice == "🏠 الرئيسية واللوحة":
 
 elif choice == "🔄 نقل وتحويل الأصناف للفروع":
   st.header("🔄 نقل وتحويل الأصناف من المخزن الرئيسي إلى الفروع")
-  st.info("💡 حدد الكمية المراد تحويلها من المخزن الرئيسي لأي فرع من الفروع وسيتم خصمها من الرئيسي وإضافتها للفرع فوراً.")
+  st.info("💡 عند تحويل الصنف، يظهر في الفرع بنفس كوده واسمه وسعره، ويتم تحديث الكميات والأسماء والأسعار فوراً لحظياً.")
   
   conn = get_db_connection()
   main_store = conn.execute("SELECT id FROM branches WHERE branch_type = 'مخزن' LIMIT 1").fetchone()
@@ -278,13 +297,11 @@ elif choice == "🔄 نقل وتحويل الأصناف للفروع":
               if st.form_submit_button("🚀 تنفيذ النقل والتحويل الفوري"):
                   if trans_qty <= chosen_item["quantity"]:
                       cur_tr = conn.cursor()
-                      # خصم الكمية من المخزن الرئيسي
                       cur_tr.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (trans_qty, chosen_item["id"]))
                       
-                      # إضافة أو تحديث الكمية في الفرع المستهدف
                       dest_exist = cur_tr.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (target_b_id, chosen_item["item_name"])).fetchone()
                       if dest_exist:
-                          cur_tr.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (trans_qty, dest_exist["id"]))
+                          cur_tr.execute("UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE id = ?", (trans_qty, chosen_item["sale_price"], dest_exist["id"]))
                       else:
                           cur_tr.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)",
                                        (target_b_id, chosen_item["item_code"], chosen_item["item_name"], trans_qty, chosen_item["buy_price"], chosen_item["sale_price"]))
@@ -384,12 +401,13 @@ elif choice == "📦 إدارة المخزن الرئيسي والفروع":
       
       if not items_df.empty:
           edited_items = st.data_editor(items_df, hide_index=True, key="inv_editor")
-          if st.button("💾 حفظ تعديلات الأسعار (تعميم فوري للفروع) أو الكميات"):
+          if st.button("💾 حفظ وتعميم تعديلات الأسعار والأسماء فوراً على النظام"):
               for idx, row in edited_items.iterrows():
-                  conn.execute("UPDATE items SET quantity=?, sale_price=? WHERE id=?", (row['الكمية (كيلو/عدد)'], row['سعر البيع (د.ل)'], row['id']))
-                  conn.execute("UPDATE items SET sale_price=? WHERE item_name=?", (row['سعر البيع (د.ل)'], row['اسم الصنف']))
+                  conn.execute("UPDATE items SET item_name=?, quantity=?, sale_price=? WHERE id=?", (row['اسم الصنف'], row['الكمية (كيلو/عدد)'], row['سعر البيع (د.ل)'], row['id']))
+                  # تعميم تحديث السعر والاسم لحظياً على نفس الصنف في كل الفروع
+                  conn.execute("UPDATE items SET item_name=?, sale_price=? WHERE item_code=?", (row['اسم الصنف'], row['سعر البيع (د.ل)'], row['الكود']))
               conn.commit()
-              st.success("🎉 تم التحديث والتعميم الفوري للأسعار على مستوى الفروع بنجاح!")
+              st.success("🎉 تم التحديث والتعميم الفوري للأسماء والأسعار على مستوى كافة الفروع بنجاح!")
               st.rerun()
           st.download_button("📥 تصدير المخزون لـ Excel", data=to_excel(items_df), file_name=f"inventory_{sel_b_name}.xlsx")
       else:
@@ -454,7 +472,7 @@ elif choice == "📥 المشتريات والموردين":
               if exist_item:
                   cur.execute("UPDATE items SET quantity = quantity + ?, buy_price = ?, sale_price = ? WHERE id = ?", (p_qty, p_buy_price, p_sale_price, exist_item['id']))
               else:
-                  cur.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, 'PUR-001', ?, ?, ?, ?)", (b_target_id, p_item_name.strip(), p_qty, p_buy_price, p_sale_price))
+                  cur.execute("INSERT INTO items (branch_id, branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, 'PUR-001', ?, ?, ?, ?)", (b_target_id, p_item_name.strip(), p_qty, p_buy_price, p_sale_price))
               
               conn.commit()
               log_action(st.session_state["user_id"], "مشتريات", f"شراء {p_qty} من {p_item_name} للمورد {supplier}")
@@ -565,7 +583,7 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم":
   conn.close()
 
 elif choice == "🛒 نقطة البيع (POS)":
-  st.header("🛒 شاشة الكاشير (POS)")
+  st.header("🛒 شاشة الكاشير (POS) - قراءة باركود الميزان الإلكتروني")
   conn = get_db_connection()
   
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
@@ -578,26 +596,30 @@ elif choice == "🛒 نقطة البيع (POS)":
       b_id = st.session_state.get("branch_id")
       
   if b_id:
-      items = conn.execute("SELECT * FROM items WHERE branch_id = ?", (b_id,)).fetchall()
+      # تصفية الأصناف وعرض التي لها رصيد فقط (أكثر من صفر)
+      items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (b_id,)).fetchall()
       
       col_g, col_c = st.columns([2, 1])
       with col_g:
-          st.subheader("الأصناف المتاحة للبيع")
-          st.text_input("🔍 مسح باركود صنف:", key="barcode_scan", on_change=process_barcode)
+          st.subheader("الأصناف المتاحة للبيع (ذات رصيد)")
+          st.text_input("🔍 مسح باركود الصنف أو باركود الميزان ( Scale Barcode ):", key="barcode_scan", on_change=process_scale_barcode)
           
           if items:
               for item in items:
                   col_i1, col_i2, col_i3 = st.columns([2, 1, 1])
-                  with col_i1: st.write(f"**{item['item_name']}** (متاح: {item['quantity']})")
+                  with col_i1: st.write(f"**{item['item_name']}** (المتاح بالمخزن: {item['quantity']})")
                   with col_i2: st.write(f"{item['sale_price']} د.ل")
                   with col_i3:
-                      if st.button(f"➕ إضافة", key=f"p_{item['id']}"):
-                          st.session_state["cart"].append({
-                              "id": item["id"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": 1.0, "total": float(item["sale_price"])
-                          })
-                          st.rerun()
+                      with st.form(key=f"pos_qty_form_{item['id']}", clear_on_submit=True):
+                          p_qty_input = st.number_input("الكمية / الوزن", min_value=0.01, value=1.0, step=0.1, format="%.2f", key=f"q_{item['id']}")
+                          if st.form_submit_button("➕ إضافة"):
+                              st.session_state["cart"].append({
+                                  "id": item["id"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(p_qty_input), "total": float(item["sale_price"]) * float(p_qty_input)
+                              })
+                              st.success("تمت الإضافة!")
+                              st.rerun()
           else:
-              st.info("لا توجد أصناف في هذا الفرع.")
+              st.info("لا توجد أصناف برصيد متاح في هذا الفرع حالياً.")
 
       with col_c:
           st.subheader("سلة المبيعات")
