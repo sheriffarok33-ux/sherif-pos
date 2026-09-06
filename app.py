@@ -385,31 +385,52 @@ elif choice == "🏢 إدارة وتغيير أسماء الفروع والحذ�
           nb_name = st.text_input("اسم الفرع أو المخزن الجديد (مثال: فرع 5 / فرع السوق)")
           nb_type = st.selectbox("النوع:", ["فرع", "مخزن"])
           if st.form_submit_button("💾 حفظ الفرع الجديد") and nb_name:
-              conn.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", (nb_name.strip(), nb_type))
-              conn.commit()
-              st.success(f"🎉 تم إضافة الفرع ({nb_name}) بنجاح!")
-              st.rerun()
+              try:
+                  conn.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", (nb_name.strip(), nb_type))
+                  conn.commit()
+                  st.success(f"🎉 تم إضافة الفرع ({nb_name}) بنجاح!")
+                  st.rerun()
+              except sqlite3.IntegrityError:
+                  st.error("⚠️ خطأ: اسم الفرع موجود مسبقاً، يرجى اختيار اسم فريد.")
 
   st.markdown("---")
   st.subheader("📋 تعديل أو حذف الفروع الحالية")
-  branches_df = pd.read_sql("SELECT id, branch_name AS 'اسم الفرع', branch_type AS 'النوع' FROM branches", conn)
-  if not branches_df.empty:
-      edited_branches = st.data_editor(branches_df, hide_index=True, key="branches_editor")
-      if st.button("💾 حفظ التعديلات على أسماء الفروع"):
-          for idx, row in edited_branches.iterrows():
-              try:
-                  conn.execute("UPDATE branches SET branch_name=?, branch_type=? WHERE id=?", (row['اسم الفرع'], row['النوع'], row['id']))
-                  conn.commit()
-              except sqlite3.IntegrityError:
-                  st.error(f"⚠️ خطأ: اسم الفرع ({row['اسم الفرع']}) موجود مسبقاً، يرجى اختيار اسم فريد لكل فرع.")
-          st.success("🎉 تم تحديث أسماء الفروع بنجاح وتعميمها في النظام!")
-          st.rerun()
-          
+  branches_list = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
+  
+  if branches_list:
+      for b in branches_list:
+          with st.form(f"branch_edit_form_{b['id']}"):
+              col_be1, col_be2, col_be3 = st.columns([2, 1, 1])
+              with col_be1:
+                  new_b_name = st.text_input("اسم الفرع:", value=b["branch_name"], key=string_key := f"b_name_{b['id']}")
+              with col_be2:
+                  new_b_type = st.selectbox("النوع:", ["فرع", "مخزن"], index=0 if b["branch_type"]=="فرع" else 1, key=f"b_type_{b['id']}")
+              with col_be3:
+                  st.markdown("<br>", unsafe_allow_html=True)
+                  up_btn = st.form_submit_button("💾 حفظ التعديل")
+              
+              if up_btn:
+                  try:
+                      conn.execute("UPDATE branches SET branch_name=?, branch_type=? WHERE id=?", (new_b_name.strip(), new_b_type, b['id']))
+                      conn.commit()
+                      st.success(f"🎉 تم تحديث الفرع ({new_b_name}) بنجاح!")
+                      st.rerun()
+                  except sqlite3.IntegrityError:
+                      st.error("⚠️ خطأ: اسم الفرع موجود مسبقاً!")
+
       if st.session_state["role"] == "Admin":
           st.markdown("---")
-          del_b_id = st.selectbox("اختر فرع للحذف النهائي:", branches_df["id"].tolist(), format_func=lambda x: branches_df[branches_df["id"]==x]["اسم الفرع"].values[0])
-          if st.button("🗑️ حذف الفرع المختار (نافذة تأكيد للأدمن)", type="primary"):
-              admin_confirm_dialog("حذف فرع", del_b_id)
+          with st.form("del_branch_form_clean"):
+              del_b_id = st.selectbox("اختر فرع للحذف النهائي:", [br["id"] for br in branches_list], format_func=lambda x: [br["branch_name"] for br in branches_list if br["id"]==x][0])
+              admin_pass_db = st.text_input("🔒 كلمة سر الأدمن لتأكيد الحذف:", type="password")
+              if st.form_submit_button("🗑️ حذف الفرع المختار", type="primary"):
+                  if verify_admin_password(admin_pass_db):
+                      conn.execute("DELETE FROM branches WHERE id = ?", (del_b_id,))
+                      conn.commit()
+                      st.success("🗑️ تم حذف الفرع بنجاح!")
+                      st.rerun()
+                  else:
+                      st.error("⚠️ كلمة سر الأدمن غير صحيحة!")
   conn.close()
 
 elif choice == "💰 تسجيل المصروفات والمصروف العام":
