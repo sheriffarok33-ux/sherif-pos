@@ -402,9 +402,12 @@ elif choice == "🏢 إدارة وتغيير أسماء الفروع والحذ�
           with st.form(f"branch_edit_form_{b['id']}"):
               col_be1, col_be2, col_be3 = st.columns([2, 1, 1])
               with col_be1:
-                  new_b_name = st.text_input("اسم الفرع:", value=b["branch_name"], key=string_key := f"b_name_{b['id']}")
+                  key_name = f"b_name_{b['id']}"
+                  new_b_name = st.text_input("اسم الفرع:", value=b["branch_name"], key=key_name)
               with col_be2:
-                  new_b_type = st.selectbox("النوع:", ["فرع", "مخزن"], index=0 if b["branch_type"]=="فرع" else 1, key=f"b_type_{b['id']}")
+                  key_type = f"b_type_{b['id']}"
+                  type_idx = 0 if b["branch_type"]=="فرع" else 1
+                  new_b_type = st.selectbox("النوع:", ["فرع", "مخزن"], index=type_idx, key=key_type)
               with col_be3:
                   st.markdown("<br>", unsafe_allow_html=True)
                   up_btn = st.form_submit_button("💾 حفظ التعديل")
@@ -699,6 +702,8 @@ elif choice == "🛒 نقطة البيع (POS)":
       b_id = st.session_state.get("branch_id")
       
   if b_id:
+      items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (b_id,)).fetchone() # Note: fetches list below properly
+      # Re-fetch all items properly
       items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (b_id,)).fetchall()
       col_g, col_c = st.columns([2, 1])
       with col_g:
