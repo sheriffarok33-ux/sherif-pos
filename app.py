@@ -35,7 +35,7 @@ DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
     "📦 إدارة المخزن الرئيسي والفروع",
-    "🔄 نقل وتحويل الأصناف للفروع (جزء أو الكل)",
+    "🔄 نقل وتحويل الأصناف للفروع",
     "🏢 إدارة وتغيير أسماء الفروع والحذف",
     "📁 استيراد وتحميل الأصناف من Excel",
     "💰 تسجيل المصروفات والمصروف العام",
@@ -263,7 +263,10 @@ def process_scale_barcode():
         if code.startswith("20") and len(code) >= 12:
             item_code = code[2:7]
             scale_value = float(code[7:]) / 100.0
-            item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (item_code, b_id)).fetchone()
+            if b_id == "ALL":
+                item = conn.execute("SELECT * FROM items WHERE item_code = ? AND quantity > 0 LIMIT 1", (item_code,)).fetchone()
+            else:
+                item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (item_code, b_id)).fetchone()
             if item:
                 unit_price = float(item["sale_price"])
                 calculated_qty = scale_value / unit_price if unit_price > 0 else 1.0
@@ -272,7 +275,10 @@ def process_scale_barcode():
                     "price": unit_price, "qty": float(calculated_qty), "total": float(scale_value)
                 })
         if not item:
-            item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
+            if b_id == "ALL":
+                item = conn.execute("SELECT * FROM items WHERE item_code = ? AND quantity > 0 LIMIT 1", (code,)).fetchone()
+            else:
+                item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
             if item:
                 st.session_state["cart"].append({
                     "id": item["id"], "code": item["item_code"], "name": item["item_name"],
@@ -385,8 +391,7 @@ elif choice == "📁 استيراد وتحميل الأصناف من Excel":
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
-  sel_target_branch = st.selectbox("اختر الفرع أو المخزن المستهدف لتنزيل الأصناف فيه:", list(b_dict.keys()))
-  target_b_id = b_dict[sel_target_branch]
+  sel_target_branch = st.selectbox("اختر الفرع أو المخزن المستهدف لتنزيل الأصناف فيه:", ["🌐 إجمالي الكل (لكل الفروع)"] + list(b_dict.keys()))
   
   up_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
   if up_excel and st.button("📥 تنفيذ استيراد وتحميل الأصناف"):
@@ -394,6 +399,8 @@ elif choice == "📁 استيراد وتحميل الأصناف من Excel":
           df_exc = pd.read_excel(up_excel, header=None)
           cur_ex = conn.cursor()
           count_imp = 0
+          target_ids = list(b_dict.values()) if sel_target_branch == "🌐 إجمالي الكل (لكل الفروع)" else [b_dict[sel_target_branch]]
+          
           for idx, row in df_exc.iterrows():
               if row.isna().all(): continue
               name = str(row.iloc[1]).strip() if len(row)>1 and not pd.isna(row.iloc[1]) else ""
@@ -406,11 +413,12 @@ elif choice == "📁 استيراد وتحميل الأصناف من Excel":
               try: s_pr = float(row.iloc[4]) if len(row)>4 and not pd.isna(row.iloc[4]) else 10.0
               except: s_pr = 10.0
               
-              cur_ex.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)", 
-                             (target_b_id, code, name, qty, b_pr, s_pr))
+              for tid in target_ids:
+                  cur_ex.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)", 
+                                 (tid, code, name, qty, b_pr, s_pr))
               count_imp += 1
           conn.commit()
-          st.success(f"🎉 تم استيراد وتحميل ({count_imp}) صنف بنجاح إلى مخزن/فرع ({sel_target_branch})!")
+          st.success(f"🎉 تم استيراد وتحميل ({count_imp}) صنف بنجاح!")
       except Exception as e:
           st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
   conn.close()
@@ -515,8 +523,6 @@ elif choice == "💰 تسجيل المصروفات والمصروف العام":
 
 elif choice == "🔄 نقل وتحويل الأصناف للفروع (جزء أو الكل)":
   st.header("🔄 نقل وتحويل الأصناف للفروع (جزء أو تحويل كامل المخزون)")
-  st.info("💡 يمكنك اختيار تحويل صنف معين بجزء من كميته، أو استخدام خيار (تحويل وتوزيع كافة أصناف المخزن الرئيسي دفعة واحدة) إلى أي فرع.")
-  
   conn = get_db_connection()
   main_store = conn.execute("SELECT id FROM branches WHERE branch_type = 'مخزن' LIMIT 1").fetchone()
   
@@ -559,7 +565,6 @@ elif choice == "🔄 نقل وتحويل الأصناف للفروع (جزء أ�
               else:
                   st.info("لا توجد أصناف متاحة بالمخزن الرئيسي للتحويل.")
           else:
-              # تحويل الكل
               if st.button("📦 تنفيذ تحويل كافة أصناف المخزن الرئيسي للفرع المختار دفعة واحدة", type="primary"):
                   all_main_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (main_id,)).fetchall()
                   if all_main_items:
@@ -584,10 +589,15 @@ elif choice == "📦 إدارة المخزن الرئيسي والفروع":
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
-  sel_b_name = st.selectbox("اختر المخزن أو الفرع:", list(b_dict.keys()))
-  current_b_id = b_dict[sel_b_name]
   
-  items_df = pd.read_sql("SELECT id, item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', sale_price AS 'سعر البيع' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
+  sel_b_name = st.selectbox("اختر المخزن أو الفرع:", ["🌐 إجمالي كل الفروع (عرض شامل)"] + list(b_dict.keys()))
+  
+  if sel_b_name == "🌐 إجمالي كل الفروع (عرض شامل)":
+      items_df = pd.read_sql("SELECT items.id AS id, branches.branch_name AS 'الفرع', items.item_code AS 'الكود', items.item_name AS 'اسم الصنف', items.quantity AS 'الكمية', items.sale_price AS 'سعر البيع' FROM items LEFT JOIN branches ON items.branch_id = branches.id", conn)
+  else:
+      current_b_id = b_dict[sel_b_name]
+      items_df = pd.read_sql("SELECT id, item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', sale_price AS 'سعر البيع' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
+      
   if not items_df.empty:
       edited_items = st.data_editor(items_df, hide_index=True, key="inv_editor")
       if st.button("💾 حفظ التعديلات"):
@@ -597,7 +607,7 @@ elif choice == "📦 إدارة المخزن الرئيسي والفروع":
           st.success("🎉 تم الحفظ!")
           st.rerun()
       
-      if st.session_state["role"] == "Admin":
+      if st.session_state["role"] == "Admin" and sel_b_name != "🌐 إجمالي كل الفروع (عرض شامل)":
           st.markdown("---")
           del_item_id = st.selectbox("اختر صنف للحذف النهائي:", edited_items["id"].tolist(), format_func=lambda x: edited_items[edited_items["id"]==x]["اسم الصنف"].values[0])
           if st.button("🗑️ حذف الصنف المختار (نافذة تأكيد للأدمن)", type="primary"):
@@ -764,16 +774,23 @@ elif choice == "🛒 نقطة البيع (POS)":
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
   if st.session_state["role"] == "Admin":
-      sel_pos_branch = st.selectbox("اختر الفرع:", list(b_dict.keys()))
-      b_id = b_dict[sel_pos_branch]
+      sel_pos_branch = st.selectbox("اختر الفرع (أو إجمالي الكل):", ["🌐 إجمالي كل الفروع (شامل)"] + list(b_dict.keys()))
+      if sel_pos_branch == "🌐 إجمالي كل الفروع (شامل)":
+          b_id = "ALL"
+      else:
+          b_id = b_dict[sel_pos_branch]
   else:
       b_id = st.session_state.get("branch_id")
       
   if b_id:
-      items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (b_id,)).fetchall()
+      if b_id == "ALL":
+          items = conn.execute("SELECT * FROM items WHERE quantity > 0").fetchall()
+      else:
+          items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (b_id,)).fetchall()
+          
       col_g, col_c = st.columns([2, 1])
       with col_g:
-          st.subheader("الأصناف المتاحة")
+          st.subheader("الأصناف المتاحة للبيع")
           st.text_input("🔍 مسح باركود الميزان أو الصنف:", key="barcode_scan", on_change=process_scale_barcode)
           if items:
               for item in items:
@@ -789,7 +806,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                               })
                               st.rerun()
           else:
-              st.info("لا توجد أصناف في هذا الفرع.")
+              st.info("لا توجد أصناف متاحة للبيع.")
 
       with col_c:
           st.subheader("سلة المبيعات")
@@ -800,14 +817,15 @@ elif choice == "🛒 نقطة البيع (POS)":
               st.metric("الإجمالي", f"{g_tot:,.2f} د.ل")
               
               if st.button("🖨️ إتمام وطباعة", type="primary", use_container_width=True):
+                  target_inv_branch = b_id if b_id != "ALL" else conn.execute("SELECT id FROM branches LIMIT 1").fetchone()["id"]
                   cur_in = conn.cursor()
-                  cur_in.execute("INSERT INTO invoices (branch_id, user_id, total_amount) VALUES (?, ?, ?)", (b_id, st.session_state["user_id"], g_tot))
+                  cur_in.execute("INSERT INTO invoices (branch_id, user_id, total_amount) VALUES (?, ?, ?)", (target_inv_branch, st.session_state["user_id"], g_tot))
                   inv_id = cur_in.lastrowid
                   for c_item in st.session_state["cart"]:
                       conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
                   conn.commit()
                   st.session_state["cart"] = []
-                  st.success(f"🎉 تم الفاتورة #{inv_id}!")
+                  st.success(f"🎉 تم إصدار الفاتورة #{inv_id} بنجاح!")
                   st.rerun()
               if st.button("🗑️ تفريغ", use_container_width=True):
                   st.session_state["cart"] = []
