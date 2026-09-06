@@ -31,16 +31,18 @@ st.markdown("""
 
 if not os.path.exists("item_images"): os.makedirs("item_images")
 
-ALL_MENUS = [
+DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
     "📦 إدارة المخزن الرئيسي والفروع",
     "🔄 نقل وتحويل الأصناف للفروع",
+    "🏢 إدارة وتغيير أسماء الفروع والحذف",
     "💰 تسجيل المصروفات والمصروف العام",
     "📥 المشتريات والموردين",
     "🥜 التحميص والخلط والتصنيع",
     "📊 الأرباح والخسائر والتقارير",
-    "👥 إدارة المستخدمين وصلاحياتهم"
+    "👥 إدارة المستخدمين وصلاحياتهم",
+    "⚙️ تخصيص وتعديل مسميات الأزرار والقوائم"
 ]
 
 def initialize_database():
@@ -127,6 +129,13 @@ def initialize_database():
   """)
 
   cursor.execute("""
+      CREATE TABLE IF NOT EXISTS custom_labels (
+          original_name TEXT PRIMARY KEY,
+          custom_name TEXT NOT NULL
+      )
+  """)
+
+  cursor.execute("""
       CREATE TABLE IF NOT EXISTS activity_logs (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           user_id INTEGER,
@@ -136,10 +145,9 @@ def initialize_database():
       )
   """)
 
-  # صلاحيات افتراضية للرتب
-  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(ALL_MENUS),))
+  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(DEFAULT_MENUS),))
   except: pass
-  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(ALL_MENUS),))
+  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Branch_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),📦 إدارة المخزن الرئيسي والفروع,📥 المشتريات والموردين')")
   except: pass
@@ -166,6 +174,12 @@ def get_db_connection():
   conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = sqlite3.Row
   return conn
+
+def get_label(orig_name):
+    conn = get_db_connection()
+    row = conn.execute("SELECT custom_name FROM custom_labels WHERE original_name = ?", (orig_name,)).fetchone()
+    conn.close()
+    return row["custom_name"] if row else orig_name
 
 def log_action(user_id, action, details):
     if not user_id: return
@@ -243,7 +257,7 @@ if not st.session_state["logged_in"]:
               st.session_state["branch_id"] = user["branch_id"]
               
               if user["role"] == "Admin":
-                  st.session_state["allowed_menus"] = ALL_MENUS
+                  st.session_state["allowed_menus"] = DEFAULT_MENUS
               else:
                   perms = conn.execute("SELECT allowed_menus FROM role_permissions WHERE role = ?", (user["role"],)).fetchone()
                   if perms and perms["allowed_menus"]: st.session_state["allowed_menus"] = perms["allowed_menus"].split(",")
@@ -260,14 +274,15 @@ st.sidebar.markdown("<h2 style='text-align: center;'>🥜 محامص أبو زي
 st.sidebar.markdown(f"**👤 {st.session_state['username']} | `{st.session_state['role']}`**")
 st.sidebar.markdown("---")
 
-current_allowed = ALL_MENUS if st.session_state["role"] == "Admin" else st.session_state.get("allowed_menus", ALL_MENUS)
-menu_to_show = [m for m in ALL_MENUS if m in current_allowed]
+current_allowed = DEFAULT_MENUS if st.session_state["role"] == "Admin" else st.session_state.get("allowed_menus", DEFAULT_MENUS)
+menu_to_show = [m for m in DEFAULT_MENUS if m in current_allowed]
 
 for m in menu_to_show:
-    if st.sidebar.button(m, use_container_width=True):
+    disp_name = get_label(m)
+    if st.sidebar.button(disp_name, use_container_width=True, key=f"btn_menu_{m}"):
         st.session_state["page"] = m; st.rerun()
 
-if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
+if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True, key="btn_logout_sidebar"):
     log_action(st.session_state["user_id"], "تسجيل خروج", "تم تسجيل الخروج")
     st.session_state.clear(); st.rerun()
 
@@ -288,9 +303,67 @@ if choice == "🏠 الرئيسية واللوحة":
   cols = st.columns(3)
   for i, (item, data) in enumerate(dashboard_cards.items()):
       with cols[i % 3]:
-          st.markdown(f'''<div style="background: {data['color']}; padding: 25px 15px; border-radius: 16px; color: white; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin-bottom: 10px; min-height: 150px;"><h1 style="margin:0; font-size: 45px;">{data['icon']}</h1><h3 style="margin: 10px 0 5px 0;">{item.split(" ", 1)[1]}</h3><p style="margin:0; font-size: 14px; opacity: 0.9;">{data['desc']}</p></div>''', unsafe_allow_html=True)
-          st.button(f"دخول ➔", key=f"btn_{i}", on_click=set_page, args=(item,), use_container_width=True)
+          c_title = get_label(item)
+          st.markdown(f'''<div style="background: {data['color']}; padding: 25px 15px; border-radius: 16px; color: white; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin-bottom: 10px; min-height: 150px;"><h1 style="margin:0; font-size: 45px;">{data['icon']}</h1><h3 style="margin: 10px 0 5px 0;">{c_title.split(" ", 1)[-1] if " " in c_title else c_title}</h3><p style="margin:0; font-size: 14px; opacity: 0.9;">{data['desc']}</p></div>''', unsafe_allow_html=True)
+          if st.button(f"دخول ➔", key=f"btn_card_{i}", on_click=set_page, args=(item,)):
+              pass
           st.markdown("<br>", unsafe_allow_html=True)
+
+elif choice == "⚙️ تخصيص وتعديل مسميات الأزرار والقوائم":
+  st.header("⚙️ لوحة تحكم الأدمن: تعديل مسميات القوائم والأزرار")
+  if st.session_state["role"] != "Admin":
+      st.error("هذه الشاشة مخصصة للأدمن فقط.")
+  else:
+      conn = get_db_connection()
+      st.info("💡 يمكنك كتابة الاسم الجديد لأي زر أو قائمة في النظام، وسيظهر فوراً في القائمة الجانبية.")
+      
+      with st.form("custom_label_form"):
+          orig_sel = st.selectbox("اختر القائمة أو الزر للتعديل:", DEFAULT_MENUS)
+          current_val = get_label(orig_sel)
+          new_custom_name = st.text_input("اكتب الاسم المخصص الجديد:", value=current_val)
+          
+          if st.form_submit_button("💾 حفظ وتطبيق الاسم الجديد"):
+              conn.execute("INSERT OR REPLACE INTO custom_labels (original_name, custom_name) VALUES (?, ?)", (orig_sel, new_custom_name.strip()))
+              conn.commit()
+              st.success(f"🎉 تم تحديث الاسم إلى ({new_custom_name}) بنجاح!")
+              st.rerun()
+      conn.close()
+
+elif choice == "🏢 إدارة وتغيير أسماء الفروع والحذف":
+  st.header("🏢 إدارة، إضافة، تعديل وحذف الفروع والمخزن الرئيسي")
+  conn = get_db_connection()
+  
+  with st.expander("➕ إضافة فرع أو مخزن جديد قابل للزيادة", expanded=False):
+      with st.form("new_branch_form", clear_on_submit=True):
+          nb_name = st.text_input("اسم الفرع أو المخزن الجديد (مثال: فرع 5 / فرع السوق)")
+          nb_type = st.selectbox("النوع:", ["فرع", "مخزن"])
+          if st.form_submit_button("💾 حفظ الفرع الجديد") and nb_name:
+              conn.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", (nb_name.strip(), nb_type))
+              conn.commit()
+              st.success(f"🎉 تم إضافة الفرع ({nb_name}) بنجاح!")
+              st.rerun()
+
+  st.markdown("---")
+  st.subheader("📋 تعديل أو حذف الفروع الحالية")
+  branches_df = pd.read_sql("SELECT id, branch_name AS 'اسم الفرع', branch_type AS 'النوع' FROM branches", conn)
+  if not branches_df.empty:
+      edited_branches = st.data_editor(branches_df, hide_index=True, key="branches_editor")
+      if st.button("💾 حفظ التعديلات على أسماء الفروع"):
+          for idx, row in edited_branches.iterrows():
+              conn.execute("UPDATE branches SET branch_name=?, branch_type=? WHERE id=?", (row['اسم الفرع'], row['النوع'], row['id']))
+          conn.commit()
+          st.success("🎉 تم تحديث أسماء الفروع بنجاح وتعميمها في النظام!")
+          st.rerun()
+          
+      if st.session_state["role"] == "Admin":
+          st.markdown("---")
+          del_b_id = st.selectbox("اختر فرع للحذف النهائي:", branches_df["id"].tolist(), format_func=lambda x: branches_df[branches_df["id"]==x]["اسم الفرع"].values[0])
+          if st.button("🗑️ حذف الفرع المختار (صلاحية الأدمن)", type="primary"):
+              conn.execute("DELETE FROM branches WHERE id = ?", (del_b_id,))
+              conn.commit()
+              st.success("🗑️ تم حذف الفرع بنجاح!")
+              st.rerun()
+  conn.close()
 
 elif choice == "💰 تسجيل المصروفات والمصروف العام":
   st.header("💰 تسجيل المصروفات وتوزيعها على الفروع")
@@ -320,7 +393,6 @@ elif choice == "💰 تسجيل المصروفات والمصروف العام":
               st.success("💸 تم تسجيل المصروف بنجاح!")
               st.rerun()
   
-  # صلاحية حذف المصروفات (للأدمن فقط)
   exp_df = pd.read_sql("SELECT expenses.id AS 'رقم', IFNULL(branches.branch_name, '🌍 مصروف عام (موزع)') AS 'الجهة / الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
   if not exp_df.empty:
       st.dataframe(exp_df, use_container_width=True)
@@ -389,7 +461,6 @@ elif choice == "📦 إدارة المخزن الرئيسي والفروع":
           st.success("🎉 تم الحفظ!")
           st.rerun()
       
-      # صلاحية الأدمن في حذف أي صنف
       if st.session_state["role"] == "Admin":
           del_item_id = st.selectbox("اختر صنف للحذف النهائي:", edited_items["id"].tolist(), format_func=lambda x: edited_items[edited_items["id"]==x]["اسم الصنف"].values[0])
           if st.button("🗑️ حذف الصنف المختار (صلاحية الأدمن)", type="primary"):
@@ -418,7 +489,6 @@ elif choice == "📥 المشتريات والموردين":
           conn.commit()
           st.success("📦 تم الحفظ!")
   
-  # صلاحية الأدمن لحذف المشتريات
   p_df = pd.read_sql("SELECT purchases.id, branches.branch_name AS 'الفرع', purchases.supplier_name AS 'المورد', purchases.total_cost AS 'التكلفة', purchases.invoice_date AS 'التاريخ' FROM purchases LEFT JOIN branches ON purchases.branch_id = branches.id ORDER BY id DESC", conn)
   if not p_df.empty:
       st.dataframe(p_df, use_container_width=True)
@@ -475,7 +545,7 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
   else:
       sales = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id = ?", (t_id,)).fetchone()[0] or 0.0
       purch = conn.execute("SELECT SUM(total_cost) FROM purchases WHERE branch_id = ?", (t_id,)).fetchone()[0] or 0.0
-      exps = conn.execute("SELECT SUM(amount) FROM expenses WHERE branch_id = ?", (t_id,)).fetchone()[0] or 0.0
+      exps = conn.execute("SELECT SUM(amount) FROM expenses WHERE branch_id = ? OR is_general_store = 1", (t_id,)).fetchone()[0] or 0.0
       net = sales - (purch + exps)
       
       c1, c2, c3, c4 = st.columns(4)
@@ -542,9 +612,9 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم":
           with st.form("perm_custom_form"):
               st.write(f"صلاحيات رتبة: **{sel_role_p}**")
               new_l = []
-              for m in ALL_MENUS:
+              for m in DEFAULT_MENUS:
                   if m == "🏠 الرئيسية واللوحة":
-                      st.checkbox(m, value=True, disabled=True); new_perms = new_l.append(m)
+                      st.checkbox(m, value=True, disabled=True); new_l.append(m)
                   else:
                       if st.checkbox(m, value=(m in allowed_l)): new_l.append(m)
               if st.form_submit_button("💾 حفظ الصلاحيات المخصصة"):
@@ -584,6 +654,8 @@ elif choice == "🛒 نقطة البيع (POS)":
                                   "id": item["id"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(q_in), "total": float(item["sale_price"]) * float(q_in)
                               })
                               st.rerun()
+          else:
+              st.info("لا توجد أصناف في هذا الفرع.")
 
       with col_c:
           st.subheader("سلة المبيعات")
@@ -606,6 +678,8 @@ elif choice == "🛒 نقطة البيع (POS)":
               if st.button("🗑️ تفريغ", use_container_width=True):
                   st.session_state["cart"] = []
                   st.rerun()
+          else:
+              st.info("السلة فارغة.")
   conn.close()
 
 st.sidebar.markdown("---")
