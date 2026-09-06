@@ -35,8 +35,9 @@ DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
     "📦 إدارة المخزن الرئيسي والفروع",
-    "🔄 نقل وتحويل الأصناف للفروع",
+    "🔄 نقل وتحويل الأصناف للفروع (جزء أو الكل)",
     "🏢 إدارة وتغيير أسماء الفروع والحذف",
+    "📁 استيراد وتحميل الأصناف من Excel",
     "💰 تسجيل المصروفات والمصروف العام",
     "📥 المشتريات والموردين",
     "🥜 التحميص والخلط والتصنيع",
@@ -341,10 +342,10 @@ choice = st.session_state["page"]
 dashboard_cards = {
     "🛒 نقطة البيع (POS)": {"icon": "🛒", "color": "linear-gradient(135deg, #f59e0b, #ea580c)", "desc": "شاشة الكاشير ومبيعات الميزان"},
     "📦 إدارة المخزن الرئيسي والفروع": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإضافة الفائض بالمخازن"},
-    "🔄 نقل وتحويل الأصناف للفروع": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تحويل وتوزيع الأصناف من المخزن الرئيسي"},
+    "🔄 نقل وتحويل الأصناف للفروع (جزء أو الكل)": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تحويل وتوزيع الأصناف (جزء أو الكل)"},
     "🏢 إدارة وتغيير أسماء الفروع والحذف": {"icon": "🏢", "color": "linear-gradient(135deg, #0ea5e9, #0369a1)", "desc": "إضافة وتعديل وحذف المخزن والفروع"},
-    "💰 تسجيل المصروفات والمصروف العام": {"icon": "💸", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "تسجيل المصروفات وتوزيعها تلقائياً"},
-    "📥 المشتريات والموردين": {"icon": "📥", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "فواتير المشتريات للمخزن/الفروع"}
+    "📁 استيراد وتحميل الأصناف من Excel": {"icon": "📁", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "تحميل الأصناف من الإكسيل"},
+    "💰 تسجيل المصروفات والمصروف العام": {"icon": "💸", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "تسجيل المصروفات وتوزيعها تلقائياً"}
 }
 
 # --- محتوى الصفحات ---
@@ -375,6 +376,44 @@ elif choice == "⚙️ تخصيص وتعديل مسميات الأزرار وا�
               st.success(f"🎉 تم تحديث الاسم إلى ({new_custom_name}) بنجاح!")
               st.rerun()
       conn.close()
+
+elif choice == "📁 استيراد وتحميل الأصناف من Excel":
+  st.header("📁 استيراد وتحميل الأصناف عبر ملف Excel")
+  st.info("💡 قم برفع ملف إكسيل (.xlsx) يحتوي على أعمدة: (الكود، اسم الصنف، الكمية، سعر الشراء، سعر البيع) لتحميلها فوراً.")
+  
+  conn = get_db_connection()
+  branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
+  b_dict = {b["branch_name"]: b["id"] for b in branches}
+  
+  sel_target_branch = st.selectbox("اختر الفرع أو المخزن المستهدف لتنزيل الأصناف فيه:", list(b_dict.keys()))
+  target_b_id = b_dict[sel_target_branch]
+  
+  up_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
+  if up_excel and st.button("📥 تنفيذ استيراد وتحميل الأصناف"):
+      try:
+          df_exc = pd.read_excel(up_excel, header=None)
+          cur_ex = conn.cursor()
+          count_imp = 0
+          for idx, row in df_exc.iterrows():
+              if row.isna().all(): continue
+              name = str(row.iloc[1]).strip() if len(row)>1 and not pd.isna(row.iloc[1]) else ""
+              if not name or name.lower() in ["nan", "null", "item"] or name in ["الصنف", "اسم الصنف", "صنف"]: continue
+              code = str(row.iloc[0]).strip() if len(row)>0 and not pd.isna(row.iloc[0]) else "GEN-01"
+              try: qty = float(row.iloc[2]) if len(row)>2 and not pd.isna(row.iloc[2]) else 0.0
+              except: qty = 0.0
+              try: b_pr = float(row.iloc[3]) if len(row)>3 and not pd.isna(row.iloc[3]) else 0.0
+              except: b_pr = 0.0
+              try: s_pr = float(row.iloc[4]) if len(row)>4 and not pd.isna(row.iloc[4]) else 10.0
+              except: s_pr = 10.0
+              
+              cur_ex.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)", 
+                             (target_b_id, code, name, qty, b_pr, s_pr))
+              count_imp += 1
+          conn.commit()
+          st.success(f"🎉 تم استيراد وتحميل ({count_imp}) صنف بنجاح إلى مخزن/فرع ({sel_target_branch})!")
+      except Exception as e:
+          st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
+  conn.close()
 
 elif choice == "🏢 إدارة وتغيير أسماء الفروع والحذف":
   st.header("🏢 إدارة، إضافة، تعديل وحذف الفروع والمخزن الرئيسي")
@@ -474,41 +513,70 @@ elif choice == "💰 تسجيل المصروفات والمصروف العام":
       st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(exp_df), file_name="expenses_report.xlsx")
   conn.close()
 
-elif choice == "🔄 نقل وتحويل الأصناف للفروع":
-  st.header("🔄 نقل وتحويل الأصناف للفروع")
+elif choice == "🔄 نقل وتحويل الأصناف للفروع (جزء أو الكل)":
+  st.header("🔄 نقل وتحويل الأصناف للفروع (جزء أو تحويل كامل المخزون)")
+  st.info("💡 يمكنك اختيار تحويل صنف معين بجزء من كميته، أو استخدام خيار (تحويل وتوزيع كافة أصناف المخزن الرئيسي دفعة واحدة) إلى أي فرع.")
+  
   conn = get_db_connection()
   main_store = conn.execute("SELECT id FROM branches WHERE branch_type = 'مخزن' LIMIT 1").fetchone()
   
   if main_store:
       main_id = main_store["id"]
-      main_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (main_id,)).fetchall()
       other_branches = conn.execute("SELECT id, branch_name FROM branches WHERE id != ?", (main_id,)).fetchall()
       
-      if main_items and other_branches:
-          with st.form("transfer_form", clear_on_submit=True):
-              m_opts = {f"[{i['item_code']}] {i['item_name']} (متاح: {i['quantity']} | السعر: {i['sale_price']} د.ل)": i for i in main_items}
-              sel_m_label = st.selectbox("اختر الصنف من المخزن الرئيسي:", list(m_opts.keys()))
-              chosen_item = m_opts[sel_m_label]
-              
-              b_opts = {b["branch_name"]: b["id"] for b in other_branches}
-              sel_target_b = st.selectbox("إلى الفرع:", list(b_opts.keys()))
-              target_b_id = b_opts[sel_target_b]
-              
-              trans_qty = st.number_input("الكمية:", min_value=0.01, value=1.0, step=0.1, format="%.2f")
-              
-              if st.form_submit_button("🚀 تنفيذ التحميص أو النقل"):
-                  if trans_qty <= chosen_item["quantity"]:
-                      cur_tr = conn.cursor()
-                      cur_tr.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (trans_qty, chosen_item["id"]))
-                      dest_exist = cur_tr.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (target_b_id, chosen_item["item_name"])).fetchone()
-                      if dest_exist:
-                          cur_tr.execute("UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE id = ?", (trans_qty, chosen_item["sale_price"], dest_exist["id"]))
-                      else:
-                          cur_tr.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)",
-                                       (target_b_id, chosen_item["item_code"], chosen_item["item_name"], trans_qty, chosen_item["buy_price"], chosen_item["sale_price"]))
+      if other_branches:
+          b_opts = {b["branch_name"]: b["id"] for b in other_branches}
+          sel_target_b = st.selectbox("اختر الفرع المستهدف للاستلام:", list(b_opts.keys()))
+          target_b_id = b_opts[sel_target_b]
+          
+          trans_mode = st.radio("طريقة التحويل:", ["تحويل صنف محدد (جزء أو كل كميته)", "📦 تحويل كافة أصناف المخزن الرئيسي دفعة واحدة للفرع"])
+          
+          if trans_mode == "تحويل صنف محدد (جزء أو كل كميته)":
+              main_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (main_id,)).fetchall()
+              if main_items:
+                  with st.form("transfer_single_form", clear_on_submit=True):
+                      m_opts = {f"[{i['item_code']}] {i['item_name']} (متاح: {i['quantity']} | السعر: {i['sale_price']} د.ل)": i for i in main_items}
+                      sel_m_label = st.selectbox("اختر الصنف:", list(m_opts.keys()))
+                      chosen_item = m_opts[sel_m_label]
+                      
+                      trans_qty = st.number_input("الكمية المراد تحويلها:", min_value=0.01, value=1.0, step=0.1, format="%.2f")
+                      
+                      if st.form_submit_button("🚀 تنفيذ التحويل الجزئي أو الكلي"):
+                          if trans_qty <= chosen_item["quantity"]:
+                              cur_tr = conn.cursor()
+                              cur_tr.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (trans_qty, chosen_item["id"]))
+                              dest_exist = cur_tr.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (target_b_id, chosen_item["item_name"])).fetchone()
+                              if dest_exist:
+                                  cur_tr.execute("UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE id = ?", (trans_qty, chosen_item["sale_price"], dest_exist["id"]))
+                              else:
+                                  cur_tr.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)",
+                                               (target_b_id, chosen_item["item_code"], chosen_item["item_name"], trans_qty, chosen_item["buy_price"], chosen_item["sale_price"]))
+                              conn.commit()
+                              st.success(f"🚀 تم تحويل ({trans_qty}) من ({chosen_item['item_name']}) إلى ({sel_target_b}) بنجاح!")
+                              st.rerun()
+                          else:
+                              st.warning("⚠️ الكمية المطلوبة أكبر من المتاح بالمخزن الرئيسي.")
+              else:
+                  st.info("لا توجد أصناف متاحة بالمخزن الرئيسي للتحويل.")
+          else:
+              # تحويل الكل
+              if st.button("📦 تنفيذ تحويل كافة أصناف المخزن الرئيسي للفرع المختار دفعة واحدة", type="primary"):
+                  all_main_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (main_id,)).fetchall()
+                  if all_main_items:
+                      cur_all = conn.cursor()
+                      for mi in all_main_items:
+                          cur_all.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (mi["quantity"], mi["id"]))
+                          dest_e = cur_all.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (target_b_id, mi["item_name"])).fetchone()
+                          if dest_e:
+                              cur_all.execute("UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE id = ?", (mi["quantity"], mi["sale_price"], dest_e["id"]))
+                          else:
+                              cur_all.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)",
+                                           (target_b_id, mi["item_code"], mi["item_name"], mi["quantity"], mi["buy_price"], mi["sale_price"]))
                       conn.commit()
-                      st.success("🚀 تم النقل بنجاح!")
+                      st.success(f"🎉 تم تحويل كافة أصناف المخزن الرئيسي إلى فرع ({sel_target_b}) بنجاح!")
                       st.rerun()
+                  else:
+                      st.warning("لا توجد أصناف بالمخزن الرئيسي لتحويلها.")
   conn.close()
 
 elif choice == "📦 إدارة المخزن الرئيسي والفروع":
@@ -702,8 +770,6 @@ elif choice == "🛒 نقطة البيع (POS)":
       b_id = st.session_state.get("branch_id")
       
   if b_id:
-      items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (b_id,)).fetchone() # Note: fetches list below properly
-      # Re-fetch all items properly
       items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (b_id,)).fetchall()
       col_g, col_c = st.columns([2, 1])
       with col_g:
