@@ -64,7 +64,7 @@ DEFAULT_MENUS = [
     "⚙️ إدارة الجرد والعمليات السنوية والتصفير",
     "🥜 التحميص والخلط والتصنيع",
     "📊 الأرباح والخسائر والتقارير",
-    "👥 إدارة المستخدمين والصلاحيات الفردية",
+    "👥 إدارة المستخدمين وصلاحياتهم الفردية",
     "⚙️ تخصيص وتعديل مسميات الأزرار"
 ]
 
@@ -95,6 +95,12 @@ def initialize_database():
           FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL
       )
   """)
+
+  # التأكد من وجود عمود custom_permissions في جدول users لو القاعدة قديمة
+  try:
+      cursor.execute("ALTER TABLE users ADD COLUMN custom_permissions TEXT DEFAULT ''")
+  except:
+      pass
 
   cursor.execute("""
       CREATE TABLE IF NOT EXISTS items (
@@ -223,6 +229,7 @@ def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     if role == "Admin": return True
     user_id = st.session_state.get("user_id")
+    if not user_id: return False
     conn = get_db_connection()
     user_row = conn.execute("SELECT custom_permissions FROM users WHERE id = ?", (user_id,)).fetchone()
     conn.close()
@@ -808,7 +815,7 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
       st.download_button("📥 تصدير لـ Excel", data=to_excel(sales_df), file_name="sales.xlsx")
   conn.close()
 
-elif choice == "👥 إدارة المستخدمين والصلاحيات الفردية":
+elif choice == "👥 إدارة المستخدمين وصلاحياتهم الفردية":
   st.header("👥 إدارة المستخدمين والصلاحيات الفردية (إعطاء صلاحيات فرعية للموظفين)")
   conn = get_db_connection()
   
@@ -885,7 +892,6 @@ elif choice == "🛒 نقطة البيع (POS)":
       else:
           items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (b_id,)).fetchall()
           
-      # --- شريط أزرار الاختصارات السريعة (Hotkeys / Shortcuts) المطابق لطلباتك ---
       st.markdown("""
           <div style="background: #1e293b; color: white; padding: 10px; border-radius: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 14px;">
               <div><b>⌨️ أزرار الاختصارات السريعة:</b></div>
@@ -897,7 +903,6 @@ elif choice == "🛒 نقطة البيع (POS)":
           </div>
       """, unsafe_allow_html=True)
 
-      # أزرار تحكم سريعة تفاعلية في الأعلى
       hk_col1, hk_col2, hk_col3, hk_col4, hk_col5 = st.columns(5)
       with hk_col1:
           if st.button("F1: إتمام البيع الفوري", use_container_width=True):
