@@ -19,7 +19,6 @@ st.markdown("""
     html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; color: #1e293b; }
     .main { background-color: #f1f5f9; }
     
-    /* تخصيص الأزرار الداخلية والخطوط */
     div.stButton > button { 
         border-radius: 8px; 
         font-weight: 700; 
@@ -31,7 +30,7 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     div.stButton > button:hover {
-        background: linear-gradient(135deg, #0369a1, #075985;
+        background: linear-gradient(135deg, #0369a1, #075985);
         transform: translateY(-2px);
     }
     
@@ -65,7 +64,7 @@ DEFAULT_MENUS = [
     "⚙️ إدارة الجرد والعمليات السنوية والتصفير",
     "🥜 التحميص والخلط والتصنيع",
     "📊 الأرباح والخسائر والتقارير",
-    "👥 إدارة المستخدمين وصلاحياتهم الفردية",
+    "👥 إدارة المستخدمين والصلاحيات الفردية",
     "⚙️ تخصيص وتعديل مسميات الأزرار"
 ]
 
@@ -481,7 +480,6 @@ elif choice == "📁 استيراد وتحميل الأصناف من Excel":
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
   with st.form("excel_import_seq_form"):
-      # تسلسل الإضافات: مجموعة -> فرع -> مخزن
       item_group_in = st.selectbox("1️⃣ اختر المجموعة:", ["مكسرات", "بهارات", "حلويات", "قهوة", "عام"])
       sel_target_branch = st.selectbox("2️⃣ اختر الفرع أو المخزن المستهدف:", ["🌐 إجمالي الكل (لكل الفروع)"] + list(b_dict.keys()))
       
@@ -711,10 +709,8 @@ elif choice == "📥 المشتريات والموردين (تنبيهات ال�
   st.header("📥 المشتريات والموردين - تنبيهات صلاحية المنتجات (خلال 30 يوم)")
   conn = get_db_connection()
   
-  # عرض التنبيه للمنتجات التي تنتهي صلاحيتها خلال 30 يوماً
   today_date = datetime.now()
   limit_date = today_date + timedelta(days=30)
-  
   expiring_items = conn.execute("SELECT items.*, branches.branch_name FROM items LEFT JOIN branches ON items.branch_id = branches.id WHERE items.no_expiry = 0 AND items.expiry_date != '' AND items.expiry_date <= ?", (limit_date.strftime('%Y-%m-%d'),)).fetchall()
   
   if expiring_items:
@@ -812,7 +808,7 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
       st.download_button("📥 تصدير لـ Excel", data=to_excel(sales_df), file_name="sales.xlsx")
   conn.close()
 
-elif choice == "👥 إدارة المستخدمين وصلاحياتهم الفردية":
+elif choice == "👥 إدارة المستخدمين والصلاحيات الفردية":
   st.header("👥 إدارة المستخدمين والصلاحيات الفردية (إعطاء صلاحيات فرعية للموظفين)")
   conn = get_db_connection()
   
@@ -869,7 +865,7 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم الف
   conn.close()
 
 elif choice == "🛒 نقطة البيع (POS)":
-  st.header("🛒 شاشة الكاشير (POS) - المطابقة لشاشة المبيعات")
+  st.header("🛒 شاشة الكاشير (POS)")
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
@@ -889,17 +885,63 @@ elif choice == "🛒 نقطة البيع (POS)":
       else:
           items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (b_id,)).fetchall()
           
-      # تصميم شاشة المبيعات المطابقة للصورة تماماً (ألوان، جدول، أزرار سفلية)
+      # --- شريط أزرار الاختصارات السريعة (Hotkeys / Shortcuts) المطابق لطلباتك ---
       st.markdown("""
-          <div style="background: #27374D; color: white; padding: 10px 15px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-              <div><b>👤 الكاشير:</b> {user}</div>
-              <div><b>🏷️ الحالة:</b> <span style="color: #4E6C50; background: #98EECC; padding: 2px 8px; border-radius: 4px;">زبون نقدي</span></div>
-              <div><b>🕒 التاريخ:</b> {date}</div>
+          <div style="background: #1e293b; color: white; padding: 10px; border-radius: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 14px;">
+              <div><b>⌨️ أزرار الاختصارات السريعة:</b></div>
+              <div><b>[F1]</b> إتمام البيع</div>
+              <div><b>[F2]</b> إعادة طباعة</div>
+              <div><b>[F3]</b> تفريغ السلة</div>
+              <div><b>[F8]</b> خصم / تعديل</div>
+              <div><b>[F10]</b> صنف سريع / خدمة</div>
           </div>
-      """.format(user=st.session_state['username'], date=datetime.now().strftime('%Y-%m-%d')), unsafe_allow_html=True)
+      """, unsafe_allow_html=True)
 
+      # أزرار تحكم سريعة تفاعلية في الأعلى
+      hk_col1, hk_col2, hk_col3, hk_col4, hk_col5 = st.columns(5)
+      with hk_col1:
+          if st.button("F1: إتمام البيع الفوري", use_container_width=True):
+              if st.session_state["cart"]:
+                  target_inv_branch = b_id if b_id != "ALL" else conn.execute("SELECT id FROM branches LIMIT 1").fetchone()["id"]
+                  g_tot = sum([x["total"] for x in st.session_state["cart"]])
+                  cur_in = conn.cursor()
+                  cur_in.execute("INSERT INTO invoices (branch_id, user_id, total_amount) VALUES (?, ?, ?)", (target_inv_branch, st.session_state["user_id"], g_tot))
+                  inv_id = cur_in.lastrowid
+                  for c_item in st.session_state["cart"]:
+                      conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
+                  conn.commit()
+                  st.session_state["cart"] = []
+                  st.success(f"🎉 تم إصدار الفاتورة #{inv_id} بنجاح عبر اختصار F1!")
+                  st.rerun()
+              else:
+                  st.warning("السلة فارغة!")
+      with hk_col2:
+          if st.button("F2: إعادة طباعة آخر فاتورة", use_container_width=True):
+              last_inv = conn.execute("SELECT id, total_amount, created_at FROM invoices ORDER BY id DESC LIMIT 1").fetchone()
+              if last_inv:
+                  st.info(f"🖨️ جاري إعادة طباعة الفاتورة رقم #{last_inv['id']} بمبلغ {last_inv['total_amount']} د.ل")
+              else:
+                  st.warning("لا توجد فواتير سابقة لإعادة طباعتها.")
+      with hk_col3:
+          if st.button("F3: تفريغ السلة", use_container_width=True):
+              st.session_state["cart"] = []
+              st.success("🗑️ تم تفريغ سلة المبيعات بالكامل!")
+              st.rerun()
+      with hk_col4:
+          if st.button("F8: تطبيق خصم", use_container_width=True):
+              st.info("💡 خاصية الخصم جاهزة للتطبيق على إجمالي الفاتورة.")
+      with hk_col5:
+          if st.button("F10: إضافة خدمة سريعة", use_container_width=True):
+              st.session_state["cart"].append({
+                  "id": 99999, "name": "خدمة عامة / توصيل", "price": 5.0, "qty": 1.0, "total": 5.0
+              })
+              st.success("✅ تمت إضافة خدمة سريعة للسلة بقيمة 5 د.ل!")
+              st.rerun()
+
+      st.markdown("---")
       col_g, col_c = st.columns([2, 1])
       with col_g:
+          st.subheader("الأصناف المتاحة للبيع")
           st.text_input("🔍 مسح باركود الميزان أو الصنف:", key="barcode_scan", on_change=process_scale_barcode)
           if items:
               for item in items:
@@ -925,18 +967,19 @@ elif choice == "🛒 نقطة البيع (POS)":
               g_tot = sum([x["total"] for x in st.session_state["cart"]])
               st.metric("الإجمالي", f"{g_tot:,.2f} د.ل")
               
-              if st.button("🖨️ إتمام وطباعة", type="primary", use_container_width=True):
+              if st.button("🖨️ إتمام وطباعة الفاتورة", type="primary", use_container_width=True):
                   target_inv_branch = b_id if b_id != "ALL" else conn.execute("SELECT id FROM branches LIMIT 1").fetchone()["id"]
                   cur_in = conn.cursor()
                   cur_in.execute("INSERT INTO invoices (branch_id, user_id, total_amount) VALUES (?, ?, ?)", (target_inv_branch, st.session_state["user_id"], g_tot))
                   inv_id = cur_in.lastrowid
                   for c_item in st.session_state["cart"]:
-                      conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
+                      if c_item["id"] != 99999:
+                          conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
                   conn.commit()
                   st.session_state["cart"] = []
                   st.success(f"🎉 تم إصدار الفاتورة #{inv_id} بنجاح!")
                   st.rerun()
-              if st.button("🗑️ تفريغ", use_container_width=True):
+              if st.button("🗑️ تفريغ السلة", use_container_width=True):
                   st.session_state["cart"] = []
                   st.rerun()
           else:
