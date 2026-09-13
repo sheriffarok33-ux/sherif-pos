@@ -96,11 +96,8 @@ def initialize_database():
       )
   """)
 
-  # التأكد من وجود عمود custom_permissions في جدول users لو القاعدة قديمة
-  try:
-      cursor.execute("ALTER TABLE users ADD COLUMN custom_permissions TEXT DEFAULT ''")
-  except:
-      pass
+  try: cursor.execute("ALTER TABLE users ADD COLUMN custom_permissions TEXT DEFAULT ''")
+  except: pass
 
   cursor.execute("""
       CREATE TABLE IF NOT EXISTS items (
@@ -117,6 +114,14 @@ def initialize_database():
           FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
       )
   """)
+
+  # إضافة الأعمدة الجديدة تلقائياً لو جدول items قديم
+  try: cursor.execute("ALTER TABLE items ADD COLUMN item_group TEXT DEFAULT 'عام'")
+  except: pass
+  try: cursor.execute("ALTER TABLE items ADD COLUMN expiry_date TEXT DEFAULT ''")
+  except: pass
+  try: cursor.execute("ALTER TABLE items ADD COLUMN no_expiry INTEGER DEFAULT 0")
+  except: pass
 
   cursor.execute("""
       CREATE TABLE IF NOT EXISTS purchases (
