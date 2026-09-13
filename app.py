@@ -4,26 +4,48 @@ import io
 import sqlite3
 import pandas as pd
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 
 st.set_page_config(
-    page_title="مجموعة أبو زيد - نظام المحامص والمخازن",
+    page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+# --- تنسيق الألوان والخطوط العصرية والاحترافية ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; }
-    .main { background-color: #f4f7f6; }
-    div.stButton > button { border-radius: 10px; font-weight: 700; transition: all 0.3s ease; height: 45px; }
-    [data-testid="stSidebar"] .stButton>button {
-        background-color: #ffffff; color: #1e293b; border: 1px solid #e2e8f0;
-        border-radius: 12px; padding: 10px 15px; text-align: right; font-weight: bold;
-        transition: all 0.3s ease; margin-bottom: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); font-size: 16px; height: auto;
+    html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; color: #1e293b; }
+    .main { background-color: #f1f5f9; }
+    
+    /* تخصيص الأزرار الداخلية والخطوط */
+    div.stButton > button { 
+        border-radius: 8px; 
+        font-weight: 700; 
+        transition: all 0.3s ease; 
+        height: 45px; 
+        background: linear-gradient(135deg, #0284c7, #0369a1);
+        color: white;
+        border: none;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    [data-testid="stSidebar"] .stButton>button:hover { background-color: #2563eb; color: white; border-color: #2563eb; transform: translateX(-5px); }
+    div.stButton > button:hover {
+        background: linear-gradient(135deg, #0369a1, #075985;
+        transform: translateY(-2px);
+    }
+    
+    [data-testid="stSidebar"] {
+        background-color: #0f172a;
+    }
+    [data-testid="stSidebar"] .stButton>button {
+        background-color: #1e293b; color: #f8fafc; border: 1px solid #334155;
+        border-radius: 10px; padding: 10px 15px; text-align: right; font-weight: bold;
+        transition: all 0.3s ease; margin-bottom: 5px; font-size: 15px; height: auto;
+    }
+    [data-testid="stSidebar"] .stButton>button:hover { 
+        background-color: #0284c7; color: white; border-color: #0284c7; transform: translateX(-5px); 
+    }
     .card { padding: 15px; border-radius: 12px; color: white; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px; }
     .pos-item-card { background: white; padding: 12px; border-radius: 10px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin-bottom: 8px; }
     </style>
@@ -39,11 +61,12 @@ DEFAULT_MENUS = [
     "🏢 إدارة وتغيير أسماء الفروع والحذف",
     "📁 استيراد وتحميل الأصناف من Excel",
     "💰 تسجيل المصروفات والمصروف العام",
-    "📥 المشتريات والموردين",
+    "📥 المشتريات والموردين (تنبيهات الصلاحية)",
+    "⚙️ إدارة الجرد والعمليات السنوية والتصفير",
     "🥜 التحميص والخلط والتصنيع",
     "📊 الأرباح والخسائر والتقارير",
-    "👥 إدارة المستخدمين وصلاحياتهم",
-    "⚙️ تخصيص وتعديل مسميات الأزرار والقوائم"
+    "👥 إدارة المستخدمين وصلاحياتهم الفردية",
+    "⚙️ تخصيص وتعديل مسميات الأزرار"
 ]
 
 def initialize_database():
@@ -68,6 +91,7 @@ def initialize_database():
           password TEXT NOT NULL,
           role TEXT NOT NULL,
           branch_id INTEGER,
+          custom_permissions TEXT DEFAULT '',
           is_active INTEGER DEFAULT 1,
           FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL
       )
@@ -77,11 +101,14 @@ def initialize_database():
       CREATE TABLE IF NOT EXISTS items (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           branch_id INTEGER,
+          item_group TEXT DEFAULT 'عام',
           item_code TEXT,
           item_name TEXT NOT NULL,
           quantity REAL DEFAULT 0.0,
           buy_price REAL DEFAULT 0.0,
           sale_price REAL NOT NULL,
+          expiry_date TEXT DEFAULT '',
+          no_expiry INTEGER DEFAULT 0,
           FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
       )
   """)
@@ -151,7 +178,7 @@ def initialize_database():
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
   except: pass
-  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Branch_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),📦 إدارة المخزن الرئيسي والفروع,📥 المشتريات والموردين')")
+  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Branch_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),📦 إدارة المخزن الرئيسي والفروع,📥 المشتريات والموردين (تنبيهات الصلاحية)')")
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS)')")
   except: pass
@@ -192,6 +219,20 @@ def verify_admin_password(pass_input):
         conn.close()
         return admin_user is not None
     return False
+
+def check_user_permission(menu_name):
+    role = st.session_state.get("role", "")
+    if role == "Admin": return True
+    user_id = st.session_state.get("user_id")
+    conn = get_db_connection()
+    user_row = conn.execute("SELECT custom_permissions FROM users WHERE id = ?", (user_id,)).fetchone()
+    conn.close()
+    if user_row and user_row["custom_permissions"]:
+        custom_perms = user_row["custom_permissions"].split(",")
+        if menu_name in custom_perms: return True
+    
+    allowed = st.session_state.get("allowed_menus", [])
+    return menu_name in allowed
 
 def log_action(user_id, action, details):
     if not user_id: return
@@ -332,7 +373,7 @@ st.sidebar.markdown(f"**👤 {st.session_state['username']} | `{st.session_state
 st.sidebar.markdown("---")
 
 current_allowed = DEFAULT_MENUS if st.session_state["role"] == "Admin" else st.session_state.get("allowed_menus", DEFAULT_MENUS)
-menu_to_show = [m for m in DEFAULT_MENUS if m in current_allowed]
+menu_to_show = [m for m in DEFAULT_MENUS if check_user_permission(m)]
 
 for m in menu_to_show:
     disp_name = get_label(m)
@@ -348,10 +389,10 @@ choice = st.session_state["page"]
 dashboard_cards = {
     "🛒 نقطة البيع (POS)": {"icon": "🛒", "color": "linear-gradient(135deg, #f59e0b, #ea580c)", "desc": "شاشة الكاشير ومبيعات الميزان"},
     "📦 إدارة المخزن الرئيسي والفروع": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإضافة الفائض بالمخازن"},
-    "🔄 نقل وتحويل الأصناف للفروع (جزء أو الكل)": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تحويل وتوزيع الأصناف (جزء أو الكل)"},
+    "🔄 نقل وتحويل الأصناف للفروع": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تحويل وتوزيع الأصناف (جزء أو الكل)"},
     "🏢 إدارة وتغيير أسماء الفروع والحذف": {"icon": "🏢", "color": "linear-gradient(135deg, #0ea5e9, #0369a1)", "desc": "إضافة وتعديل وحذف المخزن والفروع"},
-    "📁 استيراد وتحميل الأصناف من Excel": {"icon": "📁", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "تحميل الأصناف من الإكسيل"},
-    "💰 تسجيل المصروفات والمصروف العام": {"icon": "💸", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "تسجيل المصروفات وتوزيعها تلقائياً"}
+    "📁 استيراد وتحميل الأصناف من Excel": {"icon": "📁", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "تحميل الأصناف وتاريخ الصلاحية"},
+    "📥 المشتريات والموردين (تنبيهات الصلاحية)": {"icon": "📥", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "تنبيهات انتهاء الصلاحية خلال 30 يوم"}
 }
 
 # --- محتوى الصفحات ---
@@ -359,14 +400,15 @@ if choice == "🏠 الرئيسية واللوحة":
   st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
   cols = st.columns(3)
   for i, (item, data) in enumerate(dashboard_cards.items()):
-      with cols[i % 3]:
-          c_title = get_label(item)
-          st.markdown(f'''<div style="background: {data['color']}; padding: 25px 15px; border-radius: 16px; color: white; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin-bottom: 10px; min-height: 150px;"><h1 style="margin:0; font-size: 45px;">{data['icon']}</h1><h3 style="margin: 10px 0 5px 0;">{c_title.split(" ", 1)[-1] if " " in c_title else c_title}</h3><p style="margin:0; font-size: 14px; opacity: 0.9;">{data['desc']}</p></div>''', unsafe_allow_html=True)
-          if st.button(f"دخول ➔", key=f"btn_card_{i}", on_click=set_page, args=(item,)):
-              pass
-          st.markdown("<br>", unsafe_allow_html=True)
+      if check_user_permission(item):
+          with cols[i % 3]:
+              c_title = get_label(item)
+              st.markdown(f'''<div style="background: {data['color']}; padding: 25px 15px; border-radius: 16px; color: white; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin-bottom: 10px; min-height: 150px;"><h1 style="margin:0; font-size: 45px;">{data['icon']}</h1><h3 style="margin: 10px 0 5px 0;">{c_title.split(" ", 1)[-1] if " " in c_title else c_title}</h3><p style="margin:0; font-size: 14px; opacity: 0.9;">{data['desc']}</p></div>''', unsafe_allow_html=True)
+              if st.button(f"دخول ➔", key=f"btn_card_{i}", on_click=set_page, args=(item,)):
+                  pass
+              st.markdown("<br>", unsafe_allow_html=True)
 
-elif choice == "⚙️ تخصيص وتعديل مسميات الأزرار والقوائم":
+elif choice == "⚙️ تخصيص وتعديل مسميات الأزرار":
   st.header("⚙️ لوحة تحكم الأدمن: تعديل مسميات القوائم والأزرار")
   if st.session_state["role"] != "Admin":
       st.error("هذه الشاشة مخصصة للأدمن فقط.")
@@ -383,44 +425,99 @@ elif choice == "⚙️ تخصيص وتعديل مسميات الأزرار وا�
               st.rerun()
       conn.close()
 
+elif choice == "⚙️ إدارة الجرد والعمليات السنوية والتصفير":
+  st.header("⚙️ إدارة الجرد والعمليات السنوية والتصفير الشامل للمدير والأدمن")
+  if st.session_state["role"] not in ["Admin", "General_Supervisor"]:
+      st.error("صلاحية إدارة الجرد السنوي والتصفير مخصصة للإدارة العليا والأدمن فقط.")
+  else:
+      conn = get_db_connection()
+      branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
+      b_dict = {b["branch_name"]: b["id"] for b in branches}
+      
+      with st.form("annual_inventory_form"):
+          st.subheader("📋 نطاق الجرد السنوي والتصفير:")
+          target_scope = st.selectbox("تحديد النطاق:", ["🌐 كل الفروع والمخازن (الكل)", "🏢 فرع أو مخزن معروض محدد"] + list(b_dict.keys()))
+          
+          st.markdown("---")
+          st.subheader("🗑️ اختر العمليات المراد تصفيرها:")
+          opt_sales = st.checkbox("تصفير المبيعات والفواتير (إعادة تعيين أرقام الفواتير إلى INV-0001)")
+          opt_purch = st.checkbox("تصفير سجلات ومشتريات الموردين")
+          opt_stock = st.checkbox("تصفير كميات مخزون الأصناف بالكامل (جرد سنوي يبدأ من الصفر)")
+          opt_prices = st.checkbox("إعادة ضبط أسعار البيع والشراء")
+          
+          admin_pass_inv = st.text_input("🔒 كلمة سر الأدمن لتأكيد عملية التصفير السنوي:", type="password")
+          
+          if st.form_submit_button("🚨 تنفيذ عمليات التصفير المحددة للجرد", type="primary"):
+              if verify_admin_password(admin_pass_inv):
+                  cur_inv = conn.cursor()
+                  scope_id = "ALL" if target_scope == "🌐 كل الفروع والمخازن (الكل)" else (b_dict.get(target_scope, "ALL") if target_scope != "🏢 فرع أو مخزن معروض محدد" else "ALL")
+                  
+                  if opt_sales:
+                      if scope_id == "ALL": cur_inv.execute("DELETE FROM invoices")
+                      else: cur_inv.execute("DELETE FROM invoices WHERE branch_id = ?", (scope_id,))
+                  if opt_purch:
+                      if scope_id == "ALL": cur_inv.execute("DELETE FROM purchases")
+                      else: cur_inv.execute("DELETE FROM purchases WHERE branch_id = ?", (scope_id,))
+                  if opt_stock:
+                      if scope_id == "ALL": cur_inv.execute("UPDATE items SET quantity = 0")
+                      else: cur_inv.execute("UPDATE items SET quantity = 0 WHERE branch_id = ?", (scope_id,))
+                  if opt_prices:
+                      if scope_id == "ALL": cur_inv.execute("UPDATE items SET sale_price = 0, buy_price = 0")
+                      else: cur_inv.execute("UPDATE items SET sale_price = 0, buy_price = 0 WHERE branch_id = ?", (scope_id,))
+                  
+                  conn.commit()
+                  st.success("🎉 تمت عملية الجرد والتصفير السنوي المختار بنجاح تامة!")
+                  st.rerun()
+              else:
+                  st.error("❌ كلمة سر الأدمن غير صحيحة!")
+      conn.close()
+
 elif choice == "📁 استيراد وتحميل الأصناف من Excel":
-  st.header("📁 استيراد وتحميل الأصناف عبر ملف Excel")
-  st.info("💡 قم برفع ملف إكسيل (.xlsx) يحتوي على أعمدة: (الكود، اسم الصنف، الكمية، سعر الشراء، سعر البيع) لتحميلها فوراً.")
+  st.header("📁 استيراد وتحميل الأصناف عبر ملف Excel (مع تحديد تاريخ الصلاحية وتسلسل الإضافات)")
+  st.info("💡 تسلسل الإضافات: حدد المجموعة أولاً، ثم الفرع أو المخزن المستهدف، مع إدخال تاريخ الصلاحية أو تفعيل خيار المنتجات المستمرة غير المنتهية.")
   
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
-  sel_target_branch = st.selectbox("اختر الفرع أو المخزن المستهدف لتنزيل الأصناف فيه:", ["🌐 إجمالي الكل (لكل الفروع)"] + list(b_dict.keys()))
-  
-  up_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
-  if up_excel and st.button("📥 تنفيذ استيراد وتحميل الأصناف"):
-      try:
-          df_exc = pd.read_excel(up_excel, header=None)
-          cur_ex = conn.cursor()
-          count_imp = 0
-          target_ids = list(b_dict.values()) if sel_target_branch == "🌐 إجمالي الكل (لكل الفروع)" else [b_dict[sel_target_branch]]
-          
-          for idx, row in df_exc.iterrows():
-              if row.isna().all(): continue
-              name = str(row.iloc[1]).strip() if len(row)>1 and not pd.isna(row.iloc[1]) else ""
-              if not name or name.lower() in ["nan", "null", "item"] or name in ["الصنف", "اسم الصنف", "صنف"]: continue
-              code = str(row.iloc[0]).strip() if len(row)>0 and not pd.isna(row.iloc[0]) else "GEN-01"
-              try: qty = float(row.iloc[2]) if len(row)>2 and not pd.isna(row.iloc[2]) else 0.0
-              except: qty = 0.0
-              try: b_pr = float(row.iloc[3]) if len(row)>3 and not pd.isna(row.iloc[3]) else 0.0
-              except: b_pr = 0.0
-              try: s_pr = float(row.iloc[4]) if len(row)>4 and not pd.isna(row.iloc[4]) else 10.0
-              except: s_pr = 10.0
-              
-              for tid in target_ids:
-                  cur_ex.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)", 
-                                 (tid, code, name, qty, b_pr, s_pr))
-              count_imp += 1
-          conn.commit()
-          st.success(f"🎉 تم استيراد وتحميل ({count_imp}) صنف بنجاح!")
-      except Exception as e:
-          st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
+  with st.form("excel_import_seq_form"):
+      # تسلسل الإضافات: مجموعة -> فرع -> مخزن
+      item_group_in = st.selectbox("1️⃣ اختر المجموعة:", ["مكسرات", "بهارات", "حلويات", "قهوة", "عام"])
+      sel_target_branch = st.selectbox("2️⃣ اختر الفرع أو المخزن المستهدف:", ["🌐 إجمالي الكل (لكل الفروع)"] + list(b_dict.keys()))
+      
+      no_expiry_flag = st.checkbox("منتج لا تنتهي صلاحيته مستمرة أو متحركة (بدون تاريخ انتهاء)")
+      expiry_date_in = st.text_input("تاريخ الصلاحية (YYYY-MM-DD) - إن وجد:")
+      
+      up_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
+      
+      if st.form_submit_button("📥 تنفيذ استيراد وتحميل الأصناف بالتسلسل"):
+          if up_excel:
+              try:
+                  df_exc = pd.read_excel(up_excel, header=None)
+                  cur_ex = conn.cursor()
+                  count_imp = 0
+                  target_ids = list(b_dict.values()) if sel_target_branch == "🌐 إجمالي الكل (لكل الفروع)" else [b_dict[sel_target_branch]]
+                  
+                  for idx, row in df_exc.iterrows():
+                      if row.isna().all(): continue
+                      name = str(row.iloc[1]).strip() if len(row)>1 and not pd.isna(row.iloc[1]) else ""
+                      if not name or name.lower() in ["nan", "null", "item"] or name in ["الصنف", "اسم الصنف", "صنف"]: continue
+                      code = str(row.iloc[0]).strip() if len(row)>0 and not pd.isna(row.iloc[0]) else "GEN-01"
+                      try: qty = float(row.iloc[2]) if len(row)>2 and not pd.isna(row.iloc[2]) else 0.0
+                      except: qty = 0.0
+                      try: b_pr = float(row.iloc[3]) if len(row)>3 and not pd.isna(row.iloc[3]) else 0.0
+                      except: b_pr = 0.0
+                      try: s_pr = float(row.iloc[4]) if len(row)>4 and not pd.isna(row.iloc[4]) else 10.0
+                      except: s_pr = 10.0
+                      
+                      for tid in target_ids:
+                          cur_ex.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                                         (tid, item_group_in, code, name, qty, b_pr, s_pr, expiry_date_in, 1 if no_expiry_flag else 0))
+                      count_imp += 1
+                  conn.commit()
+                  st.success(f"🎉 تم استيراد وتحميل ({count_imp}) صنف بنجاح وفق التسلسل المختار!")
+              except Exception as e:
+                  st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
   conn.close()
 
 elif choice == "🏢 إدارة وتغيير أسماء الفروع والحذف":
@@ -521,7 +618,7 @@ elif choice == "💰 تسجيل المصروفات والمصروف العام":
       st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(exp_df), file_name="expenses_report.xlsx")
   conn.close()
 
-elif choice == "🔄 نقل وتحويل الأصناف للفروع (جزء أو الكل)":
+elif choice == "🔄 نقل وتحويل الأصناف للفروع":
   st.header("🔄 نقل وتحويل الأصناف للفروع (جزء أو تحويل كامل المخزون)")
   conn = get_db_connection()
   main_store = conn.execute("SELECT id FROM branches WHERE branch_type = 'مخزن' LIMIT 1").fetchone()
@@ -555,8 +652,8 @@ elif choice == "🔄 نقل وتحويل الأصناف للفروع (جزء أ�
                               if dest_exist:
                                   cur_tr.execute("UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE id = ?", (trans_qty, chosen_item["sale_price"], dest_exist["id"]))
                               else:
-                                  cur_tr.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)",
-                                               (target_b_id, chosen_item["item_code"], chosen_item["item_name"], trans_qty, chosen_item["buy_price"], chosen_item["sale_price"]))
+                                  cur_tr.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                               (target_b_id, chosen_item["item_group"], chosen_item["item_code"], chosen_item["item_name"], trans_qty, chosen_item["buy_price"], chosen_item["sale_price"], chosen_item["expiry_date"], chosen_item["no_expiry"]))
                               conn.commit()
                               st.success(f"🚀 تم تحويل ({trans_qty}) من ({chosen_item['item_name']}) إلى ({sel_target_b}) بنجاح!")
                               st.rerun()
@@ -575,8 +672,8 @@ elif choice == "🔄 نقل وتحويل الأصناف للفروع (جزء أ�
                           if dest_e:
                               cur_all.execute("UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE id = ?", (mi["quantity"], mi["sale_price"], dest_e["id"]))
                           else:
-                              cur_all.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)",
-                                           (target_b_id, mi["item_code"], mi["item_name"], mi["quantity"], mi["buy_price"], mi["sale_price"]))
+                              cur_all.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                           (target_b_id, mi["item_group"], mi["item_code"], mi["item_name"], mi["quantity"], mi["buy_price"], mi["sale_price"], mi["expiry_date"], mi["no_expiry"]))
                       conn.commit()
                       st.success(f"🎉 تم تحويل كافة أصناف المخزن الرئيسي إلى فرع ({sel_target_b}) بنجاح!")
                       st.rerun()
@@ -589,25 +686,20 @@ elif choice == "📦 إدارة المخزن الرئيسي والفروع":
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
+  sel_b_name = st.selectbox("اختر المخزن أو الفرع:", list(b_dict.keys()))
+  current_b_id = b_dict[sel_b_name]
   
-  sel_b_name = st.selectbox("اختر المخزن أو الفرع:", ["🌐 إجمالي كل الفروع (عرض شامل)"] + list(b_dict.keys()))
-  
-  if sel_b_name == "🌐 إجمالي كل الفروع (عرض شامل)":
-      items_df = pd.read_sql("SELECT items.id AS id, branches.branch_name AS 'الفرع', items.item_code AS 'الكود', items.item_name AS 'اسم الصنف', items.quantity AS 'الكمية', items.sale_price AS 'سعر البيع' FROM items LEFT JOIN branches ON items.branch_id = branches.id", conn)
-  else:
-      current_b_id = b_dict[sel_b_name]
-      items_df = pd.read_sql("SELECT id, item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', sale_price AS 'سعر البيع' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
-      
+  items_df = pd.read_sql("SELECT id, item_group AS 'المجموعة', item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', sale_price AS 'سعر البيع', expiry_date AS 'تاريخ الصلاحية', no_expiry AS 'بدون صلاحية' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
   if not items_df.empty:
       edited_items = st.data_editor(items_df, hide_index=True, key="inv_editor")
       if st.button("💾 حفظ التعديلات"):
           for idx, row in edited_items.iterrows():
-              conn.execute("UPDATE items SET item_name=?, quantity=?, sale_price=? WHERE id=?", (row['اسم الصنف'], row['الكمية'], row['سعر البيع'], row['id']))
+              conn.execute("UPDATE items SET item_name=?, quantity=?, sale_price=?, expiry_date=?, no_expiry=? WHERE id=?", (row['اسم الصنف'], row['الكمية'], row['سعر البيع'], row['تاريخ الصلاحية'], row['بدون صلاحية'], row['id']))
           conn.commit()
           st.success("🎉 تم الحفظ!")
           st.rerun()
       
-      if st.session_state["role"] == "Admin" and sel_b_name != "🌐 إجمالي كل الفروع (عرض شامل)":
+      if st.session_state["role"] == "Admin":
           st.markdown("---")
           del_item_id = st.selectbox("اختر صنف للحذف النهائي:", edited_items["id"].tolist(), format_func=lambda x: edited_items[edited_items["id"]==x]["اسم الصنف"].values[0])
           if st.button("🗑️ حذف الصنف المختار (نافذة تأكيد للأدمن)", type="primary"):
@@ -615,9 +707,24 @@ elif choice == "📦 إدارة المخزن الرئيسي والفروع":
       st.download_button("📥 تصدير لـ Excel", data=to_excel(items_df), file_name="inventory.xlsx")
   conn.close()
 
-elif choice == "📥 المشتريات والموردين":
-  st.header("📥 المشتريات والموردين")
+elif choice == "📥 المشتريات والموردين (تنبيهات الصلاحية)":
+  st.header("📥 المشتريات والموردين - تنبيهات صلاحية المنتجات (خلال 30 يوم)")
   conn = get_db_connection()
+  
+  # عرض التنبيه للمنتجات التي تنتهي صلاحيتها خلال 30 يوماً
+  today_date = datetime.now()
+  limit_date = today_date + timedelta(days=30)
+  
+  expiring_items = conn.execute("SELECT items.*, branches.branch_name FROM items LEFT JOIN branches ON items.branch_id = branches.id WHERE items.no_expiry = 0 AND items.expiry_date != '' AND items.expiry_date <= ?", (limit_date.strftime('%Y-%m-%d'),)).fetchall()
+  
+  if expiring_items:
+      st.warning("⚠️ **تنبيه هام جداً:** المنتجات التالية سينتهي تاريخ صلاحيتها خلال 30 يوماً أو انتهت بالفعل!")
+      exp_alert_df = pd.DataFrame([dict(row) for row in expiring_items])
+      st.dataframe(exp_alert_df[['branch_name', 'item_name', 'expiry_date', 'quantity']], use_container_width=True)
+  else:
+      st.success("✨ ممتاز! لا توجد أي منتجات شارفت صلاحيتها على الانتهاء خلال الـ 30 يوماً القادمة.")
+
+  st.markdown("---")
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
@@ -644,7 +751,7 @@ elif choice == "📥 المشتريات والموردين":
   conn.close()
 
 elif choice == "🥜 التحميص والخلط والتصنيع":
-  st.header("🥜 التحميص والخلط")
+  st.header("🥜 التحميص والخلط وتغيير المسميات")
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
@@ -672,15 +779,6 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
   sel_rep = st.selectbox("اختر الفرع لعرض تقريره:", list(rep_opts.keys()))
   t_id = rep_opts[sel_rep]
   
-  if st.session_state["role"] == "Admin":
-      st.markdown("---")
-      st.subheader("⚙️ تصفير أرقام الفواتير والشفتات للسنة الجديدة")
-      with st.form("reset_invoices_form"):
-          reset_target_branch = st.selectbox("اختر الفرع لتصفير فواتيرها (أو الكل):", ["🌐 تصفير كل الفروع بالكامل"] + list(b_dict.keys()))
-          r_id_val = "ALL" if reset_target_branch == "🌐 تصفير كل الفروع بالكامل" else b_dict[reset_target_branch]
-          if st.form_submit_button("🚨 تنفيذ تصفير أرقام الفواتير (تبدأ من INV-0001)", type="primary"):
-              admin_confirm_dialog("تصفير فواتير فرع", r_id_val)
-
   if t_id == "ALL":
       sales = conn.execute("SELECT SUM(total_amount) FROM invoices").fetchone()[0] or 0.0
       purch = conn.execute("SELECT SUM(total_cost) FROM purchases").fetchone()[0] or 0.0
@@ -714,11 +812,11 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
       st.download_button("📥 تصدير لـ Excel", data=to_excel(sales_df), file_name="sales.xlsx")
   conn.close()
 
-elif choice == "👥 إدارة المستخدمين وصلاحياتهم":
-  st.header("👥 إدارة المستخدمين والصلاحيات (مع مدير صلاحيات POS Manager للأدمن)")
+elif choice == "👥 إدارة المستخدمين وصلاحياتهم الفردية":
+  st.header("👥 إدارة المستخدمين والصلاحيات الفردية (إعطاء صلاحيات فرعية للموظفين)")
   conn = get_db_connection()
   
-  tab_u1, tab_u2 = st.tabs(["👥 حسابات المستخدمين", "🛡️ مدير صلاحيات القوائم (POS Manager)"])
+  tab_u1, tab_u2 = st.tabs(["👥 حسابات المستخدمين", "🛡️ إعطاء صلاحيات فردية للموظف"])
   with tab_u1:
       with st.expander("➕ إضافة مستخدم جديد", expanded=False):
           with st.form("new_user_form", clear_on_submit=True):
@@ -733,7 +831,7 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم":
                   if u_name and u_pass:
                       conn.execute("INSERT INTO users (username, phone, password, role, branch_id) VALUES (?, ?, ?, ?, ?)", (u_name.strip(), u_phone.strip(), u_pass, u_role.split(" ")[0], b_dict[u_branch]))
                       conn.commit()
-                      st.success("🎉 تم!")
+                      st.success("🎉 تم إضافة المستخدم بنجاح!")
                       st.rerun()
                       
       users_df = pd.read_sql("SELECT users.id, users.username AS 'اسم المستخدم', users.phone AS 'الهاتف', users.role AS 'الرتبة', branches.branch_name AS 'الفرع' FROM users LEFT JOIN branches ON users.branch_id = branches.id", conn)
@@ -745,36 +843,39 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم":
                   admin_confirm_dialog("حذف مستخدم", del_user_id)
 
   with tab_u2:
-      st.subheader("🛡️ تعديل وتخصيص صلاحيات القوائم لكل رتبة")
-      if st.session_state["role"] != "Admin":
-          st.error("هذه الشاشة مخصصة للأدمن فقط.")
-      else:
-          sel_role_p = st.selectbox("اختر الرتبة لضبط صلاحياتها:", ["General_Supervisor", "Branch_Supervisor", "Cashier", "Viewer"])
-          curr_p = conn.execute("SELECT allowed_menus FROM role_permissions WHERE role = ?", (sel_role_p,)).fetchone()
-          allowed_l = curr_p["allowed_menus"].split(",") if curr_p and curr_p["allowed_menus"] else []
+      st.subheader("🛡️ إعطاء صلاحية معينة لموظف معين (صلاحيات فردية استثنائية)")
+      all_users = conn.execute("SELECT id, username, role FROM users WHERE role != 'Admin'").fetchall()
+      if all_users:
+          u_opts = {f"{u['username']} (الرتبة الأصلية: {u['role']})": u["id"] for u in all_users}
+          sel_u_label = st.selectbox("اختر الموظف لتعديل صلاحياته الفردية:", list(u_opts.keys()))
+          target_u_id = u_opts[sel_u_label]
           
-          with st.form("perm_custom_form"):
-              st.write(f"صلاحيات رتبة: **{sel_role_p}**")
-              new_l = []
+          current_u_row = conn.execute("SELECT custom_permissions FROM users WHERE id = ?", (target_u_id,)).fetchone()
+          curr_custom_list = current_u_row["custom_permissions"].split(",") if current_u_row and current_u_row["custom_permissions"] else []
+          
+          with st.form("custom_user_perm_form"):
+              st.write("حدد الميزات والصلاحيات الإضافية التي تريد إعطاءها لهذا الموظف:")
+              selected_extra_perms = []
               for m in DEFAULT_MENUS:
-                  if m == "🏠 الرئيسية واللوحة":
-                      st.checkbox(m, value=True, disabled=True); new_l.append(m)
-                  else:
-                      if st.checkbox(m, value=(m in allowed_l)): new_l.append(m)
-              if st.form_submit_button("💾 حفظ الصلاحيات المخصصة"):
-                  conn.execute("INSERT OR REPLACE INTO role_permissions (role, allowed_menus) VALUES (?, ?)", (sel_role_p, ",".join(new_l)))
+                  if st.checkbox(m, value=(m in curr_custom_list), key=f"extra_p_{m}"):
+                      selected_extra_perms.append(m)
+              
+              if st.form_submit_button("💾 حفظ واعتماد الصلاحيات الفردية للموظف"):
+                  perm_str = ",".join(selected_extra_perms)
+                  conn.execute("UPDATE users SET custom_permissions = ? WHERE id = ?", (perm_str, target_u_id))
                   conn.commit()
-                  st.success("🎉 تم اعتماد الصلاحيات الجديدة بنجاح!")
+                  st.success("🎉 تم منح وصلاحيات الموظف الفردية بنجاح!")
+                  st.rerun()
   conn.close()
 
 elif choice == "🛒 نقطة البيع (POS)":
-  st.header("🛒 شاشة الكاشير (POS)")
+  st.header("🛒 شاشة الكاشير (POS) - المطابقة لشاشة المبيعات")
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
   if st.session_state["role"] == "Admin":
-      sel_pos_branch = st.selectbox("اختر الفرع (أو إجمالي الكل):", ["🌐 إجمالي كل الفروع (شامل)"] + list(b_dict.keys()))
+      sel_pos_branch = st.selectbox("اختر الفرع:", ["🌐 إجمالي كل الفروع (شامل)"] + list(b_dict.keys()))
       if sel_pos_branch == "🌐 إجمالي كل الفروع (شامل)":
           b_id = "ALL"
       else:
@@ -788,9 +889,17 @@ elif choice == "🛒 نقطة البيع (POS)":
       else:
           items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (b_id,)).fetchall()
           
+      # تصميم شاشة المبيعات المطابقة للصورة تماماً (ألوان، جدول، أزرار سفلية)
+      st.markdown("""
+          <div style="background: #27374D; color: white; padding: 10px 15px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <div><b>👤 الكاشير:</b> {user}</div>
+              <div><b>🏷️ الحالة:</b> <span style="color: #4E6C50; background: #98EECC; padding: 2px 8px; border-radius: 4px;">زبون نقدي</span></div>
+              <div><b>🕒 التاريخ:</b> {date}</div>
+          </div>
+      """.format(user=st.session_state['username'], date=datetime.now().strftime('%Y-%m-%d')), unsafe_allow_html=True)
+
       col_g, col_c = st.columns([2, 1])
       with col_g:
-          st.subheader("الأصناف المتاحة للبيع")
           st.text_input("🔍 مسح باركود الميزان أو الصنف:", key="barcode_scan", on_change=process_scale_barcode)
           if items:
               for item in items:
