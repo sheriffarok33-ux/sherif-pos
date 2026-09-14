@@ -92,12 +92,15 @@ def initialize_database():
           password TEXT NOT NULL,
           role TEXT NOT NULL,
           branch_id INTEGER,
+          allowed_branches TEXT DEFAULT 'ALL',
           custom_permissions TEXT DEFAULT '',
           is_active INTEGER DEFAULT 1,
           FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL
       )
   """)
 
+  try: cursor.execute("ALTER TABLE users ADD COLUMN allowed_branches TEXT DEFAULT 'ALL'")
+  except: pass
   try: cursor.execute("ALTER TABLE users ADD COLUMN custom_permissions TEXT DEFAULT ''")
   except: pass
 
@@ -216,7 +219,7 @@ def initialize_database():
 
   admin_chk = cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin' AND is_active = 1").fetchone()[0]
   if admin_chk == 0:
-      cursor.execute("INSERT OR IGNORE INTO users (username, phone, password, role, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', 1)")
+      cursor.execute("INSERT OR IGNORE INTO users (username, phone, password, role, allowed_branches, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', 'ALL', 1)")
 
   conn.commit()
   conn.close()
@@ -274,11 +277,21 @@ if "username" not in st.session_state: st.session_state["username"] = ""
 if "role" not in st.session_state: st.session_state["role"] = ""
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
+if "allowed_branches" not in st.session_state: st.session_state["allowed_branches"] = "ALL"
 if "cart" not in st.session_state: st.session_state["cart"] = []
 if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
 if "barcode_scan" not in st.session_state: st.session_state["barcode_scan"] = ""
+if "show_welcome_dialog" not in st.session_state: st.session_state["show_welcome_dialog"] = False
+if "welcome_branch_name" not in st.session_state: st.session_state["welcome_branch_name"] = ""
 
 def set_page(page_name): st.session_state["page"] = page_name
+
+@st.dialog("🌟 ترحيب النظام")
+def welcome_user_dialog():
+    st.success(f"**أهلاً بك يا {st.session_state['username']} في فروعك المصرح لك بها! نتمنى لك يوم سعيد مبارك ☕✨**")
+    if st.button("OK (موافق ودخول للنظام)", use_container_width=True, type="primary"):
+        st.session_state["show_welcome_dialog"] = False
+        st.rerun()
 
 @st.dialog("🔔 تنبيه وإخطار النظام")
 def alert_ok_dialog(message):
@@ -433,6 +446,10 @@ if not st.session_state["logged_in"]:
               st.session_state["role"] = user["role"]
               st.session_state["user_id"] = user["id"]
               st.session_state["branch_id"] = user["branch_id"]
+              st.session_state["allowed_branches"] = user["allowed_branches"] if user["allowed_branches"] else "ALL"
+              
+              st.session_state["welcome_branch_name"] = "متعدد الفروع / كافة الفروع"
+              st.session_state["show_welcome_dialog"] = True
               
               if user["role"] == "Admin":
                   st.session_state["allowed_menus"] = DEFAULT_MENUS
@@ -446,6 +463,9 @@ if not st.session_state["logged_in"]:
           else: 
               conn.close(); st.error("🎭 **هَنّي روحك.. اسم المستخدم أو كلمة المرور غير صحيحة!**")
   st.stop()
+
+if st.session_state.get("show_welcome_dialog", False):
+    welcome_user_dialog()
 
 # --- القائمة الجانبية والصلاحيات ---
 st.sidebar.markdown("<h2 style='text-align: center;'>🥜 محامص أبو زيد</h2>", unsafe_allow_html=True)
@@ -574,8 +594,6 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
 
 elif choice == "📁 استيراد وتحديث الأصناف من Excel":
   st.header("📁 استيراد وتحديث الأصناف عبر ملف Excel (بدون مجموعات، تحديث متغيرات، وعدم دبلرة)")
-  st.info("💡 ملاحظة هامة: تم إلغاء فكرة المجموعات. النظام يبحث عن كود الصنف ويقوم بتحديث المتغيرات فقط بدون أي تضاعف أو دبلرة.")
-  
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
@@ -785,8 +803,6 @@ elif choice == "🔄 نقل وتحويل الأصناف للفروع":
 
 elif choice == "📦 إدارة المخزن والفروع وتعديل الأسعار":
   st.header("📦 إدارة المخزن والفروع - وتعديل الأسعار مع التعميم الفوري لكافة الفروع")
-  st.info("💡 أي تعديل على سعر البيع لأي صنف هنا سيتم تعميمه تلقائياً ولحظياً على نفس الصنف (بنفس الكود) في كافة الفروع الأخرى.")
-  
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
@@ -984,16 +1000,29 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم الف
               u_phone = st.text_input("الهاتف")
               u_pass = st.text_input("كلمة المرور")
               u_role = st.selectbox("الرتبة:", ["Admin (مدير النظام)", "General_Supervisor (مدير عام)", "Branch_Supervisor (مشرف فرع)", "Cashier (كاشير)", "Viewer (مشاهد فقط)"])
+              
               branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
               b_dict = {b["branch_name"]: b["id"] for b in branches}
-              u_branch = st.selectbox("الفرع:", list(b_dict.keys()))
+              
+              allowed_b_selection = "ALL"
+              if u_role.startswith("Cashier") or u_role.startswith("Branch_Supervisor"):
+                  st.write("حدد الفروع المصرح بها لهذا المستخدم:")
+                  selected_branches_names = []
+                  for b_name in b_dict.keys():
+                      if st.checkbox(b_name, key=f"user_b_{b_name}"):
+                          selected_branches_names.append(str(b_dict[b_name]))
+                  if selected_branches_names:
+                      allowed_b_selection = ",".join(selected_branches_names)
+              
               if st.form_submit_button("💾 حفظ"):
                   if u_name and u_pass:
-                      conn.execute("INSERT INTO users (username, phone, password, role, branch_id) VALUES (?, ?, ?, ?, ?)", (u_name.strip(), u_phone.strip(), u_pass, u_role.split(" ")[0], b_dict[u_branch]))
+                      primary_bid = int(allowed_b_selection.split(",")[0]) if allowed_b_selection != "ALL" else None
+                      conn.execute("INSERT INTO users (username, phone, password, role, branch_id, allowed_branches) VALUES (?, ?, ?, ?, ?, ?)", 
+                                   (u_name.strip(), u_phone.strip(), u_pass, u_role.split(" ")[0], primary_bid, allowed_b_selection))
                       conn.commit()
                       st.success("🎉 تم إضافة المستخدم بنجاح!")
                       
-      users_df = pd.read_sql("SELECT users.id, users.username AS 'اسم المستخدم', users.phone AS 'الهاتف', users.role AS 'الرتبة', branches.branch_name AS 'الفرع' FROM users LEFT JOIN branches ON users.branch_id = branches.id", conn)
+      users_df = pd.read_sql("SELECT users.id, users.username AS 'اسم المستخدم', users.phone AS 'الهاتف', users.role AS 'الرتبة', users.allowed_branches AS 'الفروع المسموحة' FROM users", conn)
       if not users_df.empty:
           st.dataframe(users_df, use_container_width=True)
           if st.session_state["role"] == "Admin":
@@ -1032,14 +1061,26 @@ elif choice == "🛒 نقطة البيع (POS)":
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
-  if st.session_state["role"] == "Admin":
+  user_allowed_b = st.session_state.get("allowed_branches", "ALL")
+  
+  if st.session_state["role"] == "Admin" or user_allowed_b == "ALL":
       sel_pos_branch = st.selectbox("اختر الفرع:", ["🌐 إجمالي كل الفروع (شامل)"] + list(b_dict.keys()))
       if sel_pos_branch == "🌐 إجمالي كل الفروع (شامل)":
           b_id = "ALL"
       else:
           b_id = b_dict[sel_pos_branch]
   else:
-      b_id = st.session_state.get("branch_id")
+      allowed_ids = [int(x) for x in user_allowed_b.split(",") if x.strip().isdigit()]
+      allowed_b_dict = {b["branch_name"]: b["id"] for b in branches if b["id"] in allowed_ids}
+      if len(allowed_b_dict) > 1:
+          sel_pos_branch = st.selectbox("اختر الفرع المصرح لك به:", list(allowed_b_dict.keys()))
+          b_id = allowed_b_dict[sel_pos_branch]
+      elif len(allowed_b_dict) == 1:
+          b_id = list(allowed_b_dict.values())[0]
+          st.info(f"🏢 الفرع الحالي: **{list(allowed_b_dict.keys())[0]}**")
+      else:
+          b_id = None
+          st.warning("⚠️ ليس لديك أي فروع مصرح لك بالعمل عليها حالياً.")
       
   if b_id:
       if b_id == "ALL":
