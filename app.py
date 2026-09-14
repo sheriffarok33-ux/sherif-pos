@@ -606,26 +606,27 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
       up_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
       
       if st.form_submit_button("📥 تنفيذ استيراد وتحديث الأصناف"):
+          import openpyxl
           if up_excel:
               try:
-                  # قراءة ملف الإكسيل بمرونة تامة لتجنب أي أخطاء في الأعمدة
-                  df_exc = pd.read_excel(up_excel, header=None)
+                  # قراءة ملف الإكسيل باستخدام openpyxl مباشرة لتجنب أي مشاكل في الأعمدة أو الفراغات
+                  wb = openpyxl.load_workbook(up_excel, data_only=True)
+                  sheet = wb.active
                   cur_ex = conn.cursor()
                   count_imp = 0
                   target_ids = list(b_dict.values()) if sel_target_branch == "🌐 تعميم على كافة الفروع والمخازن دفعة واحدة" else [b_dict[sel_target_branch]]
                   
-                  for idx, row in df_exc.iterrows():
-                      if row.isna().all(): continue
-                      # استخراج القيم غير الفارغة من الصف بمرونة
-                      row_vals = [str(val).strip() for val in row.values if pd.notna(val)]
+                  for row_idx, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+                      if not row or all(v is None for v in row): continue
+                      # تنظيف الصف من القيم الفارغة
+                      row_vals = [str(val).strip() for val in row if val is not None and str(val).strip() != ""]
                       if not row_vals or len(row_vals) < 2: continue
                       
-                      # التحقق من تخطي سطر العناوين لو وجد
                       first_str = row_vals[0].lower()
-                      if first_str in ["code", "كود", "item_code", "رقم", "كود الصنف"] or 'كود' in first_str:
+                      # تخطي سطر العناوين لو وُجد
+                      if first_str in ["code", "كود", "item_code", "رقم", "كود الصنف"] or 'كود' in first_str or 'الصنف' in first_str:
                           continue
                       
-                      # استخراج الأعمدة حسب الترتيب (الكود، الاسم، الكمية، سعر الشراء، سعر البيع، تاريخ الصلاحية)
                       code = row_vals[0]
                       name = row_vals[1]
                       if name.lower() in ["nan", "null", "item"] or name in ["الصنف", "اسم الصنف", "صنف"]: continue
@@ -649,7 +650,7 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                                              (tid, code, name, qty, b_pr, s_pr, row_exp_date, 1 if no_expiry_flag else 0))
                       count_imp += 1
                   conn.commit()
-                  st.success(f"🎉 تمت عملية استيراد وتحديث ({count_imp}) صنف بنجاح تام!")
+                  st.success(f"🎉 تم استيراد وتحديث ({count_imp}) صنف بنجاح وبدون أي أخطاء!")
               except Exception as e:
                   st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
   conn.close()
