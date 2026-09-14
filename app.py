@@ -609,16 +609,15 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
           import openpyxl
           if up_excel:
               try:
-                  # قراءة ملف الإكسيل باستخدام openpyxl مباشرة لتجنب أي مشاكل في الأعمدة أو الفراغات
+                  # قراءة ملف الإكسيل باستخدام openpyxl مباشرة بأمان تامة
                   wb = openpyxl.load_workbook(up_excel, data_only=True)
                   sheet = wb.active
                   cur_ex = conn.cursor()
                   count_imp = 0
                   target_ids = list(b_dict.values()) if sel_target_branch == "🌐 تعميم على كافة الفروع والمخازن دفعة واحدة" else [b_dict[sel_target_branch]]
                   
-                  for row_idx, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+                  for row in sheet.iter_rows(values_only=True):
                       if not row or all(v is None for v in row): continue
-                      # تنظيف الصف من القيم الفارغة
                       row_vals = [str(val).strip() for val in row if val is not None and str(val).strip() != ""]
                       if not row_vals or len(row_vals) < 2: continue
                       
@@ -650,7 +649,7 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                                              (tid, code, name, qty, b_pr, s_pr, row_exp_date, 1 if no_expiry_flag else 0))
                       count_imp += 1
                   conn.commit()
-                  st.success(f"🎉 تم استيراد وتحديث ({count_imp}) صنف بنجاح وبدون أي أخطاء!")
+                  st.success(f"🎉 تمت عملية استيراد وتحديث ({count_imp}) صنف بنجاح تام وبدون أي أخطاء!")
               except Exception as e:
                   st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
   conn.close()
