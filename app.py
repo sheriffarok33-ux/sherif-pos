@@ -60,7 +60,7 @@ DEFAULT_MENUS = [
     "➕ إضافة فائض فرع (رصيد صفر)",
     "🔄 نقل وتحويل الأصناف للفروع",
     "🏢 إدارة وتغيير أسماء الفروع والحذف",
-    "📁 استيراد وتحميل الأصناف من Excel",
+    "📁 استيراد وتحديث الأصناف من Excel",
     "💰 تسجيل المصروفات والمصروف العام",
     "📥 المشتريات والموردين (تنبيهات الصلاحية)",
     "⚙️ إدارة الجرد والعمليات السنوية والتصفير",
@@ -283,6 +283,13 @@ if "barcode_scan" not in st.session_state: st.session_state["barcode_scan"] = ""
 
 def set_page(page_name): st.session_state["page"] = page_name
 
+# --- نافذة منبثقة صغيرة (Dialog) لتأكيد النجاح مع زر OK ---
+@st.dialog("🔔 تنبيه وإخطار النظام")
+def alert_ok_dialog(message):
+    st.write(message)
+    if st.button("OK (موافق)", use_container_width=True, type="primary"):
+        st.rerun()
+
 @st.dialog("🔒 تأكيد كلمة سر الأدمن المطلوبة")
 def admin_confirm_dialog(action_type, target_id, target_name=""):
     st.warning(f"⚠️ تحذير أمني: أنت على وشك تنفيذ عملية ({action_type}). يرجى إدخال كلمة سر الأدمن للمتابعة:")
@@ -297,6 +304,8 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
                     conn.execute("DELETE FROM branches WHERE id = ?", (target_id,))
                 elif action_type == "حذف صنف":
                     conn.execute("DELETE FROM items WHERE id = ?", (target_id,))
+                elif action_type == "محو كافة الأصناف":
+                    conn.execute("DELETE FROM items WHERE branch_id = ?" if target_id != "ALL" else "DELETE FROM items", (target_id,) if target_id != "ALL" else ())
                 elif action_type == "حذف مصروف":
                     conn.execute("DELETE FROM expenses WHERE id = ?", (target_id,))
                 elif action_type == "حذف مشتريات":
@@ -313,9 +322,8 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
                 
                 conn.commit()
                 conn.close()
-                log_action(st.session_state["user_id"], f"تنفيذ آمن ({action_type})", f"تم تنفيذ العملية على العنصر رقم {target_id}")
-                st.success(f"🗑️ تمت عملية ({action_type}) بنجاح!")
-                st.rerun()
+                log_action(st.session_state["user_id"], f"تنفيذ آمن ({action_type})", f"تم تنفيذ العملية بنجاح")
+                alert_ok_dialog(f"🗑️ تمت عملية ({action_type}) بنجاح!")
             else:
                 st.error("❌ كلمة سر الأدمن غير صحيحة!")
     with col_d2:
@@ -358,8 +366,7 @@ def checkout_payment_dialog(b_id, g_tot):
                 conn.commit()
                 conn.close()
                 st.session_state["cart"] = []
-                st.success(f"🎉 تم إصدار الفاتورة رقم #{inv_id} وطباعتها بنجاح!")
-                st.rerun()
+                alert_ok_dialog(f"🎉 تم إصدار الفاتورة رقم #{inv_id} وطباعتها بنجاح!")
             else:
                 conn.close()
         else:
@@ -505,8 +512,7 @@ elif choice == "⭐ لوحة الأصناف المفضلة (1-20)":
               for idx, row in edited_fav.iterrows():
                   conn.execute("UPDATE items SET favorite_rank = ? WHERE id = ?", (row['الرقم المفضل (1 إلى 20 أو 0 للاستبعاد)'], row['id']))
               conn.commit()
-              st.success("🎉 تم تحديث لوحة الأصناف المفضلة بنجاح للكاشير!")
-              st.rerun()
+              alert_ok_dialog("🎉 تم تحديث لوحة الأصناف المفضلة بنجاح للكاشير!")
       conn.close()
 
 elif choice == "⚙️ تخصيص وتعديل مسميات الأزرار":
@@ -522,8 +528,7 @@ elif choice == "⚙️ تخصيص وتعديل مسميات الأزرار":
           if st.form_submit_button("💾 حفظ وتطبيق الاسم الجديد"):
               conn.execute("INSERT OR REPLACE INTO custom_labels (original_name, custom_name) VALUES (?, ?)", (orig_sel, new_custom_name.strip()))
               conn.commit()
-              st.success(f"🎉 تم تحديث الاسم إلى ({new_custom_name}) بنجاح!")
-              st.rerun()
+              alert_ok_dialog(f"🎉 تم تحديث الاسم إلى ({new_custom_name}) بنجاح!")
       conn.close()
 
 elif choice == "⚙️ إدارة الجرد والعمليات السنوية والتصفير":
@@ -542,7 +547,7 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
           st.markdown("---")
           st.subheader("🗑️ اختر العمليات الحركية المراد تصفيرها:")
           opt_sales = st.checkbox("تصفير المبيعات والفواتير (إعادة تعيين أرقام الفواتير إلى INV-0001)")
-          opt_purch = st.checkbox("تصفير حركات وسجلات المشتريات (مع الاحتفاظ بقاعدة أسماء وبيانات الموردين)")
+          opt_purch = st.checkbox("تصفير حركات وسجلات المشتريات (مع الاحتفاظ بقاعدة أسماء وبيانات المورد الأساسية)")
           opt_stock = st.checkbox("تصفير كميات مخزون الأصناف بالكامل إلى الصفر")
           opt_prices = st.checkbox("إعادة ضبط أسعار البيع والشراء الحركية إلى الصفر")
           
@@ -567,14 +572,15 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
                       else: cur_inv.execute("UPDATE items SET sale_price = 0, buy_price = 0 WHERE branch_id = ?", (scope_id,))
                   
                   conn.commit()
-                  st.success("🎉 تمت عملية الجرد والتصفير الحركي السنوي بنجاح تامة!")
-                  st.rerun()
+                  alert_ok_dialog("🎉 تمت عملية الجرد والتصفير الحركي السنوي بنجاح تامة!")
               else:
                   st.error("❌ كلمة سر الأدمن غير صحيحة!")
       conn.close()
 
-elif choice == "📁 استيراد وتحميل الأصناف من Excel":
-  st.header("📁 استيراد وتحميل الأصناف عبر ملف Excel (مع دعم التعميم على الفروع وتاريخ الصلاحية)")
+elif choice == "📁 استيراد وتحديث الأصناف من Excel":
+  st.header("📁 استيراد وتحديث الأصناف عبر ملف Excel (تحديث المتغيرات وعدم الدبلرة)")
+  st.info("💡 ملاحظة هامة: النظام يبحث عن كود الصنف، وإذا وجده يقوم بـ **تحديث المتغيرات فقط** (الاسم، السعر، الكمية، الصلاحية) بدون أي دبلرة أو تضاعف!")
+  
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
@@ -588,7 +594,7 @@ elif choice == "📁 استيراد وتحميل الأصناف من Excel":
       
       up_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
       
-      if st.form_submit_button("📥 تنفيذ استيراد وتحميل الأصناف"):
+      if st.form_submit_button("📥 تنفيذ استيراد وتحديث الأصناف"):
           if up_excel:
               try:
                   df_exc = pd.read_excel(up_excel, header=None)
@@ -611,11 +617,19 @@ elif choice == "📁 استيراد وتحميل الأصناف من Excel":
                       row_exp_date = str(row.iloc[5]).strip() if len(row) > 5 and not pd.isna(row.iloc[5]) else expiry_date_in
                       
                       for tid in target_ids:
-                          cur_ex.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)", 
-                                         (tid, item_group_in, code, name, qty, b_pr, s_pr, row_exp_date, 1 if no_expiry_flag else 0))
+                          # التحقق هل الصنف موجود مسبقاً بنفس الكود والفرع
+                          exist_item = cur_ex.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (tid, code)).fetchone()
+                          if exist_item:
+                              # تحديث المتغيرات فقط لمنع الدبلرة
+                              cur_ex.execute("UPDATE items SET item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, expiry_date = ?, item_group = ?, no_expiry = ? WHERE id = ?",
+                                             (name, qty, b_pr, s_pr, row_exp_date, item_group_in, 1 if no_expiry_flag else 0, exist_item['id']))
+                          else:
+                              # إدراج صنف جديد لأول مرة
+                              cur_ex.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)", 
+                                             (tid, item_group_in, code, name, qty, b_pr, s_pr, row_exp_date, 1 if no_expiry_flag else 0))
                       count_imp += 1
                   conn.commit()
-                  st.success(f"🎉 تم استيراد وتحميل وتعميم ({count_imp}) صنف بنجاح!")
+                  alert_ok_dialog(f"🎉 تم استيراد وتحديث ({count_imp}) صنف بنجاح بدون أي دبلرة!")
               except Exception as e:
                   st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
   conn.close()
@@ -632,8 +646,7 @@ elif choice == "🏢 إدارة وتغيير أسماء الفروع والحذ�
               try:
                   conn.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", (nb_name.strip(), nb_type))
                   conn.commit()
-                  st.success(f"🎉 تم إضافة الفرع ({nb_name}) بنجاح!")
-                  st.rerun()
+                  alert_ok_dialog(f"🎉 تم إضافة الفرع ({nb_name}) بنجاح!")
               except sqlite3.IntegrityError:
                   st.error("⚠️ خطأ: اسم الفرع موجود مسبقاً، يرجى اختيار اسم فريد.")
 
@@ -660,8 +673,7 @@ elif choice == "🏢 إدارة وتغيير أسماء الفروع والحذ�
                   try:
                       conn.execute("UPDATE branches SET branch_name=?, branch_type=? WHERE id=?", (new_b_name.strip(), new_b_type, b['id']))
                       conn.commit()
-                      st.success(f"🎉 تم تحديث الفرع ({new_b_name}) بنجاح!")
-                      st.rerun()
+                      alert_ok_dialog(f"🎉 تم تحديث الفرع ({new_b_name}) بنجاح!")
                   except sqlite3.IntegrityError:
                       st.error("⚠️ خطأ: اسم الفرع موجود مسبقاً!")
 
@@ -674,8 +686,7 @@ elif choice == "🏢 إدارة وتغيير أسماء الفروع والحذ�
                   if verify_admin_password(admin_pass_db):
                       conn.execute("DELETE FROM branches WHERE id = ?", (del_b_id,))
                       conn.commit()
-                      st.success("🗑️ تم حذف الفرع بنجاح!")
-                      st.rerun()
+                      alert_ok_dialog("🗑️ تم حذف الفرع بنجاح!")
                   else:
                       st.error("⚠️ كلمة سر الأدمن غير صحيحة!")
   conn.close()
@@ -705,8 +716,7 @@ elif choice == "💰 تسجيل المصروفات والمصروف العام":
                   cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store) VALUES (NULL, ?, ?, 1)", (exp_amount, exp_desc.strip()))
               conn.commit()
               log_action(st.session_state["user_id"], "تسجيل مصروف", f"مبلغ {exp_amount} - {exp_desc}")
-              st.success("💸 تم تسجيل المصروف بنجاح!")
-              st.rerun()
+              alert_ok_dialog("💸 تم تسجيل المصروف بنجاح!")
   
   exp_df = pd.read_sql("SELECT expenses.id AS 'رقم', IFNULL(branches.branch_name, '🌍 مصروف عام (موزع)') AS 'الجهة / الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
   if not exp_df.empty:
@@ -755,8 +765,7 @@ elif choice == "🔄 نقل وتحويل الأصناف للفروع":
                                   cur_tr.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
                                                (target_b_id, chosen_item["item_group"], chosen_item["item_code"], chosen_item["item_name"], trans_qty, chosen_item["buy_price"], chosen_item["sale_price"], chosen_item["expiry_date"], chosen_item["no_expiry"]))
                               conn.commit()
-                              st.success(f"🚀 تم تحويل ({trans_qty}) من ({chosen_item['item_name']}) إلى ({sel_target_b}) بنجاح!")
-                              st.rerun()
+                              alert_ok_dialog(f"🚀 تم تحويل ({trans_qty}) من ({chosen_item['item_name']}) إلى ({sel_target_b}) بنجاح!")
                           else:
                               st.warning("⚠️ الكمية المطلوبة أكبر من المتاح بالمخزن الرئيسي.")
               else:
@@ -775,8 +784,7 @@ elif choice == "🔄 نقل وتحويل الأصناف للفروع":
                               cur_all.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
                                            (target_b_id, mi["item_group"], mi["item_code"], mi["item_name"], mi["quantity"], mi["buy_price"], mi["sale_price"], mi["expiry_date"], mi["no_expiry"]))
                       conn.commit()
-                      st.success(f"🎉 تم تحويل كافة أصناف المخزن الرئيسي إلى فرع ({sel_target_b}) بنجاح!")
-                      st.rerun()
+                      alert_ok_dialog(f"🎉 تم تحويل كافة أصناف المخزن الرئيسي إلى فرع ({sel_target_b}) بنجاح!")
                   else:
                       st.warning("لا توجد أصناف بالمخزن الرئيسي لتحويلها.")
   conn.close()
@@ -788,23 +796,27 @@ elif choice == "📦 إدارة المخزن والفروع وتعديل الأ�
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
-  sel_b_name = st.selectbox("اختر المخزن أو الفرع للاستعراض:", list(b_dict.keys()))
-  current_b_id = b_dict[sel_b_name]
+  
+  col_top_b1, col_top_b2 = st.columns([2, 1])
+  with col_top_b1:
+      sel_b_name = st.selectbox("اختر المخزن أو الفرع للاستعراض:", list(b_dict.keys()))
+      current_b_id = b_dict[sel_b_name]
+  with col_top_b2:
+      st.markdown("<br>", unsafe_allow_html=True)
+      if st.button("🗑️ محو كافة أصناف هذا الفرع", type="primary"):
+          admin_confirm_dialog("محو كافة الأصناف", current_b_id)
   
   items_df = pd.read_sql("SELECT id, item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', sale_price AS 'سعر البيع', expiry_date AS 'تاريخ الصلاحية', no_expiry AS 'بدون صلاحية', favorite_rank AS 'الرقم المفضل' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
   if not items_df.empty:
       edited_items = st.data_editor(items_df, hide_index=True, key="inv_editor")
       if st.button("💾 حفظ التعديلات وتعميم الأسعار على كل الفروع"):
           for idx, row in edited_items.iterrows():
-              # 1. تحديث الصنف الحالي
               conn.execute("UPDATE items SET item_name=?, quantity=?, sale_price=?, expiry_date=?, no_expiry=?, favorite_rank=? WHERE id=?", 
                            (row['اسم الصنف'], row['الكمية'], row['سعر البيع'], row['تاريخ الصلاحية'], row['بدون صلاحية'], row['الرقم المفضل'], row['id']))
-              # 2. تعميم السعر والاسم فوراً على نفس الصنف في كل الفروع بناءً على الكود
               conn.execute("UPDATE items SET item_name=?, sale_price=? WHERE item_code=?", 
                            (row['اسم الصنف'], row['سعر البيع'], row['الكود']))
           conn.commit()
-          st.success("🎉 تم الحفظ وتعميم الأسعار الجديدة على كافة الفروع بنجاح!")
-          st.rerun()
+          alert_ok_dialog("🎉 تم الحفظ وتعميم الأسعار الجديدة على كافة الفروع بنجاح!")
       
       if st.session_state["role"] == "Admin":
           st.markdown("---")
@@ -816,8 +828,6 @@ elif choice == "📦 إدارة المخزن والفروع وتعديل الأ�
 
 elif choice == "➕ إضافة فائض فرع (رصيد صفر)":
   st.header("➕ إضافة فائض فرع (للأصناف التي رصيدها صفر)")
-  st.info("💡 هذه الشاشة تعرض فقط الأصناف التي رصيدها (صفر) في الفرع المختار، ليقوم المسؤول بإضافة فائض منها بنفس أسعارها السابقة.")
-  
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
@@ -842,8 +852,7 @@ elif choice == "➕ إضافة فائض فرع (رصيد صفر)":
                                (current_b_id, z_item['item_group'], z_item['item_code'], z_item['item_name'], surplus_qty, z_item['buy_price'], z_item['sale_price'], z_item['expiry_date'], z_item['no_expiry']))
               conn.commit()
               log_action(st.session_state["user_id"], "إضافة فائض", f"إضافة فائض {surplus_qty} للصنف {z_item['item_name']} في {sel_b_name}")
-              st.success(f"🚀 تمت إضافة الفائض للصنف ({z_item['item_name']}) بنجاح وبنفس أسعاره السابقة!")
-              st.rerun()
+              alert_ok_dialog(f"🚀 تمت إضافة الفائض للصنف ({z_item['item_name']}) بنجاح وبنفس أسعاره السابقة!")
   else:
       st.success("✨ ممتاز! لا توجد أصناف برصيد (صفر) في هذا الفرع حالياً.")
   conn.close()
@@ -877,16 +886,20 @@ elif choice == "📥 المشتريات والموردين (تنبيهات ال�
           cur = conn.cursor()
           cur.execute("INSERT INTO purchases (branch_id, supplier_name, total_cost) VALUES (?, ?, ?)", (b_dict[p_branch], supplier, p_qty * p_price))
           conn.commit()
-          st.success("📦 تم الحفظ!")
+          alert_ok_dialog("📦 تم حفظ فاتورة المشتريات بنجاح!")
   
-  p_df = pd.read_sql("SELECT purchases.id, branches.branch_name AS 'الفرع', purchases.supplier_name AS 'المورد', purchases.total_cost AS 'التكلفة', purchases.invoice_date AS 'التاريخ' FROM purchases LEFT JOIN branches ON purchases.branch_id = branches.id ORDER BY id DESC", conn)
-  if not p_df.empty:
-      st.dataframe(p_df, use_container_width=True)
-      if st.session_state["role"] == "Admin":
-          del_p_id = st.selectbox("اختر رقم الفاتورة للحذف:", p_df["id"].tolist())
-          if st.button("🗑️ حذف الفاتورة المتاحة (نافذة تأكيد للأدمن)", type="primary"):
-              admin_confirm_dialog("حذف مشتريات", del_p_id)
-      st.download_button("📥 تصدير لـ Excel", data=to_excel(p_df), file_name="purchases.xlsx")
+  # معالجة آمنة لجدول المشتريات لمنع أي DatabaseError
+  try:
+      p_df = pd.read_sql("SELECT purchases.id, branches.branch_name AS 'الفرع', purchases.supplier_name AS 'المورد', purchases.total_cost AS 'التكلفة', purchases.invoice_date AS 'التاريخ' FROM purchases LEFT JOIN branches ON purchases.branch_id = branches.id ORDER BY purchases.id DESC", conn)
+      if not p_df.empty:
+          st.dataframe(p_df, use_container_width=True)
+          if st.session_state["role"] == "Admin":
+              del_p_id = st.selectbox("اختر رقم الفاتورة للحذف:", p_df["id"].tolist())
+              if st.button("🗑️ حذف الفاتورة المتاحة (نافذة تأكيد للأدمن)", type="primary"):
+                  admin_confirm_dialog("حذف مشتريات", del_p_id)
+          st.download_button("📥 تصدير لـ Excel", data=to_excel(p_df), file_name="purchases.xlsx")
+  except Exception as e:
+      st.info("لا توجد سجلات مشتريات كافية لعرضها حالياً.")
   conn.close()
 
 elif choice == "🥜 التحميص والخلط والتصنيع":
@@ -904,7 +917,7 @@ elif choice == "🥜 التحميص والخلط والتصنيع":
       out_price = st.number_input("سعر البيع الجديد", value=25.0)
       if st.form_submit_button("⚙️ تنفيذ التحميص"):
           conn.commit()
-          st.success("🥜 تم التحميص بنجاح!")
+          alert_ok_dialog("🥜 تم تنفيذ عملية التحميص بنجاح!")
   conn.close()
 
 elif choice == "📊 الأرباح والخسائر والتقارير":
@@ -979,8 +992,7 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم الف
                   if u_name and u_pass:
                       conn.execute("INSERT INTO users (username, phone, password, role, branch_id) VALUES (?, ?, ?, ?, ?)", (u_name.strip(), u_phone.strip(), u_pass, u_role.split(" ")[0], b_dict[u_branch]))
                       conn.commit()
-                      st.success("🎉 تم إضافة المستخدم بنجاح!")
-                      st.rerun()
+                      alert_ok_dialog("🎉 تم إضافة المستخدم بنجاح!")
                       
       users_df = pd.read_sql("SELECT users.id, users.username AS 'اسم المستخدم', users.phone AS 'الهاتف', users.role AS 'الرتبة', branches.branch_name AS 'الفرع' FROM users LEFT JOIN branches ON users.branch_id = branches.id", conn)
       if not users_df.empty:
@@ -1012,8 +1024,7 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم الف
                   perm_str = ",".join(selected_extra_perms)
                   conn.execute("UPDATE users SET custom_permissions = ? WHERE id = ?", (perm_str, target_u_id))
                   conn.commit()
-                  st.success("🎉 تم منح وصلاحيات الموظف الفردية بنجاح!")
-                  st.rerun()
+                  alert_ok_dialog("🎉 تم منح وصلاحيات الموظف الفردية بنجاح!")
   conn.close()
 
 elif choice == "🛒 نقطة البيع (POS)":
@@ -1066,8 +1077,7 @@ elif choice == "🛒 نقطة البيع (POS)":
       with hk_col3:
           if st.button("F3: تفريغ السلة", use_container_width=True):
               st.session_state["cart"] = []
-              st.success("🗑️ تم تفريغ سلة المبيعات بالكامل!")
-              st.rerun()
+              alert_ok_dialog("🗑️ تم تفريغ سلة المبيعات بالكامل!")
       with hk_col4:
           if st.button("F8: تطبيق خصم", use_container_width=True):
               st.info("💡 خاصية الخصم جاهزة للتطبيق على إجمالي الفاتورة.")
@@ -1076,8 +1086,7 @@ elif choice == "🛒 نقطة البيع (POS)":
               st.session_state["cart"].append({
                   "id": 99999, "name": "خدمة عامة / توصيل", "price": 5.0, "qty": 1.0, "total": 5.0
               })
-              st.success("✅ تمت إضافة خدمة سريعة للسلة بقيمة 5 د.ل!")
-              st.rerun()
+              alert_ok_dialog("✅ تمت إضافة خدمة سريعة للسلة بقيمة 5 د.ل!")
 
       st.markdown("---")
       col_g, col_c = st.columns([2, 1])
