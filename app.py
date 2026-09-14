@@ -321,7 +321,6 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
         if st.button("❌ إلغاء", use_container_width=True):
             st.rerun()
 
-# --- نافذة شاشة الدفع المتقدمة (مدفوع، الباقي، ونوع الدفع) ---
 @st.dialog("💳 شاشة إتمام الدفع (الخزينة)")
 def checkout_payment_dialog(b_id, g_tot):
     st.subheader(f"إجمالي الفاتورة المطلوب: {g_tot:,.2f} د.ل")
@@ -340,7 +339,6 @@ def checkout_payment_dialog(b_id, g_tot):
             conn = get_db_connection()
             target_inv_branch = b_id if b_id != "ALL" else conn.execute("SELECT id FROM branches LIMIT 1").fetchone()["id"]
             
-            # فحص إضافي أخير للكميات قبل الخصم النهائي
             can_proceed = True
             for c_item in st.session_state["cart"]:
                 if c_item["id"] != 99999:
@@ -541,10 +539,10 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
           target_scope = st.selectbox("تحديد النطاق:", ["🌐 كل الفروع والمخازن (الكل)", "🏢 فرع أو مخزن معروض محدد"] + list(b_dict.keys()))
           
           st.markdown("---")
-          st.subheader("🗑️ اختر العمليات الحركية المراد تصفيرها (مع الحفاظ على الأسماء الأساسية):")
+          st.subheader("🗑️ اختر العمليات الحركية المراد تصفيرها (مع الاحتفاظ بأسماء الموردين والأصناف الأساسية):")
           opt_sales = st.checkbox("تصفير المبيعات والفواتير (إعادة تعيين أرقام الفواتير إلى INV-0001)")
-          opt_purch = st.checkbox("تصفير حركات وسجلات المشتريات (مع الاحتفاظ بأسماء الموردين الأساسية)")
-          opt_stock = st.checkbox("تصفير كميات مخزون الأصناف بالكامل إلى الصفر (جرد سنوي مع الاحتفاظ بأسماء الأصناف)")
+          opt_purch = st.checkbox("تصفير حركات وسجلات المشتريات (مع الاحتفاظ بقاعدة أسماء وبيانات الموردين)")
+          opt_stock = st.checkbox("تصفير كميات مخزون الأصناف بالكامل إلى الصفر (جرد سنوي مع الاحتفاظ بأكواد وأسماء الأصناف)")
           opt_prices = st.checkbox("إعادة ضبط أسعار البيع والشراء الحركية إلى الصفر")
           
           admin_pass_inv = st.text_input("🔒 كلمة سر الأدمن لتأكيد عملية التصفير السنوي:", type="password")
@@ -575,27 +573,29 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
       conn.close()
 
 elif choice == "📁 استيراد وتحميل الأصناف من Excel":
-  st.header("📁 استيراد وتحميل الأصناف عبر ملف Excel (مع تحديد تاريخ الصلاحية وتسلسل الإضافات)")
+  st.header("📁 استيراد وتحميل الأصناف عبر ملف Excel (مع دعم التعميم على الفروع وتاريخ الصلاحية)")
+  st.info("💡 يمكنك رفع الملف وتفعيل (🌐 تعميم على كافة الفروع والمخازن دفعة واحدة) أو اختيار فرع محدد.")
+  
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
   with st.form("excel_import_seq_form"):
       item_group_in = st.selectbox("1️⃣ اختر المجموعة:", ["مكسرات", "بهارات", "حلويات", "قهوة", "عام"])
-      sel_target_branch = st.selectbox("2️⃣ اختر الفرع أو المخزن المستهدف:", ["🌐 إجمالي الكل (لكل الفروع)"] + list(b_dict.keys()))
+      sel_target_branch = st.selectbox("2️⃣ اختر الفرع أو المخزن المستهدف (أو تعميم للكل):", ["🌐 تعميم على كافة الفروع والمخازن دفعة واحدة"] + list(b_dict.keys()))
       
       no_expiry_flag = st.checkbox("منتج لا تنتهي صلاحيته مستمرة أو متحركة (بدون تاريخ انتهاء)")
       expiry_date_in = st.text_input("تاريخ الصلاحية (YYYY-MM-DD) - إن وجد:")
       
-      up_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
+      up_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx) - الترتيب: [الكود، الاسم، الكمية، سعر الشراء، سعر البيع، تاريخ الصلاحية]", type=["xlsx", "xls"])
       
-      if st.form_submit_button("📥 تنفيذ استيراد وتحميل الأصناف بالتسلسل"):
+      if st.form_submit_button("📥 تنفيذ استيراد وتحميل الأصناف"):
           if up_excel:
               try:
                   df_exc = pd.read_excel(up_excel, header=None)
                   cur_ex = conn.cursor()
                   count_imp = 0
-                  target_ids = list(b_dict.values()) if sel_target_branch == "🌐 إجمالي الكل (لكل الفروع)" else [b_dict[sel_target_branch]]
+                  target_ids = list(b_dict.values()) if sel_target_branch == "🌐 تعميم على كافة الفروع والمخازن دفعة واحدة" else [b_dict[sel_target_branch]]
                   
                   for idx, row in df_exc.iterrows():
                       if row.isna().all(): continue
@@ -609,12 +609,15 @@ elif choice == "📁 استيراد وتحميل الأصناف من Excel":
                       try: s_pr = float(row.iloc[4]) if len(row)>4 and not pd.isna(row.iloc[4]) else 10.0
                       except: s_pr = 10.0
                       
+                      # قراءة تاريخ الصلاحية من العمود السادس في الملف لو وجد، أو الاعتماد على المربع العلوي
+                      row_exp_date = str(row.iloc[5]).strip() if len(row) > 5 and not pd.isna(row.iloc[5]) else expiry_date_in
+                      
                       for tid in target_ids:
                           cur_ex.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)", 
-                                         (tid, item_group_in, code, name, qty, b_pr, s_pr, expiry_date_in, 1 if no_expiry_flag else 0))
+                                         (tid, item_group_in, code, name, qty, b_pr, s_pr, row_exp_date, 1 if no_expiry_flag else 0))
                       count_imp += 1
                   conn.commit()
-                  st.success(f"🎉 تم استيراد وتحميل ({count_imp}) صنف بنجاح!")
+                  st.success(f"🎉 تم استيراد وتحميل وتعميم ({count_imp}) صنف بنجاح!")
               except Exception as e:
                   st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
   conn.close()
@@ -880,6 +883,7 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
   neg_logs_df = pd.read_sql("SELECT negative_sales_logs.id AS 'رقم', branches.branch_name AS 'الفرع', users.username AS 'الكاشير', negative_sales_logs.item_name AS 'الصنف', negative_sales_logs.sale_qty AS 'الكمية المباعة بالناقص', negative_sales_logs.log_time AS 'التاريخ والوقت' FROM negative_sales_logs LEFT JOIN branches ON negative_sales_logs.branch_id = branches.id LEFT JOIN users ON negative_sales_logs.user_id = users.id ORDER BY negative_sales_logs.id DESC", conn)
   if not neg_logs_df.empty:
       st.dataframe(neg_logs_df, use_container_width=True)
+      st.download_button("📥 تصدير سجل البيع بالناقص لـ Excel", data=to_excel(neg_logs_df), file_name="negative_sales.xlsx")
   else:
       st.success("لا توجد عمليات بيع بالناقص مسجلة حتى الآن.")
   st.markdown("---")
@@ -914,7 +918,7 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
           del_inv_id = st.selectbox("اختر رقم الفاتورة للحذف:", sales_df["رقم"].tolist())
           if st.button("🗑️ حذف الفاتورة المتاحة (نافذة تأكيد للأدمن)", type="primary"):
               admin_confirm_dialog("حذف فاتورة", del_inv_id)
-      st.download_button("📥 تصدير لـ Excel", data=to_excel(sales_df), file_name="sales.xlsx")
+      st.download_button("📥 تصدير تقرير المبيعات لـ Excel", data=to_excel(sales_df), file_name="sales.xlsx")
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين وصلاحياتهم الفردية":
