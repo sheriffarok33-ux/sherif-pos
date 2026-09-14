@@ -606,37 +606,33 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
       up_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
       
       if st.form_submit_button("📥 تنفيذ استيراد وتحديث الأصناف"):
-          import openpyxl
           if up_excel:
               try:
-                  wb = openpyxl.load_workbook(up_excel, data_only=True)
-                  sheet = wb.active
+                  # قراءة ملف الإكسيل مباشرة باستخدام pandas مع usecols لتفادي أي أعمدة زائدة
+                  df_exc = pd.read_excel(up_excel, usecols=[0, 1, 2, 3, 4, 5])
                   cur_ex = conn.cursor()
                   count_imp = 0
                   target_ids = list(b_dict.values()) if sel_target_branch == "🌐 تعميم على كافة الفروع والمخازن دفعة واحدة" else [b_dict[sel_target_branch]]
                   
-                  for row in sheet.iter_rows(values_only=True):
-                      if not row or all(v is None for v in row): continue
-                      row_vals = [str(val).strip() for val in row if val is not None and str(val).strip() != ""]
-                      if not row_vals or len(row_vals) < 2: continue
+                  for idx, row in df_exc.iterrows():
+                      if row.isna().all(): continue
+                      code = str(row.iloc[0]).strip()
+                      name = str(row.iloc[1]).strip()
                       
-                      first_str = row_vals[0].lower()
-                      if first_str in ["code", "كود", "item_code", "رقم", "كود الصنف"] or 'كود' in first_str or 'الصنف' in first_str:
+                      # تخطي صف العناوين أو الصفوف الفارغة
+                      if code.lower() in ["nan", "null", "item", "كود الصنف", "كود"] or name.lower() in ["nan", "null", "item", "اسم الصنف"]:
                           continue
+                      if not code or code.lower() == 'nan': continue
                       
-                      code = row_vals[0]
-                      name = row_vals[1]
-                      if name.lower() in ["nan", "null", "item"] or name in ["الصنف", "اسم الصنف", "صنف"]: continue
-                      
-                      try: qty = float(row_vals[2]) if len(row_vals) > 2 else 0.0
+                      try: qty = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0.0
                       except: qty = 0.0
-                      try: b_pr = float(row_vals[3]) if len(row_vals) > 3 else 0.0
+                      try: b_pr = float(row.iloc[3]) if pd.notna(row.iloc[3]) else 0.0
                       except: b_pr = 0.0
-                      try: s_pr = float(row_vals[4]) if len(row_vals) > 4 else 10.0
+                      try: s_pr = float(row.iloc[4]) if pd.notna(row.iloc[4]) else 10.0
                       except: s_pr = 10.0
                       
-                      row_exp_date = row_vals[5] if len(row_vals) > 5 else expiry_date_in
-                      if not code or code.lower() == 'nan': continue
+                      row_exp_date = str(row.iloc[5]).strip() if pd.notna(row.iloc[5]) else expiry_date_in
+                      if row_exp_date.lower() == 'nan': row_exp_date = ''
 
                       for tid in target_ids:
                           exist_item = cur_ex.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (tid, code)).fetchone()
@@ -999,7 +995,7 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين وصلاحياتهم الفردية":
-  st.header("👥 إدارة المستخدمين وصلاحياتهم الفردية (إعطاء صلاحيات فرعية للموظفين)")
+  st.header("👥 إدارة المستخدمين والصلاحيات الفردية (إعطاء صلاحيات فرعية للموظفين)")
   conn = get_db_connection()
   
   tab_u1, tab_u2 = st.tabs(["👥 حسابات المستخدمين", "🛡️ إعطاء صلاحيات فردية للموظف"])
