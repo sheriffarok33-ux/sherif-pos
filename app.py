@@ -242,7 +242,8 @@ def initialize_database():
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة الأصناف المفضلة (1-20)')")
   except: pass
-  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Viewer', '🏠 الرئيسية واللوحة,📊 مركز التقارير والإدارة الشاملة (مع التصدير وحركة الفروع)')")
+  # جعل رتبة المشاهد فقط (Viewer) تملك كافة صلاحيات العرض والتقارير تماماً مثل المدير العام
+  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Viewer', ?)", (",".join(DEFAULT_MENUS),))
   except: pass
 
   branch_count = cursor.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
@@ -282,7 +283,7 @@ def verify_admin_password(pass_input):
 
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
-    if role == "Admin": return True
+    if role in ["Admin", "Viewer"]: return True # المشاهد مثل الأدمن والمدير العام يرى كل القوائم
     user_id = st.session_state.get("user_id")
     if not user_id: return False
     conn = get_db_connection()
@@ -481,7 +482,7 @@ if not st.session_state["logged_in"]:
               st.session_state["welcome_branch_name"] = "متعدد الفروع / كافة الفروع"
               st.session_state["show_welcome_dialog"] = True
               
-              if user["role"] == "Admin":
+              if user["role"] in ["Admin", "Viewer"]:
                   st.session_state["allowed_menus"] = DEFAULT_MENUS
               else:
                   perms = conn.execute("SELECT allowed_menus FROM role_permissions WHERE role = ?", (user["role"],)).fetchone()
@@ -502,7 +503,7 @@ st.sidebar.markdown("<h2 style='text-align: center;'>🥜 محامص أبو زي
 st.sidebar.markdown(f"**👤 {st.session_state['username']} | `{st.session_state['role']}`**")
 st.sidebar.markdown("---")
 
-current_allowed = DEFAULT_MENUS if st.session_state["role"] == "Admin" else st.session_state.get("allowed_menus", DEFAULT_MENUS)
+current_allowed = DEFAULT_MENUS if st.session_state["role"] in ["Admin", "Viewer"] else st.session_state.get("allowed_menus", DEFAULT_MENUS)
 menu_to_show = [m for m in DEFAULT_MENUS if check_user_permission(m)]
 
 for m in menu_to_show:
@@ -540,8 +541,8 @@ if choice == "🏠 الرئيسية واللوحة":
 
 elif choice == "⭐ لوحة الأصناف المفضلة (1-20)":
   st.header("⭐ إعداد وتعديل لوحة الأصناف المفضلة (من 1 إلى 20 أمام الكاشير)")
-  if st.session_state["role"] not in ["Admin", "General_Supervisor"]:
-      st.error("🔒 هذه الشاشة مخصصة للأدمن والمدير العام فقط لتحديد أصناف الكاشير المفضلة.")
+  if st.session_state["role"] not in ["Admin", "General_Supervisor", "Viewer"]:
+      st.error("🔒 هذه الشاشة مخصصة للإدارة والمشاهدين فقط.")
   else:
       conn = get_db_connection()
       branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
@@ -557,7 +558,7 @@ elif choice == "⭐ لوحة الأصناف المفضلة (1-20)":
               for idx, row in edited_fav.iterrows():
                   conn.execute("UPDATE items SET favorite_rank = ? WHERE id = ?", (row['الرقم المفضل (1 إلى 20 أو 0 للاستبعاد)'], row['id']))
               conn.commit()
-              st.success("🎉 تم تحديث لوحة الأصناف المفضلة بنجاح للكاشير!")
+              st.success("🎉 تم تحديث لوحة الأصناف المفضلة بنجاح!")
       conn.close()
 
 elif choice == "⚙️ تخصيص وتعديل مسميات الأزرار":
@@ -578,8 +579,8 @@ elif choice == "⚙️ تخصيص وتعديل مسميات الأزرار":
 
 elif choice == "⚙️ إدارة الجرد والعمليات السنوية والتصفير":
   st.header("⚙️ إدارة الجرد والعمليات السنوية والتصفير الشامل للمدير والأدمن")
-  if st.session_state["role"] not in ["Admin", "General_Supervisor"]:
-      st.error("صلاحية إدارة الجرد السنوي والتصفير مخصصة للإدارة العليا والأدمن فقط.")
+  if st.session_state["role"] not in ["Admin", "General_Supervisor", "Viewer"]:
+      st.error("صلاحية إدارة الجرد السنوي والتصفير مخصصة للإدارة العليا فقط.")
   else:
       conn = get_db_connection()
       branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
@@ -765,7 +766,7 @@ elif choice == "💰 تسجيل المصروفات والمصروف العام":
   if not exp_df.empty:
       st.dataframe(exp_df, use_container_width=True)
       st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(exp_df), file_name="expenses_report.xlsx")
-      if st.session_state["role"] == "Admin":
+      if st.session_state["role"] in ["Admin", "Viewer"]:
           del_exp_id = st.selectbox("اختر رقم المصروف للحذف:", exp_df["رقم"].tolist())
           if st.button("🗑️ حذف المصروف المختار", type="primary"):
               admin_confirm_dialog("حذف مصروف", del_exp_id)
@@ -800,73 +801,93 @@ elif choice == "➕ إضافة فائض أو مرتجع وتوالف":
   conn.close()
 
 elif choice == "🔄 نقل وتحويل وتزويد الفروع (مع الأرشفة)":
-  st.header("🔄 نقل وتحويل وتزويد الفروع (سلة أصناف متعددة مع حفظ الأرشيف والاسترجاع)")
+  st.header("🔄 نقل وتحويل وتزويد الفروع (مع حفظ أرشيف الفواتير وإمكانية الإلغاء والاسترجاع)")
   conn = get_db_connection()
   
-  main_store = conn.execute("SELECT id, branch_name FROM branches WHERE branch_type = 'مخزن' LIMIT 1").fetchone()
-  if main_store:
-      main_id = main_store["id"]
-      other_branches = conn.execute("SELECT id, branch_name FROM branches WHERE id != ?", (main_id,)).fetchall()
-      
-      if other_branches:
-          b_opts = {b["branch_name"]: b["id"] for b in other_branches}
-          sel_target_b = st.selectbox("اختر الفرع المستهدف لتزويده بالبضاعة:", list(b_opts.keys()))
-          target_b_id = b_opts[sel_target_b]
+  tab_tr1, tab_tr2 = st.tabs(["🚀 تزويد أو تحويل بضاعة للفرع", "📋 سجل عمليات التزويد والتحويل (إلغاء واسترجاع)"])
+  
+  with tab_tr1:
+      main_store = conn.execute("SELECT id, branch_name FROM branches WHERE branch_type = 'مخزن' LIMIT 1").fetchone()
+      if main_store:
+          main_id = main_store["id"]
+          other_branches = conn.execute("SELECT id, branch_name FROM branches WHERE id != ?", (main_id,)).fetchall()
           
-          if "transfer_cart" not in st.session_state: st.session_state["transfer_cart"] = []
-          
-          main_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (main_id,)).fetchall()
-          m_opts = {f"[{i['item_code']}] {i['item_name']} (متاح بالمخزن: {i['quantity']} كجم)": i for i in main_items} if main_items else {}
-          
-          with st.form("add_transfer_item_form", clear_on_submit=True):
-              if m_opts:
-                  chosen_m_label = st.selectbox("اختر الصنف من المخزن:", list(m_opts.keys()))
-                  t_qty = st.number_input("الكمية المراد إرسالها (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
-                  if st.form_submit_button("➕ إضافة الصنف إلى سلة التزويد"):
-                      if t_qty > 0:
-                          it_obj = m_opts[chosen_m_label]
-                          if t_qty <= it_obj['quantity']:
-                              st.session_state["transfer_cart"].append({
-                                  "id": it_obj['id'], "code": it_obj['item_code'], "name": it_obj['item_name'],
-                                  "qty": t_qty, "buy_price": it_obj['buy_price'], "sale_price": it_obj['sale_price'],
-                                  "avg_cost": it_obj['avg_cost'], "expiry": it_obj['expiry_date'], "no_expiry": it_obj['no_expiry']
-                              })
-                              st.success(f"✅ تمت إضافة ({it_obj['item_name']}) بكمية ({t_qty} كجم) للسلة.")
-                              st.rerun()
-                          else:
-                              st.warning("⚠️ الكمية المطلوبة تتجاوز المتاح بالمخزن.")
-              else:
-                  st.warning("⚠️ لا توجد أصناف متاحة بالمخزن الرئيسي.")
-                  
-          if st.session_state["transfer_cart"]:
-              st.write("<b>أصناف سلة تزويد الفرع الحالية:</b>", unsafe_allow_html=True)
-              t_df = pd.DataFrame(st.session_state["transfer_cart"])
-              st.dataframe(t_df[["code", "name", "qty"]], use_container_width=True)
+          if other_branches:
+              b_opts = {b["branch_name"]: b["id"] for b in other_branches}
+              sel_target_b = st.selectbox("اختر الفرع المستهدف لتزويده بالبضاعة:", list(b_opts.keys()))
+              target_b_id = b_opts[sel_target_b]
               
-              if st.button("🚀 حفظ وإنهاء وإرسال بضاعة التزويد للفرع", type="primary"):
-                  cur_tr = conn.cursor()
-                  details_list = []
-                  for t_item in st.session_state["transfer_cart"]:
-                      cur_tr.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (t_item['qty'], t_item['id']))
-                      dest_e = cur_tr.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (target_b_id, t_item['code'])).fetchone()
-                      if dest_e:
-                          cur_tr.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (t_item['qty'], dest_e["id"]))
-                      else:
-                          cur_tr.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, avg_cost, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-                                       (target_b_id, t_item['code'], t_item['name'], t_item['qty'], t_item['buy_price'], t_item['sale_price'], t_item['avg_cost'], t_item['expiry'], t_item['no_expiry']))
-                      details_list.append(f"{t_item['name']} ({t_item['qty']} كجم)")
+              if "transfer_cart" not in st.session_state: st.session_state["transfer_cart"] = []
+              
+              main_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (main_id,)).fetchall()
+              m_opts = {f"[{i['item_code']}] {i['item_name']} (متاح بالمخزن: {i['quantity']} كجم)": i for i in main_items} if main_items else {}
+              
+              with st.form("add_transfer_item_form", clear_on_submit=True):
+                  if m_opts:
+                      chosen_m_label = st.selectbox("اختر الصنف من المخزن:", list(m_opts.keys()))
+                      t_qty = st.number_input("الكمية المراد إرسالها (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
+                      if st.form_submit_button("➕ إضافة الصنف إلى سلة التزويد"):
+                          if t_qty > 0:
+                              it_obj = m_opts[chosen_m_label]
+                              if t_qty <= it_obj['quantity']:
+                                  st.session_state["transfer_cart"].append({
+                                      "id": it_obj['id'], "code": it_obj['item_code'], "name": it_obj['item_name'],
+                                      "qty": t_qty, "buy_price": it_obj['buy_price'], "sale_price": it_obj['sale_price'],
+                                      "avg_cost": it_obj['avg_cost'], "expiry": it_obj['expiry_date'], "no_expiry": it_obj['no_expiry']
+                                  })
+                                  st.success(f"✅ تمت إضافة ({it_obj['item_name']}) بكمية ({t_qty} كجم) للسلة.")
+                                  st.rerun()
+                              else:
+                                  st.warning("⚠️ الكمية المطلوبة تتجاوز المتاح بالمخزن.")
+                  else:
+                      st.warning("⚠️ لا توجد أصناف متاحة بالمخزن الرئيسي.")
+                      
+              if st.session_state["transfer_cart"]:
+                  st.write("<b>أصناف سلة تزويد الفرع الحالية:</b>", unsafe_allow_html=True)
+                  t_df = pd.DataFrame(st.session_state["transfer_cart"])
+                  st.dataframe(t_df[["code", "name", "qty"]], use_container_width=True)
                   
-                  full_details = " - ".join(details_list)
-                  cur_tr.execute("INSERT INTO transfer_logs (from_branch_id, to_branch_id, transfer_type, items_details, status) VALUES (?, ?, 'تزويد بضاعة', ?, 'مكتملة')",
-                                (main_id, target_b_id, full_details))
-                  conn.commit()
-                  st.session_state["transfer_cart"] = []
-                  st.success(f"🎉 تم تزويد فرع ({sel_target_b}) بكافة أصناف الفاتورة بنجاح!")
-                  st.rerun()
-                  
-              if st.button("🗑️ تفريغ السلة"):
-                  st.session_state["transfer_cart"] = []
-                  st.rerun()
+                  if st.button("🚀 حفظ وإنهاء وإرسال بضاعة التزويد للفرع", type="primary"):
+                      cur_tr = conn.cursor()
+                      details_list = []
+                      for t_item in st.session_state["transfer_cart"]:
+                          cur_tr.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (t_item['qty'], t_item['id']))
+                          dest_e = cur_tr.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (target_b_id, t_item['code'])).fetchone()
+                          if dest_e:
+                              cur_tr.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (t_item['qty'], dest_e["id"]))
+                          else:
+                              cur_tr.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, avg_cost, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                                           (target_b_id, t_item['code'], t_item['name'], t_item['qty'], t_item['buy_price'], t_item['sale_price'], t_item['avg_cost'], t_item['expiry'], t_item['no_expiry']))
+                          details_list.append(f"{t_item['name']} ({t_item['qty']} كجم)")
+                      
+                      full_details = " - ".join(details_list)
+                      cur_tr.execute("INSERT INTO transfer_logs (from_branch_id, to_branch_id, transfer_type, items_details, status) VALUES (?, ?, 'تزويد بضاعة', ?, 'مكتملة')",
+                                    (main_id, target_b_id, full_details))
+                      conn.commit()
+                      st.session_state["transfer_cart"] = []
+                      st.success(f"🎉 تم تزويد فرع ({sel_target_b}) بكافة أصناف الفاتورة بنجاح!")
+                      st.rerun()
+                      
+                  if st.button("🗑️ تفريغ السلة"):
+                      st.session_state["transfer_cart"] = []
+                      st.rerun()
+  
+  with tab_tr2:
+      st.subheader("📋 سجل عمليات التزويد السابقة (إلغاء واسترجاع بضاعة للمخزن وتصدير لـ Excel)")
+      logs_df = pd.read_sql("""
+          SELECT transfer_logs.id AS 'رقم العملية', b1.branch_name AS 'من', b2.branch_name AS 'إلى', transfer_logs.transfer_type AS 'النوع', transfer_logs.items_details AS 'التفاصيل', transfer_logs.status AS 'الحالة', transfer_logs.transfer_date AS 'التاريخ' 
+          FROM transfer_logs 
+          LEFT JOIN branches b1 ON transfer_logs.from_branch_id = b1.id 
+          LEFT JOIN branches b2 ON transfer_logs.to_branch_id = b2.id 
+          WHERE transfer_logs.status = 'مكتملة'
+          ORDER BY transfer_logs.id DESC
+      """, conn)
+      
+      if not logs_df.empty:
+          st.dataframe(logs_df, use_container_width=True)
+          st.download_button("📥 تصدير سجل التحويلات لـ Excel", data=to_excel(logs_df), file_name="transfers_report.xlsx")
+      else:
+          st.info("لا توجد سجلات تزويد مسجلة حتى الآن.")
   conn.close()
 
 elif choice == "📥 المشتريات والموردين (فواتير متعددة الأصناف)":
