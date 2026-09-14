@@ -593,8 +593,8 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
       conn.close()
 
 elif choice == "📁 استيراد وتحديث الأصناف من Excel":
-  st.header("📁 استيراد وتحديث الأصناف عبر ملف Excel (مرن لأي عدد أعمدة، بدون دبلرة)")
-  st.info("💡 ملاحظة هامة: النظام يقرأ الأعمدة الأساسية أياً كان عددها في الملف، ويبحث عن كود الصنف لتحديث المتغيرات فقط بدون أي تضاعف.")
+  st.header("📁 استيراد وتحديث الأصناف عبر ملف Excel (دعم الملفات بالعناوين أو بدونها)")
+  st.info("💡 ملاحظة هامة: النظام يقرأ ملف الإكسيل بمرونة تامة، ويتجاوز سطر العناوين لو وجد، ويحدث المتغيرات بدون أي دبلرة.")
   
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
@@ -618,9 +618,13 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                   
                   for idx, row in df_exc.iterrows():
                       if row.isna().all(): continue
-                      # استخراج القيم بأمان بغض النظر عن عدد الأعمدة في السطر
                       row_list = list(row.dropna().values)
                       if len(row_list) < 2: continue
+                      
+                      # التحقق هل السطر الأول هو عناوين (Headers) وتجاوزه
+                      first_val = str(row_list[0]).strip().lower()
+                      if first_val in ["code", "كود", "item_code", "رقم"] or 'كود' in first_val:
+                          continue
                       
                       name = str(row_list[1]).strip() if len(row_list)>1 else "صنف"
                       if name.lower() in ["nan", "null", "item"] or name in ["الصنف", "اسم الصنف", "صنف"]: continue
