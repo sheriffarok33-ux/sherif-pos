@@ -62,10 +62,10 @@ DEFAULT_MENUS = [
     "🏢 إدارة وتغيير أسماء الفروع والحذف",
     "📁 استيراد وتحديث الأصناف من Excel",
     "💰 تسجيل المصروفات والمصروف العام",
-    "📥 المشتريات والموردين (متوسط التكلفة)",
+    "📥 المشتريات والموردين (فواتير يدوية ومتعددة)",
     "⚙️ إدارة الجرد والعمليات السنوية والتصفير",
     "🥜 التحميص والخلط والمكسرات المشكلة (متعدد الأصناف)",
-    "📊 مركز التقارير والإدارة الشاملة (التقارير والحذف والإضافة)",
+    "📊 مركز التقارير والإدارة الشاملة (مع التصدير وحركة الفروع)",
     "👥 إدارة المستخدمين وصلاحياتهم الفردية",
     "⚙️ تخصيص وتعديل مسميات الأزرار"
 ]
@@ -145,6 +145,7 @@ def initialize_database():
           branch_id INTEGER,
           supplier_id INTEGER,
           supplier_name TEXT,
+          invoice_number TEXT,
           total_cost REAL,
           payment_type TEXT DEFAULT 'كاش',
           items_details TEXT,
@@ -152,6 +153,9 @@ def initialize_database():
           FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
       )
   """)
+  
+  try: cursor.execute("ALTER TABLE purchases ADD COLUMN invoice_number TEXT")
+  except: pass
 
   cursor.execute("""
       CREATE TABLE IF NOT EXISTS transfer_logs (
@@ -234,11 +238,11 @@ def initialize_database():
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
   except: pass
-  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Branch_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة الأصناف المفضلة (1-20),📦 إدارة المخزن والفروع وتعديل الأسعار,📥 المشتريات والموردين (متوسط التكلفة),📊 مركز التقارير والإدارة الشاملة (التقارير والحذف والإضافة)')")
+  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Branch_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة الأصناف المفضلة (1-20),📦 إدارة المخزن والفروع وتعديل الأسعار,📥 المشتريات والموردين (فواتير يدوية ومتعددة),📊 مركز التقارير والإدارة الشاملة (مع التصدير وحركة الفروع)')")
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة الأصناف المفضلة (1-20)')")
   except: pass
-  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Viewer', '🏠 الرئيسية واللوحة,📊 مركز التقارير والإدارة الشاملة (التقارير والحذف والإضافة)')")
+  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Viewer', '🏠 الرئيسية واللوحة,📊 مركز التقارير والإدارة الشاملة (مع التصدير وحركة الفروع)')")
   except: pass
 
   branch_count = cursor.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
@@ -516,7 +520,7 @@ dashboard_cards = {
     "📦 إدارة المخزن والفروع وتعديل الأسعار": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإدارة وتعديل أسعار الفروع"},
     "➕ إضافة فائض أو مرتجع وتوالف": {"icon": "➕", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "إضافة فائض أو مرتجع وتوالف للأصناف"},
     "🔄 نقل وتحويل وتزويد الفروع (مع الأرشفة)": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تزويد الفروع والتحويلات مع سجل الفواتير وإلغائها"},
-    "📊 مركز التقارير والإدارة الشاملة (التقارير والحذف والإضافة)": {"icon": "📊", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "المركّز الموحد للتقارير والأرباح والحذف والإدارة"}
+    "📊 مركز التقارير والإدارة الشاملة (مع التصدير وحركة الفروع)": {"icon": "📊", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "المركّز الموحد للتقارير والأرباح والتصدير لـ Excel"}
 }
 
 # --- محتوى الصفحات ---
@@ -727,7 +731,7 @@ elif choice == "🏢 إدارة وتغيير أسماء الفروع والحذ�
   conn.close()
 
 elif choice == "💰 تسجيل المصروفات والمصروف العام":
-  st.header("💰 تسجيل المصروفات وتوزيعها على الفروع (مع تحديد التاريخ المخصص)")
+  st.header("💰 تسجيل المصروفات وتوزيعها على الفروع (مع تحديد التاريخ المخصص والتصدير)")
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
@@ -758,11 +762,11 @@ elif choice == "💰 تسجيل المصروفات والمصروف العام":
   exp_df = pd.read_sql("SELECT expenses.id AS 'رقم', IFNULL(branches.branch_name, '🌍 مصروف عام (موزع)') AS 'الجهة / الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'تاريخ المصروف' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
   if not exp_df.empty:
       st.dataframe(exp_df, use_container_width=True)
+      st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(exp_df), file_name="expenses_report.xlsx")
       if st.session_state["role"] == "Admin":
           del_exp_id = st.selectbox("اختر رقم المصروف للحذف:", exp_df["رقم"].tolist())
           if st.button("🗑️ حذف المصروف المختار", type="primary"):
               admin_confirm_dialog("حذف مصروف", del_exp_id)
-      st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(exp_df), file_name="expenses_report.xlsx")
   conn.close()
 
 elif choice == "➕ إضافة فائض أو مرتجع وتوالف":
@@ -839,7 +843,7 @@ elif choice == "🔄 نقل وتحويل وتزويد الفروع (مع الأ�
                               st.warning("⚠️ الكمية المطلوبة غير متوفرة بالمخزن.")
   
   with tab_tr2:
-      st.subheader("📋 سجل عمليات التزويد السابقة (إلغاء واسترجاع بضاعة للمخزن)")
+      st.subheader("📋 سجل عمليات التزويد السابقة (إلغاء واسترجاع بضاعة للمخزن وتصدير لـ Excel)")
       logs_df = pd.read_sql("""
           SELECT transfer_logs.id AS 'رقم العملية', b1.branch_name AS 'من', b2.branch_name AS 'إلى', transfer_logs.transfer_type AS 'النوع', transfer_logs.items_details AS 'التفاصيل', transfer_logs.status AS 'الحالة', transfer_logs.transfer_date AS 'التاريخ' 
           FROM transfer_logs 
@@ -851,18 +855,16 @@ elif choice == "🔄 نقل وتحويل وتزويد الفروع (مع الأ�
       
       if not logs_df.empty:
           st.dataframe(logs_df, use_container_width=True)
-          cancel_log_id = st.selectbox("اختر رقم العملية المراد إلغاؤها واسترجاع الكميات للمخزن:", logs_df['رقم العملية'].tolist())
-          if st.button("🚨 إلغاء هذه الفاتورة واسترجاع البضاعة للمخزن", type="primary"):
-              st.info("💡 تم تسجيل طلب الإلغاء بنجاح.")
+          st.download_button("📥 تصدير سجل التحويلات لـ Excel", data=to_excel(logs_df), file_name="transfers_report.xlsx")
       else:
           st.info("لا توجد سجلات تزويد مسجلة حتى الآن.")
   conn.close()
 
-elif choice == "📥 المشتريات والموردين (متوسط التكلفة)":
-  st.header("📥 المشتريات متعددة الأصناف وحسابات الموردين (حساب متوسط التكلفة)")
+elif choice == "📥 المشتريات والموردين (فواتير يدوية ومتعددة)":
+  st.header("📥 تسجيل فواتير المشتريات (برقم فاتورة يدوي ومتعددة الأصناف وحسابات الموردين)")
   conn = get_db_connection()
   
-  tab_p1, tab_p2, tab_p3 = st.tabs(["➕ تسجيل فاتورة مشتريات متعددة الأصناف", "👥 إدارة الموردين وكشف الحسابات", "📋 سجل فواتير المشتريات"])
+  tab_p1, tab_p2, tab_p3 = st.tabs(["➕ تسجيل فاتورة مشتريات برقم يدوي", "👥 إدارة الموردين وديونهم (مع التصدير)", "📋 سجل فواتير المشتريات"])
   
   with tab_p1:
       branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
@@ -873,6 +875,7 @@ elif choice == "📥 المشتريات والموردين (متوسط التك�
       with st.form("multi_purchase_form", clear_on_submit=True):
           p_branch_name = st.selectbox("الفرع أو المخزن المستلم للبضاعة:", list(b_dict.keys()))
           p_supp_name = st.selectbox("اختر المورد:", list(s_dict.keys()) if s_dict else ["لا توجد موردين مسجلين"])
+          inv_num_in = st.text_input("رقم فاتورة المورد (يدوي):", value="")
           p_type = st.radio("طريقة الشراء:", ["كاش (نقدي)", "آجل (على حساب المورد)"])
           p_date = st.date_input("تاريخ الفاتورة:", value=datetime.now())
           
@@ -886,7 +889,7 @@ elif choice == "📥 المشتريات والموردين (متوسط التك�
               purch_price = st.number_input("سعر شراء الكيلو من المورد (د.ل):", min_value=0.0, value=0.0, step=0.5, format="%.2f")
               
               if st.form_submit_button("💾 اعتماد وحفظ الفاتورة وحساب متوسط التكلفة"):
-                  if p_supp_name != "لا توجد موردين مسجلين" and purch_qty > 0:
+                  if p_supp_name != "لا توجد موردين مسجلين" and purch_qty > 0 and inv_num_in:
                       chosen_it = item_opts[chosen_item_key]
                       total_bill_cost = purch_qty * purch_price
                       supp_id = s_dict[p_supp_name]
@@ -901,20 +904,22 @@ elif choice == "📥 المشتريات والموردين (متوسط التك�
                       cur_p.execute("UPDATE items SET quantity = quantity + ?, buy_price = ?, avg_cost = ? WHERE item_code = ?", 
                                     (purch_qty, purch_price, new_avg_cost, chosen_it['item_code']))
                       
-                      details = f"صنف: {chosen_it['item_name']} - كمية: {purch_qty} بسعر {purch_price}"
-                      cur_p.execute("INSERT INTO purchases (branch_id, supplier_id, supplier_name, total_cost, payment_type, items_details, invoice_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                    (b_dict[p_branch_name], supp_id, p_supp_name, total_bill_cost, p_type, details, p_date.strftime('%Y-%m-%d')))
+                      details = f"فاتورة رقم ({inv_num_in}) - صنف: {chosen_it['item_name']} - كمية: {purch_qty} كجم بسعر {purch_price}"
+                      cur_p.execute("INSERT INTO purchases (branch_id, supplier_id, supplier_name, invoice_number, total_cost, payment_type, items_details, invoice_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                    (b_dict[p_branch_name], supp_id, p_supp_name, inv_num_in.strip(), total_bill_cost, p_type, details, p_date.strftime('%Y-%m-%d')))
                       
                       if p_type.startswith("آجل"):
                           cur_p.execute("UPDATE suppliers SET balance = balance + ? WHERE id = ?", (total_bill_cost, supp_id))
                       
                       conn.commit()
-                      st.success(f"🎉 تم تسجيل الفاتورة بنجاح! متوسط التكلفة الجديد للصنف = {new_avg_cost:,.2f} د.ل")
+                      st.success(f"🎉 تم تسجيل الفاتورة رقم (#{inv_num_in}) بنجاح! متوسط التكلفة الجديد = {new_avg_cost:,.2f} د.ل")
+                  else:
+                      st.warning("⚠️ يرجى التأكد من إدخال رقم الفاتورة والكمية والمورد.")
           else:
               st.warning("⚠️ يرجى تحميل الأصناف في الفرع أولاً.")
   
   with tab_p2:
-      st.subheader("👥 إضافة مورد جديد ومتابعة المستحقات المالية")
+      st.subheader("👥 إدارة الموردين ومتابعة الديون والمستحقات المالية")
       with st.form("new_supplier_form", clear_on_submit=True):
           s_name = st.text_input("اسم المورد التجاري:")
           s_phone = st.text_input("رقم الهاتف:")
@@ -927,17 +932,19 @@ elif choice == "📥 المشتريات والموردين (متوسط التك�
               except:
                   st.error("⚠️ المورد موجود مسبقاً.")
                   
-      supp_df = pd.read_sql("SELECT id, supplier_name AS 'اسم المورد', phone AS 'الهاتف', balance AS 'المستحقات المالية (د.ل)' FROM suppliers", conn)
+      supp_df = pd.read_sql("SELECT id, supplier_name AS 'اسم المورد', phone AS 'الهاتف', balance AS 'إجمالي الديون والمستحقات (د.ل)' FROM suppliers", conn)
       if not supp_df.empty:
           st.dataframe(supp_df, use_container_width=True)
-          st.download_button("📥 تصدير كشف حسابات الموردين لـ Excel", data=to_excel(supp_df), file_name="suppliers_report.xlsx")
+          st.download_button("📥 تصدير تقرير ديون الموردين لـ Excel", data=to_excel(supp_df), file_name="suppliers_debts.xlsx")
+      else:
+          st.info("لا توجد موردين مسجلين بعد.")
           
   with tab_p3:
       try:
-          p_df = pd.read_sql("SELECT purchases.id AS 'رقم الفاتورة', branches.branch_name AS 'الفرع', purchases.supplier_name AS 'المورد', purchases.total_cost AS 'إجمالي التكلفة', purchases.payment_type AS 'طريقة الدفع', purchases.items_details AS 'التفاصيل', purchases.invoice_date AS 'التاريخ' FROM purchases LEFT JOIN branches ON purchases.branch_id = branches.id ORDER BY purchases.id DESC", conn)
+          p_df = pd.read_sql("SELECT purchases.id AS 'مسلسل', purchases.invoice_number AS 'رقم الفاتورة', branches.branch_name AS 'الفرع', purchases.supplier_name AS 'المورد', purchases.total_cost AS 'إجمالي التكلفة', purchases.payment_type AS 'طريقة الدفع', purchases.items_details AS 'التفاصيل', purchases.invoice_date AS 'التاريخ' FROM purchases LEFT JOIN branches ON purchases.branch_id = branches.id ORDER BY purchases.id DESC", conn)
           if not p_df.empty:
               st.dataframe(p_df, use_container_width=True)
-              st.download_button("📥 تصدير فواتير المشتريات لـ Excel", data=to_excel(p_df), file_name="purchases_report.xlsx")
+              st.download_button("📥 تصدير سجل فواتير المشتريات لـ Excel", data=to_excel(p_df), file_name="purchases_invoices.xlsx")
       except:
           st.info("لا توجد فواتير مشتريات مسجلة حتى الآن.")
   conn.close()
@@ -958,7 +965,7 @@ elif choice == "🥜 التحميص والخلط والمكسرات المشكل
       
       with st.form("add_mix_component_form", clear_on_submit=True):
           sel_comp = st.selectbox("اختر صنفاً خاماً للخلطة:", list(item_choices.keys()))
-          comp_qty = st.number_input("الوزن / الكمية المستخدمة (كجم أو جرامات بالكسور):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
+          comp_qty = st.number_input("الوزن / الكمية المستخدمة (كجم بالكسور):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
           if st.form_submit_button("➕ إضافة هذا الصنف للخلطة"):
               if comp_qty > 0:
                   it_obj = item_choices[sel_comp]
@@ -1005,11 +1012,11 @@ elif choice == "🥜 التحميص والخلط والمكسرات المشكل
       st.info("لا توجد خامات متوفرة بالمخزن الرئيسي.")
   conn.close()
 
-elif choice == "📊 مركز التقارير والإدارة الشاملة (التقارير والحذف والإضافة)":
-  st.header("📊 مركز التقارير والإدارة الشاملة (متابعة الأرباح، حركة الأصناف، وحذف/تعديل العمليات)")
+elif choice == "📊 مركز التقارير والإدارة الشاملة (مع التصدير وحركة الفروع)":
+  st.header("📊 مركز التقارير والإدارة الشاملة (متابعة الأرباح، حركة الفروع الأصناف، والتصدير لـ Excel)")
   conn = get_db_connection()
   
-  tab_c1, tab_c2, tab_c3, tab_c4 = st.tabs(["📊 الأرباح والخسائر والتقارير", "📦 تقرير حركة صنف تفصيلي", "📈 مبيعات الفروع بالفترة", "🗑️ إدارة وحذف الفواتير والمصروفات"])
+  tab_c1, tab_c2, tab_c3, tab_c4 = st.tabs(["📊 الأرباح والخسائر والتقارير", "📦 تقرير حركة صنف (مع قائمة الفروع)", "📈 مبيعات الفروع بالفترة", "🗑️ إدارة وحذف الفواتير والمصروفات"])
   
   with tab_c1:
       branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
@@ -1043,24 +1050,33 @@ elif choice == "📊 مركز التقارير والإدارة الشاملة (
           with c4: st.metric("صافي أرباح الفرع", f"{net:,.2f}")
 
   with tab_c2:
-      st.subheader("📦 تقرير حركة صنف (من تاريخ إلى تاريخ)")
+      st.subheader("📦 تقرير حركة صنف في فرع معين أو كافة الفروع")
+      branches_rep = conn.execute("SELECT id, branch_name FROM branches").fetchall()
+      b_dict_rep = {b["branch_name"]: b["id"] for b in branches_rep}
+      sel_branch_mov = st.selectbox("اختر الفرع المراد الاستعلام عن حركته:", ["🌐 كافة الفروع"] + list(b_dict_rep.keys()))
+      
       all_items_code = conn.execute("SELECT DISTINCT item_code, item_name FROM items").fetchall()
       if all_items_code:
           it_dict = {f"[{i['item_code']}] {i['item_name']}": i['item_code'] for i in all_items_code}
-          sel_item_c = st.selectbox("اختر الصنف لمتابعة حركته:", list(it_dict.keys()))
+          sel_item_c = st.selectbox("اختر الصنف:", list(it_dict.keys()))
           
           d_from = st.date_input("من تاريخ:", value=datetime.now() - timedelta(days=30))
           d_to = st.date_input("إلى تاريخ:", value=datetime.now())
           
-          if st.button("📊 عرض تقرير حركة الصنف"):
+          if st.button("📊 عرض تقرير حركة الصنف بالفرع"):
               code_to_search = it_dict[sel_item_c]
-              item_branches = conn.execute("SELECT branches.branch_name, items.quantity, items.sale_price, items.buy_price FROM items LEFT JOIN branches ON items.branch_id = branches.id WHERE items.item_code = ?", (code_to_search,)).fetchall()
-              st.write(f"**تقرير أرصدة صنف ({sel_item_c}) في الفروع:**")
+              if sel_branch_mov == "🌐 كافة الفروع":
+                  item_branches = conn.execute("SELECT branches.branch_name, items.quantity, items.sale_price, items.buy_price FROM items LEFT JOIN branches ON items.branch_id = branches.id WHERE items.item_code = ?", (code_to_search,)).fetchall()
+              else:
+                  b_id_target = b_dict_rep[sel_branch_mov]
+                  item_branches = conn.execute("SELECT branches.branch_name, items.quantity, items.sale_price, items.buy_price FROM items LEFT JOIN branches ON items.branch_id = branches.id WHERE items.item_code = ? AND items.branch_id = ?", (code_to_search, b_id_target)).fetchall()
+              
+              st.write(f"**نتائج الاستعلام عن صنف ({sel_item_c}):**")
               for ib in item_branches:
                   st.write(f"- الفرع: **{ib['branch_name']}** | الكمية المتاحة: **{ib['quantity']} كجم** | سعر البيع: **{ib['sale_price']} د.ل**")
   
   with tab_c3:
-      st.subheader("📈 تقرير مبيعات الفروع بحسب الفترة الزمنية")
+      st.subheader("📈 تقرير مبيعات الفروع بحسب الفترة الزمنية (مع التصدير لـ Excel)")
       d_f2 = st.date_input("من تاريخ المبيعات:", value=datetime.now() - timedelta(days=7), key="df2")
       d_t2 = st.date_input("إلى تاريخ المبيعات:", value=datetime.now(), key="dt2")
       
@@ -1076,7 +1092,7 @@ elif choice == "📊 مركز التقارير والإدارة الشاملة (
           
           if not sales_period_df.empty:
               st.dataframe(sales_period_df, use_container_width=True)
-              st.download_button("📥 تصدير تقرير المبيعات لـ Excel", data=to_excel(sales_period_df), file_name="sales_period.xlsx")
+              st.download_button("📥 تصدير تقرير المبيعات للفترة لـ Excel", data=to_excel(sales_period_df), file_name="sales_period.xlsx")
           else:
               st.info("لا توجد مبيعات مسجلة في هذه الفترة.")
 
@@ -1101,9 +1117,9 @@ elif choice == "📊 مركز التقارير والإدارة الشاملة (
           else:
               st.info("لا توجد مصروفات.")
       else:
-          purch_df_del = pd.read_sql("SELECT id, supplier_name, total_cost, invoice_date FROM purchases ORDER BY id DESC LIMIT 50", conn)
+          purch_df_del = pd.read_sql("SELECT id, invoice_number, supplier_name, total_cost, invoice_date FROM purchases ORDER BY id DESC LIMIT 50", conn)
           if not purch_df_del.empty:
-              purch_id_del = st.selectbox("اختر رقم فاتورة المشتريات للحذف:", purch_df_del['id'].tolist())
+              purch_id_del = st.selectbox("اختر رقم مسلسل فاتورة المشتريات للحذف:", purch_df_del['id'].tolist(), format_func=lambda x: f"مسلسل: {x} (فاتورة رقم: {purch_df_del[purch_df_del['id']==x]['invoice_number'].values[0]})")
               if st.button("🗑️ حذف فاتورة المشتريات المحددة", type="primary"):
                   admin_confirm_dialog("حذف مشتريات", purch_id_del)
           else:
@@ -1111,7 +1127,7 @@ elif choice == "📊 مركز التقارير والإدارة الشاملة (
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين وصلاحياتهم الفردية":
-  st.header("👥 إدارة المستخدمين والصلاحيات الفردية (إعطاء صلاحيات فرعية للموظفين)")
+  st.header("👥 إدارة المستخدمين وصلاحياتهم الفردية (إعطاء صلاحيات فرعية للموظفين)")
   conn = get_db_connection()
   
   tab_u1, tab_u2 = st.tabs(["👥 حسابات المستخدمين", "🛡️ إعطاء صلاحيات فردية للموظف"])
@@ -1147,6 +1163,7 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم الف
       users_df = pd.read_sql("SELECT users.id, users.username AS 'اسم المستخدم', users.phone AS 'الهاتف', users.role AS 'الرتبة', users.allowed_branches AS 'الفروع المسموحة' FROM users", conn)
       if not users_df.empty:
           st.dataframe(users_df, use_container_width=True)
+          st.download_button("📥 تصدير قائمة المستخدمين لـ Excel", data=to_excel(users_df), file_name="users_report.xlsx")
           if st.session_state["role"] == "Admin":
               del_user_id = st.selectbox("اختر مستخدم للحذف النهائي:", users_df["id"].tolist(), format_func=lambda x: users_df[users_df["id"]==x]["اسم المستخدم"].values[0])
               if st.button("🗑️ حذف المستخدم (نافذة تأكيد للأدمن)", type="primary"):
