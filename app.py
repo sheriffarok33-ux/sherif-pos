@@ -115,7 +115,6 @@ def initialize_database():
       )
   """)
 
-  # إضافة الأعمدة الجديدة تلقائياً لو جدول items قديم
   try: cursor.execute("ALTER TABLE items ADD COLUMN item_group TEXT DEFAULT 'عام'")
   except: pass
   try: cursor.execute("ALTER TABLE items ADD COLUMN expiry_date TEXT DEFAULT ''")
@@ -450,11 +449,11 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
           target_scope = st.selectbox("تحديد النطاق:", ["🌐 كل الفروع والمخازن (الكل)", "🏢 فرع أو مخزن معروض محدد"] + list(b_dict.keys()))
           
           st.markdown("---")
-          st.subheader("🗑️ اختر العمليات المراد تصفيرها:")
+          st.subheader("🗑️ اختر العمليات المتحركة المراد تصفيرها:")
           opt_sales = st.checkbox("تصفير المبيعات والفواتير (إعادة تعيين أرقام الفواتير إلى INV-0001)")
-          opt_purch = st.checkbox("تصفير سجلات ومشتريات الموردين")
-          opt_stock = st.checkbox("تصفير كميات مخزون الأصناف بالكامل (جرد سنوي يبدأ من الصفر)")
-          opt_prices = st.checkbox("إعادة ضبط أسعار البيع والشراء")
+          opt_purch = st.checkbox("تصفير سجلات ومشتريات الموردين (مع الاحتفاظ بأسماء وبيانات المورد الأساسية)")
+          opt_stock = st.checkbox("تصفير كميات مخزون الأصناف بالكامل (جرد سنوي يبدأ من الصفر مع الاحتفاظ بأسماء الأصناف)")
+          opt_prices = st.checkbox("إعادة ضبط أسعار البيع والشراء إلى الصفر")
           
           admin_pass_inv = st.text_input("🔒 كلمة سر الأدمن لتأكيد عملية التصفير السنوي:", type="password")
           
