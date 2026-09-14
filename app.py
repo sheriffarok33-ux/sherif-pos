@@ -105,7 +105,6 @@ def initialize_database():
       CREATE TABLE IF NOT EXISTS items (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           branch_id INTEGER,
-          item_group TEXT DEFAULT 'عام',
           item_code TEXT,
           item_name TEXT NOT NULL,
           quantity REAL DEFAULT 0.0,
@@ -118,8 +117,6 @@ def initialize_database():
       )
   """)
 
-  try: cursor.execute("ALTER TABLE items ADD COLUMN item_group TEXT DEFAULT 'عام'")
-  except: pass
   try: cursor.execute("ALTER TABLE items ADD COLUMN expiry_date TEXT DEFAULT ''")
   except: pass
   try: cursor.execute("ALTER TABLE items ADD COLUMN no_expiry INTEGER DEFAULT 0")
@@ -283,6 +280,12 @@ if "barcode_scan" not in st.session_state: st.session_state["barcode_scan"] = ""
 
 def set_page(page_name): st.session_state["page"] = page_name
 
+@st.dialog("🔔 تنبيه وإخطار النظام")
+def alert_ok_dialog(message):
+    st.write(message)
+    if st.button("OK (موافق)", use_container_width=True, type="primary"):
+        st.rerun()
+
 @st.dialog("🔒 تأكيد كلمة سر الأدمن المطلوبة")
 def admin_confirm_dialog(action_type, target_id, target_name=""):
     st.warning(f"⚠️ تحذير أمني: أنت على وشك تنفيذ عملية ({action_type}). يرجى إدخال كلمة سر الأدمن للمتابعة:")
@@ -314,7 +317,7 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
             conn.commit()
             conn.close()
             log_action(st.session_state["user_id"], f"تنفيذ آمن ({action_type})", f"تم تنفيذ العملية بنجاح")
-            st.success(f"🗑️ تمت عملية ({action_type}) بنجاح! اضغط في أي مكان لتحديث الشاشة.")
+            st.success(f"🗑️ تمت عملية ({action_type}) بنجاح!")
             if st.button("OK (موافق)"):
                 st.rerun()
         else:
@@ -570,16 +573,15 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
       conn.close()
 
 elif choice == "📁 استيراد وتحديث الأصناف من Excel":
-  st.header("📁 استيراد وتحديث الأصناف عبر ملف Excel (تحديث المتغيرات وعدم الدبلرة)")
-  st.info("💡 ملاحظة هامة: النظام يبحث عن كود الصنف، وإذا وجده يقوم بـ **تحديث المتغيرات فقط** (الاسم، السعر، الكمية، الصلاحية) بدون أي دبلرة أو تضاعف!")
+  st.header("📁 استيراد وتحديث الأصناف عبر ملف Excel (بدون مجموعات، تحديث متغيرات، وعدم دبلرة)")
+  st.info("💡 ملاحظة هامة: تم إلغاء فكرة المجموعات. النظام يبحث عن كود الصنف ويقوم بتحديث المتغيرات فقط بدون أي تضاعف أو دبلرة.")
   
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
   with st.form("excel_import_seq_form"):
-      item_group_in = st.selectbox("1️⃣ اختر المجموعة:", ["مكسرات", "بهارات", "حلويات", "قهوة", "عام"])
-      sel_target_branch = st.selectbox("2️⃣ اختر الفرع أو المخزن المستهدف (أو تعميم للكل):", ["🌐 تعميم على كافة الفروع والمخازن دفعة واحدة"] + list(b_dict.keys()))
+      sel_target_branch = st.selectbox("اختر الفرع أو المخزن المستهدف (أو تعميم للكل):", ["🌐 تعميم على كافة الفروع والمخازن دفعة واحدة"] + list(b_dict.keys()))
       
       no_expiry_flag = st.checkbox("منتج لا تنتهي صلاحيته مستمرة أو متحركة (بدون تاريخ انتهاء)")
       expiry_date_in = st.text_input("تاريخ الصلاحية (YYYY-MM-DD) - إن وجد:")
@@ -611,11 +613,11 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                       for tid in target_ids:
                           exist_item = cur_ex.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (tid, code)).fetchone()
                           if exist_item:
-                              cur_ex.execute("UPDATE items SET item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, expiry_date = ?, item_group = ?, no_expiry = ? WHERE id = ?",
-                                             (name, qty, b_pr, s_pr, row_exp_date, item_group_in, 1 if no_expiry_flag else 0, exist_item['id']))
+                              cur_ex.execute("UPDATE items SET item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, expiry_date = ?, no_expiry = ? WHERE id = ?",
+                                             (name, qty, b_pr, s_pr, row_exp_date, 1 if no_expiry_flag else 0, exist_item['id']))
                           else:
-                              cur_ex.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)", 
-                                             (tid, item_group_in, code, name, qty, b_pr, s_pr, row_exp_date, 1 if no_expiry_flag else 0))
+                              cur_ex.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)", 
+                                             (tid, code, name, qty, b_pr, s_pr, row_exp_date, 1 if no_expiry_flag else 0))
                       count_imp += 1
                   conn.commit()
                   st.success(f"🎉 تم استيراد وتحديث ({count_imp}) صنف بنجاح بدون أي دبلرة!")
@@ -754,8 +756,8 @@ elif choice == "🔄 نقل وتحويل الأصناف للفروع":
                               if dest_exist:
                                   cur_tr.execute("UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE id = ?", (trans_qty, chosen_item["sale_price"], dest_exist["id"]))
                               else:
-                                  cur_tr.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-                                               (target_b_id, chosen_item["item_group"], chosen_item["item_code"], chosen_item["item_name"], trans_qty, chosen_item["buy_price"], chosen_item["sale_price"], chosen_item["expiry_date"], chosen_item["no_expiry"]))
+                                  cur_tr.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                                               (target_b_id, chosen_item["item_code"], chosen_item["item_name"], trans_qty, chosen_item["buy_price"], chosen_item["sale_price"], chosen_item["expiry_date"], chosen_item["no_expiry"]))
                               conn.commit()
                               st.success(f"🚀 تم تحويل ({trans_qty}) من ({chosen_item['item_name']}) إلى ({sel_target_b}) بنجاح!")
                           else:
@@ -773,8 +775,8 @@ elif choice == "🔄 نقل وتحويل الأصناف للفروع":
                           if dest_e:
                               cur_all.execute("UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE id = ?", (mi["quantity"], mi["sale_price"], dest_e["id"]))
                           else:
-                              cur_all.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-                                           (target_b_id, mi["item_group"], mi["item_code"], mi["item_name"], mi["quantity"], mi["buy_price"], mi["sale_price"], mi["expiry_date"], mi["no_expiry"]))
+                              cur_all.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                                           (target_b_id, mi["item_code"], mi["item_name"], mi["quantity"], mi["buy_price"], mi["sale_price"], mi["expiry_date"], mi["no_expiry"]))
                       conn.commit()
                       st.success(f"🎉 تم تحويل كافة أصناف المخزن الرئيسي إلى فرع ({sel_target_b}) بنجاح!")
                   else:
@@ -826,7 +828,7 @@ elif choice == "➕ إضافة فائض فرع (رصيد صفر)":
   sel_b_name = st.selectbox("اختر الفرع لإضافة الفائض له:", list(b_dict.keys()))
   current_b_id = b_dict[sel_b_name]
   
-  zero_items = conn.execute("SELECT DISTINCT item_code, item_name, sale_price, buy_price, item_group, expiry_date, no_expiry FROM items WHERE branch_id = ? AND quantity <= 0", (current_b_id,)).fetchall()
+  zero_items = conn.execute("SELECT DISTINCT item_code, item_name, sale_price, buy_price, expiry_date, no_expiry FROM items WHERE branch_id = ? AND quantity <= 0", (current_b_id,)).fetchall()
   
   if zero_items:
       z_options = {f"[{i['item_code']}] {i['item_name']} (السعر: {i['sale_price']} د.ل)": i for i in zero_items}
@@ -840,8 +842,8 @@ elif choice == "➕ إضافة فائض فرع (رصيد صفر)":
               if existing_z:
                   conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (surplus_qty, existing_z['id']))
               else:
-                  conn.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)", 
-                               (current_b_id, z_item['item_group'], z_item['item_code'], z_item['item_name'], surplus_qty, z_item['buy_price'], z_item['sale_price'], z_item['expiry_date'], z_item['no_expiry']))
+                  conn.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)", 
+                               (current_b_id, z_item['item_code'], z_item['item_name'], surplus_qty, z_item['buy_price'], z_item['sale_price'], z_item['expiry_date'], z_item['no_expiry']))
               conn.commit()
               log_action(st.session_state["user_id"], "إضافة فائض", f"إضافة فائض {surplus_qty} للصنف {z_item['item_name']} في {sel_b_name}")
               st.success(f"🚀 تمت إضافة الفائض للصنف ({z_item['item_name']}) بنجاح وبنفس أسعاره السابقة!")
