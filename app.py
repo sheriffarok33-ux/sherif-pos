@@ -321,6 +321,51 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
         if st.button("❌ إلغاء", use_container_width=True):
             st.rerun()
 
+# --- نافذة شاشة الدفع المتقدمة (مدفوع، الباقي، ونوع الدفع) ---
+@st.dialog("💳 شاشة إتمام الدفع (الخزينة)")
+def checkout_payment_dialog(b_id, g_tot):
+    st.subheader(f"إجمالي الفاتورة المطلوب: {g_tot:,.2f} د.ل")
+    
+    pay_method = st.selectbox("نوع الدفع:", ["كاش (نقدي)", "شبكة / بطاقة", "آجل"])
+    paid_amount = st.number_input("المبلغ المدفوع من الزبون (د.ل):", min_value=0.0, value=float(g_tot), step=1.0)
+    
+    change_due = paid_amount - g_tot
+    if change_due >= 0:
+        st.success(f"💵 الباقي المستحق للزبون: **{change_due:,.2f} د.ل**")
+    else:
+        st.error(f"⚠️ المبلغ المدفوع غير كافٍ! العجز: **{abs(change_due):,.2f} د.ل**")
+    
+    if st.button("🖨️ تأكيد الإصدار وطباعة الفاتورة النهائية", type="primary", use_container_width=True):
+        if paid_amount >= g_tot or pay_method == "آجل":
+            conn = get_db_connection()
+            target_inv_branch = b_id if b_id != "ALL" else conn.execute("SELECT id FROM branches LIMIT 1").fetchone()["id"]
+            
+            # فحص إضافي أخير للكميات قبل الخصم النهائي
+            can_proceed = True
+            for c_item in st.session_state["cart"]:
+                if c_item["id"] != 99999:
+                    db_it = conn.execute("SELECT quantity FROM items WHERE id = ?", (c_item["id"],)).fetchone()
+                    if db_it and float(db_it["quantity"]) < c_item["qty"]:
+                        can_proceed = False
+                        st.warning(f"⚠️ الصنف ({c_item['name']}) الكمية المتوفرة لا تكفي!")
+
+            if can_proceed:
+                cur_in = conn.cursor()
+                cur_in.execute("INSERT INTO invoices (branch_id, user_id, total_amount, payment_method) VALUES (?, ?, ?, ?)", (target_inv_branch, st.session_state["user_id"], g_tot, pay_method))
+                inv_id = cur_in.lastrowid
+                for c_item in st.session_state["cart"]:
+                    if c_item["id"] != 99999:
+                        conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
+                conn.commit()
+                conn.close()
+                st.session_state["cart"] = []
+                st.success(f"🎉 تم إصدار الفاتورة رقم #{inv_id} وطباعتها بنجاح!")
+                st.rerun()
+            else:
+                conn.close()
+        else:
+            st.warning("⚠️ المبلغ المدفوع أقل من إجمالي الفاتورة.")
+
 def process_scale_barcode():
     code = st.session_state.barcode_scan.strip()
     if code:
@@ -338,7 +383,6 @@ def process_scale_barcode():
                 unit_price = float(item["sale_price"])
                 calculated_qty = scale_value / unit_price if unit_price > 0 else 1.0
                 if float(item["quantity"]) <= 0:
-                    st.warning("⚠️ هنّي روحك.. تواصل مع المدير (الرصيد صفر أو بالناقص)")
                     conn.execute("INSERT INTO negative_sales_logs (branch_id, user_id, item_name, sale_qty) VALUES (?, ?, ?, ?)", 
                                  (item["branch_id"], st.session_state["user_id"], item["item_name"], calculated_qty))
                     conn.commit()
@@ -353,7 +397,6 @@ def process_scale_barcode():
                 item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
             if item:
                 if float(item["quantity"]) <= 0:
-                    st.warning("⚠️ هنّي روحك.. تواصل مع المدير (الرصيد صفر أو بالناقص)")
                     conn.execute("INSERT INTO negative_sales_logs (branch_id, user_id, item_name, sale_qty) VALUES (?, ?, ?, ?)", 
                                  (item["branch_id"], st.session_state["user_id"], item["item_name"], 1.0))
                     conn.commit()
@@ -833,7 +876,6 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
   sel_rep = st.selectbox("اختر الفرع لعرض تقريره:", list(rep_opts.keys()))
   t_id = rep_opts[sel_rep]
   
-  # سجل البيع بالناقص للتنبيه الإداري
   st.subheader("⚠️ سجل تنبيهات البيع بالناقص (رصيد صفر)")
   neg_logs_df = pd.read_sql("SELECT negative_sales_logs.id AS 'رقم', branches.branch_name AS 'الفرع', users.username AS 'الكاشير', negative_sales_logs.item_name AS 'الصنف', negative_sales_logs.sale_qty AS 'الكمية المباعة بالناقص', negative_sales_logs.log_time AS 'التاريخ والوقت' FROM negative_sales_logs LEFT JOIN branches ON negative_sales_logs.branch_id = branches.id LEFT JOIN users ON negative_sales_logs.user_id = users.id ORDER BY negative_sales_logs.id DESC", conn)
   if not neg_logs_df.empty:
@@ -920,7 +962,7 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم الف
               st.write("حدد الميزات والصلاحيات الإضافية التي تريد إعطاءها لهذا الموظف:")
               selected_extra_perms = []
               for m in DEFAULT_MENUS:
-                  if st.checkbox(m, value=(m in curr_custom_list), key=f"extra_p_{m}"):
+                  if st.checkbox(m, value=(m in curr_custom_list), key=f"extra_p_{m}2"):
                       selected_extra_perms.append(m)
               
               if st.form_submit_button("💾 حفظ واعتماد الصلاحيات الفردية للموظف"):
@@ -947,7 +989,6 @@ elif choice == "🛒 نقطة البيع (POS)":
       b_id = st.session_state.get("branch_id")
       
   if b_id:
-      # عرض أول 20 صنفاً المفضلة فقط أمام الكاشير (التي لها favorite_rank من 1 إلى 20)
       if b_id == "ALL":
           fav_items = conn.execute("SELECT * FROM items WHERE favorite_rank BETWEEN 1 AND 20 ORDER BY favorite_rank ASC").fetchall()
       else:
@@ -968,18 +1009,8 @@ elif choice == "🛒 نقطة البيع (POS)":
       with hk_col1:
           if st.button("F1: إتمام البيع الفوري", use_container_width=True):
               if st.session_state["cart"]:
-                  target_inv_branch = b_id if b_id != "ALL" else conn.execute("SELECT id FROM branches LIMIT 1").fetchone()["id"]
                   g_tot = sum([x["total"] for x in st.session_state["cart"]])
-                  cur_in = conn.cursor()
-                  cur_in.execute("INSERT INTO invoices (branch_id, user_id, total_amount) VALUES (?, ?, ?)", (target_inv_branch, st.session_state["user_id"], g_tot))
-                  inv_id = cur_in.lastrowid
-                  for c_item in st.session_state["cart"]:
-                      if c_item["id"] != 99999:
-                          conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
-                  conn.commit()
-                  st.session_state["cart"] = []
-                  st.success(f"🎉 تم إصدار الفاتورة #{inv_id} بنجاح عبر اختصار F1!")
-                  st.rerun()
+                  checkout_payment_dialog(b_id, g_tot)
               else:
                   st.warning("السلة فارغة!")
       with hk_col2:
@@ -1015,7 +1046,7 @@ elif choice == "🛒 نقطة البيع (POS)":
               for item in fav_items:
                   col_i1, col_i2, col_i3 = st.columns([2, 1, 1])
                   with col_i1: 
-                      qty_status = f"(متاح: {item['quantity']})" if float(item['quantity']) > 0 else "⚠️ (رصيد صفر - بالناقص)"
+                      qty_status = f"(متاح: {item['quantity']})" if float(item['quantity']) > 0 else "⚠️ (رصيد صفر)"
                       st.write(f"**#{item['favorite_rank']} - {item['item_name']}** {qty_status}")
                   with col_i2: st.write(f"{item['sale_price']} د.ل")
                   with col_i3:
@@ -1023,7 +1054,6 @@ elif choice == "🛒 نقطة البيع (POS)":
                           q_in = st.number_input("الكمية", min_value=0.01, value=1.0, step=0.1, format="%.2f", key=f"q_{item['id']}")
                           if st.form_submit_button("➕ إضافة"):
                               if float(item['quantity']) <= 0:
-                                  st.warning("⚠️ هنّي روحك.. تواصل مع المدير (الرصيد صفر)")
                                   cur_neg = conn.cursor()
                                   cur_neg.execute("INSERT INTO negative_sales_logs (branch_id, user_id, item_name, sale_qty) VALUES (?, ?, ?, ?)", 
                                                   (item['branch_id'], st.session_state["user_id"], item['item_name'], float(q_in)))
@@ -1033,7 +1063,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                               })
                               st.rerun()
           else:
-              st.info("لا توجد أصناف محددة في لوحة المفضلة (من 1 إلى 20) لهذا الفرع حالياً. يرجى إعدادها من شاشة الأصناف المفضلة.")
+              st.info("لا توجد أصناف محددة في لوحة المفضلة (من 1 إلى 20) لهذا الفرع حالياً.")
 
       with col_c:
           st.subheader("سلة المبيعات")
@@ -1044,17 +1074,8 @@ elif choice == "🛒 نقطة البيع (POS)":
               st.metric("الإجمالي", f"{g_tot:,.2f} د.ل")
               
               if st.button("🖨️ إتمام وطباعة الفاتورة", type="primary", use_container_width=True):
-                  target_inv_branch = b_id if b_id != "ALL" else conn.execute("SELECT id FROM branches LIMIT 1").fetchone()["id"]
-                  cur_in = conn.cursor()
-                  cur_in.execute("INSERT INTO invoices (branch_id, user_id, total_amount) VALUES (?, ?, ?)", (target_inv_branch, st.session_state["user_id"], g_tot))
-                  inv_id = cur_in.lastrowid
-                  for c_item in st.session_state["cart"]:
-                      if c_item["id"] != 99999:
-                          conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
-                  conn.commit()
-                  st.session_state["cart"] = []
-                  st.success(f"🎉 تم إصدار الفاتورة #{inv_id} بنجاح!")
-                  st.rerun()
+                  g_tot = sum([x["total"] for x in st.session_state["cart"]])
+                  checkout_payment_dialog(b_id, g_tot)
               if st.button("🗑️ تفريغ السلة", use_container_width=True):
                   st.session_state["cart"] = []
                   st.rerun()
