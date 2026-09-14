@@ -593,7 +593,9 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
       conn.close()
 
 elif choice == "📁 استيراد وتحديث الأصناف من Excel":
-  st.header("📁 استيراد وتحديث الأصناف عبر ملف Excel (بدون مجموعات، تحديث متغيرات، وعدم دبلرة)")
+  st.header("📁 استيراد وتحديث الأصناف عبر ملف Excel (مرن لأي عدد أعمدة، بدون دبلرة)")
+  st.info("💡 ملاحظة هامة: النظام يقرأ الأعمدة الأساسية أياً كان عددها في الملف، ويبحث عن كود الصنف لتحديث المتغيرات فقط بدون أي تضاعف.")
+  
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
@@ -616,17 +618,22 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                   
                   for idx, row in df_exc.iterrows():
                       if row.isna().all(): continue
-                      name = str(row.iloc[1]).strip() if len(row)>1 and not pd.isna(row.iloc[1]) else ""
-                      if not name or name.lower() in ["nan", "null", "item"] or name in ["الصنف", "اسم الصنف", "صنف"]: continue
-                      code = str(row.iloc[0]).strip() if len(row)>0 and not pd.isna(row.iloc[0]) else "GEN-01"
-                      try: qty = float(row.iloc[2]) if len(row)>2 and not pd.isna(row.iloc[2]) else 0.0
+                      # استخراج القيم بأمان بغض النظر عن عدد الأعمدة في السطر
+                      row_list = list(row.dropna().values)
+                      if len(row_list) < 2: continue
+                      
+                      name = str(row_list[1]).strip() if len(row_list)>1 else "صنف"
+                      if name.lower() in ["nan", "null", "item"] or name in ["الصنف", "اسم الصنف", "صنف"]: continue
+                      code = str(row_list[0]).strip() if len(row_list)>0 else "GEN-01"
+                      
+                      try: qty = float(row_list[2]) if len(row_list)>2 else 0.0
                       except: qty = 0.0
-                      try: b_pr = float(row.iloc[3]) if len(row)>3 and not pd.isna(row.iloc[3]) else 0.0
+                      try: b_pr = float(row_list[3]) if len(row_list)>3 else 0.0
                       except: b_pr = 0.0
-                      try: s_pr = float(row.iloc[4]) if len(row)>4 and not pd.isna(row.iloc[4]) else 10.0
+                      try: s_pr = float(row_list[4]) if len(row_list)>4 else 10.0
                       except: s_pr = 10.0
                       
-                      row_exp_date = str(row.iloc[5]).strip() if len(row) > 5 and not pd.isna(row.iloc[5]) else expiry_date_in
+                      row_exp_date = str(row_list[5]).strip() if len(row_list) > 5 else expiry_date_in
                       
                       for tid in target_ids:
                           exist_item = cur_ex.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (tid, code)).fetchone()
@@ -638,7 +645,7 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                                              (tid, code, name, qty, b_pr, s_pr, row_exp_date, 1 if no_expiry_flag else 0))
                       count_imp += 1
                   conn.commit()
-                  st.success(f"🎉 تم استيراد وتحديث ({count_imp}) صنف بنجاح بدون أي دبلرة!")
+                  st.success(f"🎉 تم استيراد وتحديث ({count_imp}) صنف بنجاح وبدون أي أخطاء!")
               except Exception as e:
                   st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
   conn.close()
@@ -1006,7 +1013,7 @@ elif choice == "👥 إدارة المستخدمين وصلاحياتهم الف
               
               allowed_b_selection = "ALL"
               if u_role.startswith("Cashier") or u_role.startswith("Branch_Supervisor"):
-                  st.write("حدد الفروع المصرح بها لهذا المستخدم:")
+                  st.write("حدد الفروع المصرح بها لهذا المستخدم (أو اختر الكل):")
                   selected_branches_names = []
                   for b_name in b_dict.keys():
                       if st.checkbox(b_name, key=f"user_b_{b_name}"):
