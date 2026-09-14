@@ -609,7 +609,6 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
           import openpyxl
           if up_excel:
               try:
-                  # قراءة ملف الإكسيل باستخدام openpyxl مباشرة بأمان تامة
                   wb = openpyxl.load_workbook(up_excel, data_only=True)
                   sheet = wb.active
                   cur_ex = conn.cursor()
@@ -622,7 +621,6 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                       if not row_vals or len(row_vals) < 2: continue
                       
                       first_str = row_vals[0].lower()
-                      # تخطي سطر العناوين لو وُجد
                       if first_str in ["code", "كود", "item_code", "رقم", "كود الصنف"] or 'كود' in first_str or 'الصنف' in first_str:
                           continue
                       
@@ -639,6 +637,9 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                       
                       row_exp_date = row_vals[5] if len(row_vals) > 5 else expiry_date_in
                       
+                      # التحقق أن الكود فعلاً مدخل سليم ورقمي أو نصي غير فارغ
+                      if not code or code.lower() == 'nan': continue
+
                       for tid in target_ids:
                           exist_item = cur_ex.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (tid, code)).fetchone()
                           if exist_item:
