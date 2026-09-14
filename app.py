@@ -236,13 +236,13 @@ def initialize_database():
 
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(DEFAULT_MENUS),))
   except: pass
+  # جعل المدير العام يمتلك كل القوائم تماماً مثل الأدمن
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Branch_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة الأصناف المفضلة (1-20),📦 إدارة المخزن والفروع وتعديل الأسعار,📥 المشتريات والموردين (فواتير متعددة الأصناف),📊 مركز التقارير والإدارة الشاملة (مع التصدير وحركة الفروع)')")
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة الأصناف المفضلة (1-20)')")
   except: pass
-  # جعل رتبة المشاهد فقط (Viewer) تملك كافة صلاحيات العرض والتقارير تماماً مثل المدير العام
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Viewer', ?)", (",".join(DEFAULT_MENUS),))
   except: pass
 
@@ -283,7 +283,7 @@ def verify_admin_password(pass_input):
 
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
-    if role in ["Admin", "Viewer"]: return True # المشاهد مثل الأدمن والمدير العام يرى كل القوائم
+    if role in ["Admin", "General_Supervisor", "Viewer"]: return True # المدير العام والأدمن ومشاهد لديهم كل الصلاحيات
     user_id = st.session_state.get("user_id")
     if not user_id: return False
     conn = get_db_connection()
@@ -482,7 +482,7 @@ if not st.session_state["logged_in"]:
               st.session_state["welcome_branch_name"] = "متعدد الفروع / كافة الفروع"
               st.session_state["show_welcome_dialog"] = True
               
-              if user["role"] in ["Admin", "Viewer"]:
+              if user["role"] in ["Admin", "General_Supervisor", "Viewer"]:
                   st.session_state["allowed_menus"] = DEFAULT_MENUS
               else:
                   perms = conn.execute("SELECT allowed_menus FROM role_permissions WHERE role = ?", (user["role"],)).fetchone()
@@ -503,7 +503,7 @@ st.sidebar.markdown("<h2 style='text-align: center;'>🥜 محامص أبو زي
 st.sidebar.markdown(f"**👤 {st.session_state['username']} | `{st.session_state['role']}`**")
 st.sidebar.markdown("---")
 
-current_allowed = DEFAULT_MENUS if st.session_state["role"] in ["Admin", "Viewer"] else st.session_state.get("allowed_menus", DEFAULT_MENUS)
+current_allowed = DEFAULT_MENUS if st.session_state["role"] in ["Admin", "General_Supervisor", "Viewer"] else st.session_state.get("allowed_menus", DEFAULT_MENUS)
 menu_to_show = [m for m in DEFAULT_MENUS if check_user_permission(m)]
 
 for m in menu_to_show:
@@ -766,7 +766,7 @@ elif choice == "💰 تسجيل المصروفات والمصروف العام":
   if not exp_df.empty:
       st.dataframe(exp_df, use_container_width=True)
       st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(exp_df), file_name="expenses_report.xlsx")
-      if st.session_state["role"] in ["Admin", "Viewer"]:
+      if st.session_state["role"] in ["Admin", "General_Supervisor", "Viewer"]:
           del_exp_id = st.selectbox("اختر رقم المصروف للحذف:", exp_df["رقم"].tolist())
           if st.button("🗑️ حذف المصروف المختار", type="primary"):
               admin_confirm_dialog("حذف مصروف", del_exp_id)
@@ -1258,7 +1258,7 @@ elif choice == "🛒 نقطة البيع (POS)":
   
   user_allowed_b = st.session_state.get("allowed_branches", "ALL")
   
-  if st.session_state["role"] == "Admin" or user_allowed_b == "ALL":
+  if st.session_state["role"] in ["Admin", "General_Supervisor", "Viewer"] or user_allowed_b == "ALL":
       sel_pos_branch = st.selectbox("اختر الفرع:", ["🌐 إجمالي كل الفروع (شامل)"] + list(b_dict.keys()))
       if sel_pos_branch == "🌐 إجمالي كل الفروع (شامل)":
           b_id = "ALL"
