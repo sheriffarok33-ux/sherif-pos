@@ -608,7 +608,7 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
       if st.form_submit_button("📥 تنفيذ استيراد وتحديث الأصناف"):
           if up_excel:
               try:
-                  # قراءة ملف الإكسيل مباشرة باستخدام pandas مع usecols لتفادي أي أعمدة زائدة
+                  # استخدام usecols=[0, 1, 2, 3, 4, 5] لمنع قراءة أي أعمدة زائدة في ملف الإكسيل نهائياً
                   df_exc = pd.read_excel(up_excel, usecols=[0, 1, 2, 3, 4, 5])
                   cur_ex = conn.cursor()
                   count_imp = 0
@@ -616,10 +616,13 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                   
                   for idx, row in df_exc.iterrows():
                       if row.isna().all(): continue
-                      code = str(row.iloc[0]).strip()
-                      name = str(row.iloc[1]).strip()
+                      code_val = row.iloc[0]
+                      name_val = row.iloc[1]
                       
-                      # تخطي صف العناوين أو الصفوف الفارغة
+                      if pd.isna(code_val) or pd.isna(name_val): continue
+                      code = str(code_val).strip()
+                      name = str(name_val).strip()
+                      
                       if code.lower() in ["nan", "null", "item", "كود الصنف", "كود"] or name.lower() in ["nan", "null", "item", "اسم الصنف"]:
                           continue
                       if not code or code.lower() == 'nan': continue
@@ -995,7 +998,7 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين وصلاحياتهم الفردية":
-  st.header("👥 إدارة المستخدمين والصلاحيات الفردية (إعطاء صلاحيات فرعية للموظفين)")
+  st.header("👥 إدارة المستخدمين وصلاحياتهم الفردية (إعطاء صلاحيات فرعية للموظفين)")
   conn = get_db_connection()
   
   tab_u1, tab_u2 = st.tabs(["👥 حسابات المستخدمين", "🛡️ إعطاء صلاحيات فردية للموظف"])
