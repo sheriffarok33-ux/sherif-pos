@@ -55,6 +55,7 @@ if not os.path.exists("item_images"): os.makedirs("item_images")
 DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
+    "⭐ لوحة الأصناف المفضلة (1-20)",
     "📦 إدارة المخزن الرئيسي والفروع",
     "🔄 نقل وتحويل الأصناف للفروع",
     "🏢 إدارة وتغيير أسماء الفروع والحذف",
@@ -111,6 +112,7 @@ def initialize_database():
           sale_price REAL NOT NULL,
           expiry_date TEXT DEFAULT '',
           no_expiry INTEGER DEFAULT 0,
+          favorite_rank INTEGER DEFAULT 0,
           FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
       )
   """)
@@ -120,6 +122,8 @@ def initialize_database():
   try: cursor.execute("ALTER TABLE items ADD COLUMN expiry_date TEXT DEFAULT ''")
   except: pass
   try: cursor.execute("ALTER TABLE items ADD COLUMN no_expiry INTEGER DEFAULT 0")
+  except: pass
+  try: cursor.execute("ALTER TABLE items ADD COLUMN favorite_rank INTEGER DEFAULT 0")
   except: pass
 
   cursor.execute("""
@@ -160,6 +164,18 @@ def initialize_database():
   """)
 
   cursor.execute("""
+      CREATE TABLE IF NOT EXISTS negative_sales_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          branch_id INTEGER,
+          user_id INTEGER,
+          item_name TEXT,
+          sale_qty REAL,
+          log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+      )
+  """)
+
+  cursor.execute("""
       CREATE TABLE IF NOT EXISTS role_permissions (
           role TEXT PRIMARY KEY,
           allowed_menus TEXT
@@ -187,9 +203,9 @@ def initialize_database():
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
   except: pass
-  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Branch_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),📦 إدارة المخزن الرئيسي والفروع,📥 المشتريات والموردين (تنبيهات الصلاحية)')")
+  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Branch_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة الأصناف المفضلة (1-20),📦 إدارة المخزن الرئيسي والفروع,📥 المشتريات والموردين (تنبيهات الصلاحية)')")
   except: pass
-  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS)')")
+  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة الأصناف المفضلة (1-20)')")
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Viewer', '🏠 الرئيسية واللوحة,📊 الأرباح والخسائر والتقارير')")
   except: pass
@@ -315,22 +331,32 @@ def process_scale_barcode():
             item_code = code[2:7]
             scale_value = float(code[7:]) / 100.0
             if b_id == "ALL":
-                item = conn.execute("SELECT * FROM items WHERE item_code = ? AND quantity > 0 LIMIT 1", (item_code,)).fetchone()
+                item = conn.execute("SELECT * FROM items WHERE item_code = ? LIMIT 1", (item_code,)).fetchone()
             else:
                 item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (item_code, b_id)).fetchone()
             if item:
                 unit_price = float(item["sale_price"])
                 calculated_qty = scale_value / unit_price if unit_price > 0 else 1.0
+                if float(item["quantity"]) <= 0:
+                    st.warning("⚠️ هنّي روحك.. تواصل مع المدير (الرصيد صفر أو بالناقص)")
+                    conn.execute("INSERT INTO negative_sales_logs (branch_id, user_id, item_name, sale_qty) VALUES (?, ?, ?, ?)", 
+                                 (item["branch_id"], st.session_state["user_id"], item["item_name"], calculated_qty))
+                    conn.commit()
                 st.session_state["cart"].append({
                     "id": item["id"], "code": item["item_code"], "name": item["item_name"],
                     "price": unit_price, "qty": float(calculated_qty), "total": float(scale_value)
                 })
         if not item:
             if b_id == "ALL":
-                item = conn.execute("SELECT * FROM items WHERE item_code = ? AND quantity > 0 LIMIT 1", (code,)).fetchone()
+                item = conn.execute("SELECT * FROM items WHERE item_code = ? LIMIT 1", (code,)).fetchone()
             else:
                 item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
             if item:
+                if float(item["quantity"]) <= 0:
+                    st.warning("⚠️ هنّي روحك.. تواصل مع المدير (الرصيد صفر أو بالناقص)")
+                    conn.execute("INSERT INTO negative_sales_logs (branch_id, user_id, item_name, sale_qty) VALUES (?, ?, ?, ?)", 
+                                 (item["branch_id"], st.session_state["user_id"], item["item_name"], 1.0))
+                    conn.commit()
                 st.session_state["cart"].append({
                     "id": item["id"], "code": item["item_code"], "name": item["item_name"],
                     "price": float(item["sale_price"]), "qty": 1.0, "total": float(item["sale_price"]) * 1.0
@@ -398,10 +424,10 @@ choice = st.session_state["page"]
 
 dashboard_cards = {
     "🛒 نقطة البيع (POS)": {"icon": "🛒", "color": "linear-gradient(135deg, #f59e0b, #ea580c)", "desc": "شاشة الكاشير ومبيعات الميزان"},
+    "⭐ لوحة الأصناف المفضلة (1-20)": {"icon": "⭐", "color": "linear-gradient(135deg, #e11d48, #be123c)", "desc": "تعديل واختيار الأصناف المفضلة للكاشير"},
     "📦 إدارة المخزن الرئيسي والفروع": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإضافة الفائض بالمخازن"},
     "🔄 نقل وتحويل الأصناف للفروع": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تحويل وتوزيع الأصناف (جزء أو الكل)"},
     "🏢 إدارة وتغيير أسماء الفروع والحذف": {"icon": "🏢", "color": "linear-gradient(135deg, #0ea5e9, #0369a1)", "desc": "إضافة وتعديل وحذف المخزن والفروع"},
-    "📁 استيراد وتحميل الأصناف من Excel": {"icon": "📁", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "تحميل الأصناف وتاريخ الصلاحية"},
     "📥 المشتريات والموردين (تنبيهات الصلاحية)": {"icon": "📥", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "تنبيهات انتهاء الصلاحية خلال 30 يوم"}
 }
 
@@ -417,6 +443,29 @@ if choice == "🏠 الرئيسية واللوحة":
               if st.button(f"دخول ➔", key=f"btn_card_{i}", on_click=set_page, args=(item,)):
                   pass
               st.markdown("<br>", unsafe_allow_html=True)
+
+elif choice == "⭐ لوحة الأصناف المفضلة (1-20)":
+  st.header("⭐ إعداد وتعديل لوحة الأصناف المفضلة (من 1 إلى 20 أمام الكاشير)")
+  if st.session_state["role"] not in ["Admin", "General_Supervisor"]:
+      st.error("🔒 هذه الشاشة مخصصة للأدمن والمدير العام فقط لتحديد أصناف الكاشير المفضلة.")
+  else:
+      conn = get_db_connection()
+      branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
+      b_dict = {b["branch_name"]: b["id"] for b in branches}
+      sel_b_name = st.selectbox("اختر الفرع لتعديل أزراره المفضلة:", list(b_dict.keys()))
+      cur_b_id = b_dict[sel_b_name]
+      
+      items_fav = pd.read_sql("SELECT id, item_code AS 'الكود', item_name AS 'اسم الصنف', favorite_rank AS 'الرقم المفضل (1 إلى 20 أو 0 للاستبعاد)' FROM items WHERE branch_id = ?", conn, params=(cur_b_id,))
+      if not items_fav.empty:
+          st.info("💡 حدد رقم الصنف المفضل من 1 إلى 20 ليظهر للكاشير في شاشة المبيعات، وضع 0 للأصناف التي لا تظهر.")
+          edited_fav = st.data_editor(items_fav, hide_index=True, key="fav_editor")
+          if st.button("💾 حفظ أرقام الترتيب المفضل"):
+              for idx, row in edited_fav.iterrows():
+                  conn.execute("UPDATE items SET favorite_rank = ? WHERE id = ?", (row['الرقم المفضل (1 إلى 20 أو 0 للاستبعاد)'], row['id']))
+              conn.commit()
+              st.success("🎉 تم تحديث لوحة الأصناف المفضلة بنجاح للكاشير!")
+              st.rerun()
+      conn.close()
 
 elif choice == "⚙️ تخصيص وتعديل مسميات الأزرار":
   st.header("⚙️ لوحة تحكم الأدمن: تعديل مسميات القوائم والأزرار")
@@ -445,19 +494,19 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
       b_dict = {b["branch_name"]: b["id"] for b in branches}
       
       with st.form("annual_inventory_form"):
-          st.subheader("📋 نطاق الجرد السنوي والتصفير:")
+          st.subheader("📋 نطاق الجرد السنوي والتصفير المتحرك:")
           target_scope = st.selectbox("تحديد النطاق:", ["🌐 كل الفروع والمخازن (الكل)", "🏢 فرع أو مخزن معروض محدد"] + list(b_dict.keys()))
           
           st.markdown("---")
-          st.subheader("🗑️ اختر العمليات المتحركة المراد تصفيرها:")
+          st.subheader("🗑️ اختر العمليات الحركية المراد تصفيرها (مع الحفاظ على الأسماء الأساسية):")
           opt_sales = st.checkbox("تصفير المبيعات والفواتير (إعادة تعيين أرقام الفواتير إلى INV-0001)")
-          opt_purch = st.checkbox("تصفير سجلات ومشتريات الموردين (مع الاحتفاظ بأسماء وبيانات المورد الأساسية)")
-          opt_stock = st.checkbox("تصفير كميات مخزون الأصناف بالكامل (جرد سنوي يبدأ من الصفر مع الاحتفاظ بأسماء الأصناف)")
-          opt_prices = st.checkbox("إعادة ضبط أسعار البيع والشراء إلى الصفر")
+          opt_purch = st.checkbox("تصفير حركات وسجلات المشتريات (مع الاحتفاظ بأسماء الموردين الأساسية)")
+          opt_stock = st.checkbox("تصفير كميات مخزون الأصناف بالكامل إلى الصفر (جرد سنوي مع الاحتفاظ بأسماء الأصناف)")
+          opt_prices = st.checkbox("إعادة ضبط أسعار البيع والشراء الحركية إلى الصفر")
           
           admin_pass_inv = st.text_input("🔒 كلمة سر الأدمن لتأكيد عملية التصفير السنوي:", type="password")
           
-          if st.form_submit_button("🚨 تنفيذ عمليات التصفير المحددة للجرد", type="primary"):
+          if st.form_submit_button("🚨 تنفيذ عمليات التصفير الحركي للجرد", type="primary"):
               if verify_admin_password(admin_pass_inv):
                   cur_inv = conn.cursor()
                   scope_id = "ALL" if target_scope == "🌐 كل الفروع والمخازن (الكل)" else (b_dict.get(target_scope, "ALL") if target_scope != "🏢 فرع أو مخزن معروض محدد" else "ALL")
@@ -476,7 +525,7 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
                       else: cur_inv.execute("UPDATE items SET sale_price = 0, buy_price = 0 WHERE branch_id = ?", (scope_id,))
                   
                   conn.commit()
-                  st.success("🎉 تمت عملية الجرد والتصفير السنوي المختار بنجاح تامة!")
+                  st.success("🎉 تمت عملية الجرد والتصفير الحركي السنوي بنجاح تامة!")
                   st.rerun()
               else:
                   st.error("❌ كلمة سر الأدمن غير صحيحة!")
@@ -484,8 +533,6 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
 
 elif choice == "📁 استيراد وتحميل الأصناف من Excel":
   st.header("📁 استيراد وتحميل الأصناف عبر ملف Excel (مع تحديد تاريخ الصلاحية وتسلسل الإضافات)")
-  st.info("💡 تسلسل الإضافات: حدد المجموعة أولاً، ثم الفرع أو المخزن المستهدف، مع إدخال تاريخ الصلاحية أو تفعيل خيار المنتجات المستمرة غير المنتهية.")
-  
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
@@ -520,11 +567,11 @@ elif choice == "📁 استيراد وتحميل الأصناف من Excel":
                       except: s_pr = 10.0
                       
                       for tid in target_ids:
-                          cur_ex.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                          cur_ex.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)", 
                                          (tid, item_group_in, code, name, qty, b_pr, s_pr, expiry_date_in, 1 if no_expiry_flag else 0))
                       count_imp += 1
                   conn.commit()
-                  st.success(f"🎉 تم استيراد وتحميل ({count_imp}) صنف بنجاح وفق التسلسل المختار!")
+                  st.success(f"🎉 تم استيراد وتحميل ({count_imp}) صنف بنجاح!")
               except Exception as e:
                   st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
   conn.close()
@@ -628,7 +675,7 @@ elif choice == "💰 تسجيل المصروفات والمصروف العام":
   conn.close()
 
 elif choice == "🔄 نقل وتحويل الأصناف للفروع":
-  st.header("🔄 نقل وتحويل الأصناف للفروع (جزء أو تحويل كامل المخزون)")
+  st.header("🔄 نقل وتحويل الأصناف للفروع")
   conn = get_db_connection()
   main_store = conn.execute("SELECT id FROM branches WHERE branch_type = 'مخزن' LIMIT 1").fetchone()
   
@@ -661,7 +708,7 @@ elif choice == "🔄 نقل وتحويل الأصناف للفروع":
                               if dest_exist:
                                   cur_tr.execute("UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE id = ?", (trans_qty, chosen_item["sale_price"], dest_exist["id"]))
                               else:
-                                  cur_tr.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                  cur_tr.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
                                                (target_b_id, chosen_item["item_group"], chosen_item["item_code"], chosen_item["item_name"], trans_qty, chosen_item["buy_price"], chosen_item["sale_price"], chosen_item["expiry_date"], chosen_item["no_expiry"]))
                               conn.commit()
                               st.success(f"🚀 تم تحويل ({trans_qty}) من ({chosen_item['item_name']}) إلى ({sel_target_b}) بنجاح!")
@@ -681,7 +728,7 @@ elif choice == "🔄 نقل وتحويل الأصناف للفروع":
                           if dest_e:
                               cur_all.execute("UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE id = ?", (mi["quantity"], mi["sale_price"], dest_e["id"]))
                           else:
-                              cur_all.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                              cur_all.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
                                            (target_b_id, mi["item_group"], mi["item_code"], mi["item_name"], mi["quantity"], mi["buy_price"], mi["sale_price"], mi["expiry_date"], mi["no_expiry"]))
                       conn.commit()
                       st.success(f"🎉 تم تحويل كافة أصناف المخزن الرئيسي إلى فرع ({sel_target_b}) بنجاح!")
@@ -698,12 +745,12 @@ elif choice == "📦 إدارة المخزن الرئيسي والفروع":
   sel_b_name = st.selectbox("اختر المخزن أو الفرع:", list(b_dict.keys()))
   current_b_id = b_dict[sel_b_name]
   
-  items_df = pd.read_sql("SELECT id, item_group AS 'المجموعة', item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', sale_price AS 'سعر البيع', expiry_date AS 'تاريخ الصلاحية', no_expiry AS 'بدون صلاحية' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
+  items_df = pd.read_sql("SELECT id, item_group AS 'المجموعة', item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', sale_price AS 'سعر البيع', expiry_date AS 'تاريخ الصلاحية', no_expiry AS 'بدون صلاحية', favorite_rank AS 'الرقم المفضل' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
   if not items_df.empty:
       edited_items = st.data_editor(items_df, hide_index=True, key="inv_editor")
       if st.button("💾 حفظ التعديلات"):
           for idx, row in edited_items.iterrows():
-              conn.execute("UPDATE items SET item_name=?, quantity=?, sale_price=?, expiry_date=?, no_expiry=? WHERE id=?", (row['اسم الصنف'], row['الكمية'], row['سعر البيع'], row['تاريخ الصلاحية'], row['بدون صلاحية'], row['id']))
+              conn.execute("UPDATE items SET item_name=?, quantity=?, sale_price=?, expiry_date=?, no_expiry=?, favorite_rank=? WHERE id=?", (row['اسم الصنف'], row['الكمية'], row['سعر البيع'], row['تاريخ الصلاحية'], row['بدون صلاحية'], row['الرقم المفضل'], row['id']))
           conn.commit()
           st.success("🎉 تم الحفظ!")
           st.rerun()
@@ -786,6 +833,15 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
   sel_rep = st.selectbox("اختر الفرع لعرض تقريره:", list(rep_opts.keys()))
   t_id = rep_opts[sel_rep]
   
+  # سجل البيع بالناقص للتنبيه الإداري
+  st.subheader("⚠️ سجل تنبيهات البيع بالناقص (رصيد صفر)")
+  neg_logs_df = pd.read_sql("SELECT negative_sales_logs.id AS 'رقم', branches.branch_name AS 'الفرع', users.username AS 'الكاشير', negative_sales_logs.item_name AS 'الصنف', negative_sales_logs.sale_qty AS 'الكمية المباعة بالناقص', negative_sales_logs.log_time AS 'التاريخ والوقت' FROM negative_sales_logs LEFT JOIN branches ON negative_sales_logs.branch_id = branches.id LEFT JOIN users ON negative_sales_logs.user_id = users.id ORDER BY negative_sales_logs.id DESC", conn)
+  if not neg_logs_df.empty:
+      st.dataframe(neg_logs_df, use_container_width=True)
+  else:
+      st.success("لا توجد عمليات بيع بالناقص مسجلة حتى الآن.")
+  st.markdown("---")
+
   if t_id == "ALL":
       sales = conn.execute("SELECT SUM(total_amount) FROM invoices").fetchone()[0] or 0.0
       purch = conn.execute("SELECT SUM(total_cost) FROM purchases").fetchone()[0] or 0.0
@@ -891,10 +947,11 @@ elif choice == "🛒 نقطة البيع (POS)":
       b_id = st.session_state.get("branch_id")
       
   if b_id:
+      # عرض أول 20 صنفاً المفضلة فقط أمام الكاشير (التي لها favorite_rank من 1 إلى 20)
       if b_id == "ALL":
-          items = conn.execute("SELECT * FROM items WHERE quantity > 0").fetchall()
+          fav_items = conn.execute("SELECT * FROM items WHERE favorite_rank BETWEEN 1 AND 20 ORDER BY favorite_rank ASC").fetchall()
       else:
-          items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND quantity > 0", (b_id,)).fetchall()
+          fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank BETWEEN 1 AND 20 ORDER BY favorite_rank ASC", (b_id,)).fetchall()
           
       st.markdown("""
           <div style="background: #1e293b; color: white; padding: 10px; border-radius: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 14px;">
@@ -917,7 +974,8 @@ elif choice == "🛒 نقطة البيع (POS)":
                   cur_in.execute("INSERT INTO invoices (branch_id, user_id, total_amount) VALUES (?, ?, ?)", (target_inv_branch, st.session_state["user_id"], g_tot))
                   inv_id = cur_in.lastrowid
                   for c_item in st.session_state["cart"]:
-                      conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
+                      if c_item["id"] != 99999:
+                          conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
                   conn.commit()
                   st.session_state["cart"] = []
                   st.success(f"🎉 تم إصدار الفاتورة #{inv_id} بنجاح عبر اختصار F1!")
@@ -950,23 +1008,32 @@ elif choice == "🛒 نقطة البيع (POS)":
       st.markdown("---")
       col_g, col_c = st.columns([2, 1])
       with col_g:
-          st.subheader("الأصناف المتاحة للبيع")
+          st.subheader("⭐ لوحة الأصناف المفضلة (أول 20 صنفاً أمام الكاشير)")
           st.text_input("🔍 مسح باركود الميزان أو الصنف:", key="barcode_scan", on_change=process_scale_barcode)
-          if items:
-              for item in items:
+          
+          if fav_items:
+              for item in fav_items:
                   col_i1, col_i2, col_i3 = st.columns([2, 1, 1])
-                  with col_i1: st.write(f"**{item['item_name']}** (متاح: {item['quantity']})")
+                  with col_i1: 
+                      qty_status = f"(متاح: {item['quantity']})" if float(item['quantity']) > 0 else "⚠️ (رصيد صفر - بالناقص)"
+                      st.write(f"**#{item['favorite_rank']} - {item['item_name']}** {qty_status}")
                   with col_i2: st.write(f"{item['sale_price']} د.ل")
                   with col_i3:
                       with st.form(key=f"pos_qty_{item['id']}", clear_on_submit=True):
                           q_in = st.number_input("الكمية", min_value=0.01, value=1.0, step=0.1, format="%.2f", key=f"q_{item['id']}")
                           if st.form_submit_button("➕ إضافة"):
+                              if float(item['quantity']) <= 0:
+                                  st.warning("⚠️ هنّي روحك.. تواصل مع المدير (الرصيد صفر)")
+                                  cur_neg = conn.cursor()
+                                  cur_neg.execute("INSERT INTO negative_sales_logs (branch_id, user_id, item_name, sale_qty) VALUES (?, ?, ?, ?)", 
+                                                  (item['branch_id'], st.session_state["user_id"], item['item_name'], float(q_in)))
+                                  conn.commit()
                               st.session_state["cart"].append({
                                   "id": item["id"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(q_in), "total": float(item["sale_price"]) * float(q_in)
                               })
                               st.rerun()
           else:
-              st.info("لا توجد أصناف متاحة للبيع.")
+              st.info("لا توجد أصناف محددة في لوحة المفضلة (من 1 إلى 20) لهذا الفرع حالياً. يرجى إعدادها من شاشة الأصناف المفضلة.")
 
       with col_c:
           st.subheader("سلة المبيعات")
