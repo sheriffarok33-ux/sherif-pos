@@ -56,7 +56,8 @@ DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
     "⭐ لوحة الأصناف المفضلة (1-20)",
-    "📦 إدارة المخزن الرئيسي والفروع",
+    "📦 إدارة المخزن والفروع وتعديل الأسعار",
+    "➕ إضافة فائض فرع (رصيد صفر)",
     "🔄 نقل وتحويل الأصناف للفروع",
     "🏢 إدارة وتغيير أسماء الفروع والحذف",
     "📁 استيراد وتحميل الأصناف من Excel",
@@ -203,7 +204,7 @@ def initialize_database():
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
   except: pass
-  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Branch_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة الأصناف المفضلة (1-20),📦 إدارة المخزن الرئيسي والفروع,📥 المشتريات والموردين (تنبيهات الصلاحية)')")
+  try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Branch_Supervisor', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة الأصناف المفضلة (1-20),📦 إدارة المخزن والفروع وتعديل الأسعار,📥 المشتريات والموردين (تنبيهات الصلاحية)')")
   except: pass
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة الأصناف المفضلة (1-20)')")
   except: pass
@@ -466,9 +467,9 @@ choice = st.session_state["page"]
 dashboard_cards = {
     "🛒 نقطة البيع (POS)": {"icon": "🛒", "color": "linear-gradient(135deg, #f59e0b, #ea580c)", "desc": "شاشة الكاشير ومبيعات الميزان"},
     "⭐ لوحة الأصناف المفضلة (1-20)": {"icon": "⭐", "color": "linear-gradient(135deg, #e11d48, #be123c)", "desc": "تعديل واختيار الأصناف المفضلة للكاشير"},
-    "📦 إدارة المخزن الرئيسي والفروع": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإضافة الفائض بالمخازن"},
+    "📦 إدارة المخزن والفروع وتعديل الأسعار": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإدارة وتعديل أسعار الفروع"},
+    "➕ إضافة فائض فرع (رصيد صفر)": {"icon": "➕", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "إضافة فائض للأصناف التي رصيدها صفر"},
     "🔄 نقل وتحويل الأصناف للفروع": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تحويل وتوزيع الأصناف (جزء أو الكل)"},
-    "🏢 إدارة وتغيير أسماء الفروع والحذف": {"icon": "🏢", "color": "linear-gradient(135deg, #0ea5e9, #0369a1)", "desc": "إضافة وتعديل وحذف المخزن والفروع"},
     "📥 المشتريات والموردين (تنبيهات الصلاحية)": {"icon": "📥", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "تنبيهات انتهاء الصلاحية خلال 30 يوم"}
 }
 
@@ -539,10 +540,10 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
           target_scope = st.selectbox("تحديد النطاق:", ["🌐 كل الفروع والمخازن (الكل)", "🏢 فرع أو مخزن معروض محدد"] + list(b_dict.keys()))
           
           st.markdown("---")
-          st.subheader("🗑️ اختر العمليات الحركية المراد تصفيرها (مع الاحتفاظ بأسماء الموردين والأصناف الأساسية):")
+          st.subheader("🗑️ اختر العمليات الحركية المراد تصفيرها:")
           opt_sales = st.checkbox("تصفير المبيعات والفواتير (إعادة تعيين أرقام الفواتير إلى INV-0001)")
           opt_purch = st.checkbox("تصفير حركات وسجلات المشتريات (مع الاحتفاظ بقاعدة أسماء وبيانات الموردين)")
-          opt_stock = st.checkbox("تصفير كميات مخزون الأصناف بالكامل إلى الصفر (جرد سنوي مع الاحتفاظ بأكواد وأسماء الأصناف)")
+          opt_stock = st.checkbox("تصفير كميات مخزون الأصناف بالكامل إلى الصفر")
           opt_prices = st.checkbox("إعادة ضبط أسعار البيع والشراء الحركية إلى الصفر")
           
           admin_pass_inv = st.text_input("🔒 كلمة سر الأدمن لتأكيد عملية التصفير السنوي:", type="password")
@@ -574,8 +575,6 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
 
 elif choice == "📁 استيراد وتحميل الأصناف من Excel":
   st.header("📁 استيراد وتحميل الأصناف عبر ملف Excel (مع دعم التعميم على الفروع وتاريخ الصلاحية)")
-  st.info("💡 يمكنك رفع الملف وتفعيل (🌐 تعميم على كافة الفروع والمخازن دفعة واحدة) أو اختيار فرع محدد.")
-  
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
@@ -587,7 +586,7 @@ elif choice == "📁 استيراد وتحميل الأصناف من Excel":
       no_expiry_flag = st.checkbox("منتج لا تنتهي صلاحيته مستمرة أو متحركة (بدون تاريخ انتهاء)")
       expiry_date_in = st.text_input("تاريخ الصلاحية (YYYY-MM-DD) - إن وجد:")
       
-      up_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx) - الترتيب: [الكود، الاسم، الكمية، سعر الشراء، سعر البيع، تاريخ الصلاحية]", type=["xlsx", "xls"])
+      up_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx)", type=["xlsx", "xls"])
       
       if st.form_submit_button("📥 تنفيذ استيراد وتحميل الأصناف"):
           if up_excel:
@@ -609,7 +608,6 @@ elif choice == "📁 استيراد وتحميل الأصناف من Excel":
                       try: s_pr = float(row.iloc[4]) if len(row)>4 and not pd.isna(row.iloc[4]) else 10.0
                       except: s_pr = 10.0
                       
-                      # قراءة تاريخ الصلاحية من العمود السادس في الملف لو وجد، أو الاعتماد على المربع العلوي
                       row_exp_date = str(row.iloc[5]).strip() if len(row) > 5 and not pd.isna(row.iloc[5]) else expiry_date_in
                       
                       for tid in target_ids:
@@ -783,22 +781,29 @@ elif choice == "🔄 نقل وتحويل الأصناف للفروع":
                       st.warning("لا توجد أصناف بالمخزن الرئيسي لتحويلها.")
   conn.close()
 
-elif choice == "📦 إدارة المخزن الرئيسي والفروع":
-  st.header("📦 إدارة المخزن الرئيسي والفروع")
+elif choice == "📦 إدارة المخزن والفروع وتعديل الأسعار":
+  st.header("📦 إدارة المخزن والفروع - وتعديل الأسعار مع التعميم الفوري لكافة الفروع")
+  st.info("💡 أي تعديل على سعر البيع لأي صنف هنا سيتم تعميمه تلقائياً ولحظياً على نفس الصنف (بنفس الكود) في كافة الفروع الأخرى.")
+  
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
-  sel_b_name = st.selectbox("اختر المخزن أو الفرع:", list(b_dict.keys()))
+  sel_b_name = st.selectbox("اختر المخزن أو الفرع للاستعراض:", list(b_dict.keys()))
   current_b_id = b_dict[sel_b_name]
   
-  items_df = pd.read_sql("SELECT id, item_group AS 'المجموعة', item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', sale_price AS 'سعر البيع', expiry_date AS 'تاريخ الصلاحية', no_expiry AS 'بدون صلاحية', favorite_rank AS 'الرقم المفضل' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
+  items_df = pd.read_sql("SELECT id, item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', sale_price AS 'سعر البيع', expiry_date AS 'تاريخ الصلاحية', no_expiry AS 'بدون صلاحية', favorite_rank AS 'الرقم المفضل' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
   if not items_df.empty:
       edited_items = st.data_editor(items_df, hide_index=True, key="inv_editor")
-      if st.button("💾 حفظ التعديلات"):
+      if st.button("💾 حفظ التعديلات وتعميم الأسعار على كل الفروع"):
           for idx, row in edited_items.iterrows():
-              conn.execute("UPDATE items SET item_name=?, quantity=?, sale_price=?, expiry_date=?, no_expiry=?, favorite_rank=? WHERE id=?", (row['اسم الصنف'], row['الكمية'], row['سعر البيع'], row['تاريخ الصلاحية'], row['بدون صلاحية'], row['الرقم المفضل'], row['id']))
+              # 1. تحديث الصنف الحالي
+              conn.execute("UPDATE items SET item_name=?, quantity=?, sale_price=?, expiry_date=?, no_expiry=?, favorite_rank=? WHERE id=?", 
+                           (row['اسم الصنف'], row['الكمية'], row['سعر البيع'], row['تاريخ الصلاحية'], row['بدون صلاحية'], row['الرقم المفضل'], row['id']))
+              # 2. تعميم السعر والاسم فوراً على نفس الصنف في كل الفروع بناءً على الكود
+              conn.execute("UPDATE items SET item_name=?, sale_price=? WHERE item_code=?", 
+                           (row['اسم الصنف'], row['سعر البيع'], row['الكود']))
           conn.commit()
-          st.success("🎉 تم الحفظ!")
+          st.success("🎉 تم الحفظ وتعميم الأسعار الجديدة على كافة الفروع بنجاح!")
           st.rerun()
       
       if st.session_state["role"] == "Admin":
@@ -807,6 +812,40 @@ elif choice == "📦 إدارة المخزن الرئيسي والفروع":
           if st.button("🗑️ حذف الصنف المختار (نافذة تأكيد للأدمن)", type="primary"):
               admin_confirm_dialog("حذف صنف", del_item_id)
       st.download_button("📥 تصدير لـ Excel", data=to_excel(items_df), file_name="inventory.xlsx")
+  conn.close()
+
+elif choice == "➕ إضافة فائض فرع (رصيد صفر)":
+  st.header("➕ إضافة فائض فرع (للأصناف التي رصيدها صفر)")
+  st.info("💡 هذه الشاشة تعرض فقط الأصناف التي رصيدها (صفر) في الفرع المختار، ليقوم المسؤول بإضافة فائض منها بنفس أسعارها السابقة.")
+  
+  conn = get_db_connection()
+  branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
+  b_dict = {b["branch_name"]: b["id"] for b in branches}
+  sel_b_name = st.selectbox("اختر الفرع لإضافة الفائض له:", list(b_dict.keys()))
+  current_b_id = b_dict[sel_b_name]
+  
+  zero_items = conn.execute("SELECT DISTINCT item_code, item_name, sale_price, buy_price, item_group, expiry_date, no_expiry FROM items WHERE branch_id = ? AND quantity <= 0", (current_b_id,)).fetchall()
+  
+  if zero_items:
+      z_options = {f"[{i['item_code']}] {i['item_name']} (السعر: {i['sale_price']} د.ل)": i for i in zero_items}
+      with st.form("surplus_form", clear_on_submit=True):
+          chosen_z_label = st.selectbox("اختر الصنف ذو الرصيد الصفر لإضافة فائض له:", list(z_options.keys()))
+          surplus_qty = st.number_input("الكمية الفائضة المراد إضافتها:", min_value=0.01, value=1.0, step=0.1, format="%.2f")
+          
+          if st.form_submit_button("💾 اعتماد وإضافة الفائض للفرع"):
+              z_item = z_options[chosen_z_label]
+              existing_z = conn.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (current_b_id, z_item['item_name'])).fetchone()
+              if existing_z:
+                  conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (surplus_qty, existing_z['id']))
+              else:
+                  conn.execute("INSERT INTO items (branch_id, item_group, item_code, item_name, quantity, buy_price, sale_price, expiry_date, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)", 
+                               (current_b_id, z_item['item_group'], z_item['item_code'], z_item['item_name'], surplus_qty, z_item['buy_price'], z_item['sale_price'], z_item['expiry_date'], z_item['no_expiry']))
+              conn.commit()
+              log_action(st.session_state["user_id"], "إضافة فائض", f"إضافة فائض {surplus_qty} للصنف {z_item['item_name']} في {sel_b_name}")
+              st.success(f"🚀 تمت إضافة الفائض للصنف ({z_item['item_name']}) بنجاح وبنفس أسعاره السابقة!")
+              st.rerun()
+  else:
+      st.success("✨ ممتاز! لا توجد أصناف برصيد (صفر) في هذا الفرع حالياً.")
   conn.close()
 
 elif choice == "📥 المشتريات والموردين (تنبيهات الصلاحية)":
