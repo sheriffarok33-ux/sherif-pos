@@ -621,14 +621,14 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                       row_list = list(row.dropna().values)
                       if len(row_list) < 2: continue
                       
-                      # التحقق هل السطر الأول هو عناوين (Headers) وتجاوزه
                       first_val = str(row_list[0]).strip().lower()
-                      if first_val in ["code", "كود", "item_code", "رقم"] or 'كود' in first_val:
+                      # تخطي سطر العناوين لو وُجد
+                      if first_val in ["code", "كود", "item_code", "رقم", "كود الصنف"] or 'كود' in first_val:
                           continue
                       
+                      code = str(row_list[0]).strip()
                       name = str(row_list[1]).strip() if len(row_list)>1 else "صنف"
                       if name.lower() in ["nan", "null", "item"] or name in ["الصنف", "اسم الصنف", "صنف"]: continue
-                      code = str(row_list[0]).strip() if len(row_list)>0 else "GEN-01"
                       
                       try: qty = float(row_list[2]) if len(row_list)>2 else 0.0
                       except: qty = 0.0
@@ -1000,7 +1000,7 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين وصلاحياتهم الفردية":
-  st.header("👥 إدارة المستخدمين والصلاحيات الفردية (إعطاء صلاحيات فرعية للموظفين)")
+  st.header("👥 إدارة المستخدمين وصلاحياتهم الفردية (إعطاء صلاحيات فرعية للموظفين)")
   conn = get_db_connection()
   
   tab_u1, tab_u2 = st.tabs(["👥 حسابات المستخدمين", "🛡️ إعطاء صلاحيات فردية للموظف"])
