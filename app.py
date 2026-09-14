@@ -556,11 +556,9 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
       b_dict = {b["branch_name"]: b["id"] for b in branches}
       
       with st.form("annual_inventory_form"):
-          st.subheader("📋 نطاق الجرد السنوي والتصفير المتحرك:")
           target_scope = st.selectbox("تحديد النطاق:", ["🌐 كل الفروع والمخازن (الكل)", "🏢 فرع أو مخزن معروض محدد"] + list(b_dict.keys()))
           
           st.markdown("---")
-          st.subheader("🗑️ اختر العمليات الحركية المراد تصفيرها:")
           opt_sales = st.checkbox("تصفير المبيعات والفواتير (إعادة تعيين أرقام الفواتير إلى INV-0001)")
           opt_purch = st.checkbox("تصفير حركات وسجلات المشتريات (مع الاحتفاظ بقاعدة أسماء وبيانات المورد الأساسية)")
           opt_stock = st.checkbox("تصفير كميات مخزون الأصناف بالكامل إلى الصفر")
@@ -593,8 +591,7 @@ elif choice == "⚙️ إدارة الجرد والعمليات السنوية �
       conn.close()
 
 elif choice == "📁 استيراد وتحديث الأصناف من Excel":
-  st.header("📁 استيراد وتحديث الأصناف عبر ملف Excel (دعم الملفات بالعناوين أو بدونها)")
-  st.info("💡 ملاحظة هامة: النظام يقرأ ملف الإكسيل بمرونة تامة، ويتجاوز سطر العناوين لو وجد، ويحدث المتغيرات بدون أي دبلرة.")
+  st.header("📁 استيراد وتحديث الأصناف عبر ملف Excel")
   
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
@@ -611,6 +608,7 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
       if st.form_submit_button("📥 تنفيذ استيراد وتحديث الأصناف"):
           if up_excel:
               try:
+                  # قراءة ملف الإكسيل بمرونة تامة لتجنب أي أخطاء في الأعمدة
                   df_exc = pd.read_excel(up_excel, header=None)
                   cur_ex = conn.cursor()
                   count_imp = 0
@@ -618,26 +616,28 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                   
                   for idx, row in df_exc.iterrows():
                       if row.isna().all(): continue
-                      row_list = list(row.dropna().values)
-                      if len(row_list) < 2: continue
+                      # استخراج القيم غير الفارغة من الصف بمرونة
+                      row_vals = [str(val).strip() for val in row.values if pd.notna(val)]
+                      if not row_vals or len(row_vals) < 2: continue
                       
-                      first_val = str(row_list[0]).strip().lower()
-                      # تخطي سطر العناوين لو وُجد
-                      if first_val in ["code", "كود", "item_code", "رقم", "كود الصنف"] or 'كود' in first_val:
+                      # التحقق من تخطي سطر العناوين لو وجد
+                      first_str = row_vals[0].lower()
+                      if first_str in ["code", "كود", "item_code", "رقم", "كود الصنف"] or 'كود' in first_str:
                           continue
                       
-                      code = str(row_list[0]).strip()
-                      name = str(row_list[1]).strip() if len(row_list)>1 else "صنف"
+                      # استخراج الأعمدة حسب الترتيب (الكود، الاسم، الكمية، سعر الشراء، سعر البيع، تاريخ الصلاحية)
+                      code = row_vals[0]
+                      name = row_vals[1]
                       if name.lower() in ["nan", "null", "item"] or name in ["الصنف", "اسم الصنف", "صنف"]: continue
                       
-                      try: qty = float(row_list[2]) if len(row_list)>2 else 0.0
+                      try: qty = float(row_vals[2]) if len(row_vals) > 2 else 0.0
                       except: qty = 0.0
-                      try: b_pr = float(row_list[3]) if len(row_list)>3 else 0.0
+                      try: b_pr = float(row_vals[3]) if len(row_vals) > 3 else 0.0
                       except: b_pr = 0.0
-                      try: s_pr = float(row_list[4]) if len(row_list)>4 else 10.0
+                      try: s_pr = float(row_vals[4]) if len(row_vals) > 4 else 10.0
                       except: s_pr = 10.0
                       
-                      row_exp_date = str(row_list[5]).strip() if len(row_list) > 5 else expiry_date_in
+                      row_exp_date = row_vals[5] if len(row_vals) > 5 else expiry_date_in
                       
                       for tid in target_ids:
                           exist_item = cur_ex.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (tid, code)).fetchone()
@@ -649,7 +649,7 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                                              (tid, code, name, qty, b_pr, s_pr, row_exp_date, 1 if no_expiry_flag else 0))
                       count_imp += 1
                   conn.commit()
-                  st.success(f"🎉 تم استيراد وتحديث ({count_imp}) صنف بنجاح وبدون أي أخطاء!")
+                  st.success(f"🎉 تمت عملية استيراد وتحديث ({count_imp}) صنف بنجاح تام!")
               except Exception as e:
                   st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
   conn.close()
