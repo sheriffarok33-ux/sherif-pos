@@ -648,7 +648,7 @@ elif choice == "📁 استيراد وتحديث الأصناف من Excel":
                                              (tid, code, name, qty, b_pr, s_pr, row_exp_date, 1 if no_expiry_flag else 0))
                       count_imp += 1
                   conn.commit()
-                  st.success(f"🎉 تم استيراد وتحديث ({count_imp}) صنف بنجاح تام وبدون أي أخطاء!")
+                  st.success(f"🎉 تمت عملية استيراد وتحديث ({count_imp}) صنف بنجاح تام وبدون أي أخطاء!")
               except Exception as e:
                   st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
   conn.close()
@@ -999,7 +999,7 @@ elif choice == "📊 الأرباح والخسائر والتقارير":
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين وصلاحياتهم الفردية":
-  st.header("👥 إدارة المستخدمين والصلاحيات الفردية (إعطاء صلاحيات فرعية للموظفين)")
+  st.header("👥 إدارة المستخدمين وصلاحياتهم الفردية (إعطاء صلاحيات فرعية للموظفين)")
   conn = get_db_connection()
   
   tab_u1, tab_u2 = st.tabs(["👥 حسابات المستخدمين", "🛡️ إعطاء صلاحيات فردية للموظف"])
