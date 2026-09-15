@@ -402,7 +402,6 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
             elif action_type == "حذف مشتريات": conn.execute("DELETE FROM purchases WHERE id = ?", (target_id,))
             elif action_type == "حذف فاتورة": conn.execute("DELETE FROM invoices WHERE id = ?", (target_id,))
             elif action_type == "حذف مستخدم":
-                # حماية المدير العام من حذف حسابات الأدمن
                 target_user = conn.execute("SELECT role FROM users WHERE id = ?", (target_id,)).fetchone()
                 if target_user and target_user["role"] == "Admin" and st.session_state["role"] == "General_Supervisor":
                     st.error("❌ عذراً، لا تملك صلاحية حذف حساب الأدمن الأساسي!")
@@ -805,7 +804,7 @@ elif choice == "💰 المصروفات":
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
   with st.form("expense_form", clear_on_submit=True):
-      exp_type = st.radio("نوع المصروف:", ["خاص بفرع معين", "🌍 مصروف المخزن الرئيسي (يُسجل كإجمالي بالمخزن ويُوزع حصته بالتساوي على كافة الفروع)"])
+      exp_type = st.radio("نوع المصروف:", ["خاص بفرع معين", "🌍 مصروف المخزن الرئيسي (يُسجل كإجمالي بالمخزن ويُقسَم نصيب كل فرع بدقة وتلقائية)"])
       sel_b_name = st.selectbox("اختر الفرع:", list(b_dict.keys())) if exp_type == "خاص بفرع معين" else ""
       exp_amount = st.number_input("المبلغ الإجمالي (د.ل):", min_value=0.0, value=0.0, step=0.5)
       exp_desc = st.text_input("البيان (مثال: صيانة المخزن، فاتورة نقل عامة..):")
@@ -819,22 +818,21 @@ elif choice == "💰 المصروفات":
                   cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (?, ?, ?, 0, ?)", (b_dict[sel_b_name], exp_amount, exp_desc.strip(), date_str))
               else:
                   total_branches_count = len(branches)
-                  divided_amount = exp_amount / total_branches_count if total_branches_count > 0 else exp_amount
-                  cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (NULL, ?, ?, 1, ?)", (exp_amount, f"[إجمالي مصروف مخزن موزّع] {exp_desc.strip()}", date_str))
+                  # حساب نصيب كل فرع من القسمة العادلة
+                  share_per_branch = exp_amount / total_branches_count if total_branches_count > 0 else exp_amount
+                  cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (NULL, ?, ?, 1, ?)", (exp_amount, f"[مصروف مخزن رئيسي إجمالي - نصيب الفروع: {share_per_branch:,.2f} لكل فرع] {exp_desc.strip()}", date_str))
               conn.commit()
-              st.success("💸 تم حفظ المصروف وإثباته بالسجلات بنجاح!")
+              st.success("💸 تم حفظ المصروف وتقسيم الحصص بالتساوي على الفروع بنجاح تام!")
               st.rerun()
   
-  exp_df = pd.read_sql("SELECT expenses.id AS 'رقم', IFNULL(branches.branch_name, '🌍 مصروف مخزن رئيسي (إجمالي)') AS 'الجهة / الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
+  exp_df = pd.read_sql("SELECT expenses.id AS 'رقم', IFNULL(branches.branch_name, '🌍 مصروف مخزن رئيسي (إجمالي وتوزيع عادل)') AS 'الجهة / الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
   if not exp_df.empty:
-      # عرض الإجمالي تحت جدول المصروفات
       total_exp = exp_df["المبلغ"].sum()
       st.dataframe(exp_df, use_container_width=True)
       st.markdown(f"### 📌 إجمالي المصروفات المسجلة: <span style='color: #0284c7;'>{total_exp:,.2f} د.ل</span>", unsafe_allow_html=True)
       
       st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(exp_df), file_name="expenses.xlsx")
       
-      # خاصية التحكم في الحذف
       st.markdown("---")
       del_exp_id = st.selectbox("اختر رقم المصروف للحذف (إذا أردت مسحه):", exp_df["رقم"].tolist())
       if st.button("🗑️ حذف المصروف المختار نهائياً", type="primary"):
@@ -941,9 +939,9 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
   conn.close()
 
 elif choice == "📥 المشتريات والموردين":
-  st.header("📥 المشتريات والموردين (متوسط التكلفة الحقيقي وتقرير الدائن والمدين لكل تاجر وإدارة الحذف)")
+  st.header("📥 المشتريات والموردين (متوسط التكلفة الحقيقي وتقرير الدائن والمدين لكل تاجر)")
   conn = get_db_connection()
-  tab_p1, tab_p2, tab_p3 = st.tabs(["➕ فاتورة مشتريات (تفريغ تلقائي)", "👥 الموردين والديون والحذف", "📋 سجل المشتريات والحذف"])
+  tab_p1, tab_p2, tab_p3 = st.tabs(["➕ فاتورة مشتريات (تفريغ تلقائي)", "👥 الموردين وحسابات الدائن والمدين", "📋 سجل المشتريات"])
   
   with tab_p1:
       branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
