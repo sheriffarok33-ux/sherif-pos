@@ -373,11 +373,9 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
 def checkout_payment_dialog(b_id, g_tot):
     st.subheader(f"إجمالي الفاتورة المطلوب: {g_tot:,.2f} د.ل")
     
-    # بيانات الزبون لبرنامج الولاء وتجميع البيانات
     cust_name = st.text_input("اسم الزبون:", value="زبون نقدي")
     cust_phone = st.text_input("رقم هاتف الزبون (واتساب):", value="")
     
-    # فحص نظام الولاء والخصومات (لو مشتريات الزبون الإجمالية تتخطى 1000 دينار)
     conn = get_db_connection()
     applied_discount = 0.0
     if cust_phone.strip():
@@ -414,16 +412,13 @@ def checkout_payment_dialog(b_id, g_tot):
 
             if can_proceed:
                 cur_in = conn.cursor()
-                # حفظ الفاتورة مع بيانات الزبون
                 cur_in.execute("INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method) VALUES (?, ?, ?, ?, ?, ?)", 
                                (target_inv_branch, st.session_state["user_id"], cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method))
                 
-                # خصم المخزون
                 for c_item in st.session_state["cart"]:
                     if c_item["id"] != 99999:
                         conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
                 
-                # حفظ وتحديث بيانات العميل لنظام الولاء
                 if cust_phone.strip() and cust_name.strip() != "زبون نقدي":
                     existing_cust = cur_in.execute("SELECT id, total_purchases FROM customers WHERE phone = ?", (cust_phone.strip(),)).fetchone()
                     if existing_cust:
@@ -556,7 +551,7 @@ dashboard_cards = {
     "📦 إدارة المخزن والفروع وتعديل الأسعار": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإدارة وتعديل أسعار الفروع"},
     "➕ إضافة فائض أو مرتجع وتوالف": {"icon": "➕", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "إضافة فائض للأصناف التي رصيدها صفر"},
     "🔄 نقل وتحويل وتزويد الفروع (مع الأرشفة)": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تزويد الفروع والتحويلات بسلة أصناف متعددة"},
-    "📊 مركز التقارير وإدارة الفواتير والعملاء (واتساب والولاء)": {"icon": "📊", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "تصميم وفواتير وطباعة وإدارة العملاء والديون"}
+    "📊 مركز التقارير والإدارة الشاملة (مع التصدير وحركة الفروع)": {"icon": "📊", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "المركّز الموحد للتقارير والأرباح والتصدير لـ Excel"}
 }
 
 # --- محتوى الصفحات ---
@@ -1241,7 +1236,8 @@ elif choice == "📊 مركز التقارير والإدارة الشاملة (
               """, unsafe_allow_html=True)
               
               wa_text = f"مجموعة أبو زيد التجارية%0Aفرع: {inv_data['branch_name']}%0Aفاتورة رقم: #{inv_data['id']}%0Aالزبون: {inv_data['customer_name']}%0Aالإجمالي: {inv_data['total_amount']:,.2f} د.ل%0Aشكراً لتعاملكم معنا ☕✨"
-              st.markdown(f'<a href="https://wa.me/{inv_data[\'customer_phone\']}?text={wa_text}" target="_blank"><button style="background: #25d366; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 إرسال الفاتورة عبر واتساب للزبون</button></a>', unsafe_allow_html=True)
+              c_phone = inv_data['customer_phone'] if inv_data['customer_phone'] else ""
+              st.markdown(f'<a href="https://wa.me/{c_phone}?text={wa_text}" target="_blank"><button style="background: #25d366; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 إرسال الفاتورة عبر واتساب للزبون</button></a>', unsafe_allow_html=True)
       else:
           st.info("لا توجد فواتير مسجلة بعد.")
 
