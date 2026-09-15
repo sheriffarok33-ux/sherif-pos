@@ -58,7 +58,7 @@ DEFAULT_MENUS = [
     "⭐ لوحة الأصناف المفضلة (1-20)",
     "📦 إدارة المخزن والفروع وتعديل الأسعار",
     "➕ إضافة فائض أو مرتجع وتوالف",
-    "🔄 نقل وتحويل وتزويد الفروع (مع الأرشفة)",
+    "🔄 تزويد الفروع من المخزن الرئيسي (مع الأرشفة)",
     "🏢 إدارة وتغيير أسماء الفروع والحذف",
     "📁 استيراد وتحديث الأصناف من Excel",
     "💰 تسجيل المصروفات والمصروف العام",
@@ -341,10 +341,51 @@ def set_page(page_name): st.session_state["page"] = page_name
 
 @st.dialog("🌟 ترحيب النظام")
 def welcome_user_dialog():
-    st.success(f"**أهلاً بك يا عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕✨**")
+    st.success(f"**أهلاً بك في عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕✨**")
     if st.button("OK (موافق)", use_container_width=True, type="primary"):
         st.session_state["show_welcome_dialog"] = False
         st.rerun()
+
+@st.dialog("🖨️ إعادة طباعة وعرض آخر فاتورة")
+def reprint_last_invoice_dialog():
+    conn = get_db_connection()
+    last_inv = conn.execute("SELECT invoices.*, branches.branch_name FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id ORDER BY invoices.id DESC LIMIT 1").fetchone()
+    if last_inv:
+        st.markdown(f"""
+            <div style="background: white; padding: 20px; border-radius: 10px; border: 2px solid #0284c7; color: black; max-width: 400px; margin: auto; font-family: 'Tajawal', sans-serif;">
+                <h3 style="text-align: center; color: #0284c7; margin:0;">🥜 مجموعة أبو زيد التجارية</h3>
+                <p style="text-align: center; margin:5px 0;">فرع: <b>{last_inv['branch_name']}</b> | فاتورة رقم: <b>#{last_inv['id']}</b></p>
+                <p style="text-align: center; margin:0; font-size: 14px;">الزبون: <b>{last_inv['customer_name']}</b> ({last_inv['customer_phone']})</p>
+                <p style="text-align: center; margin:0 0 15px 0; font-size: 13px; color: #64748b;">التاريخ: {last_inv['created_at']}</p>
+                <hr style="border: 0; border-top: 1px dashed #cbd5e1;">
+                <h4 style="text-align: right; color: #1e293b;">إجمالي المبلغ: <span style="color: #0284c7;">{last_inv['total_amount']:,.2f} د.ل</span></h4>
+                <p>طريقة الدفع: {last_inv['payment_method']}</p>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        wa_text = f"مجموعة أبو زيد التجارية%0Aفرع: {last_inv['branch_name']}%0Aفاتورة رقم: #{last_inv['id']}%0Aالزبون: {last_inv['customer_name']}%0Aالإجمالي: {last_inv['total_amount']:,.2f} د.ل%0Aشكراً لتعاملكم معنا ☕✨"
+        c_phone = last_inv['customer_phone'] if last_inv['customer_phone'] else ""
+        st.markdown(f'<a href="https://wa.me/{c_phone}?text={wa_text}" target="_blank"><button style="background: #25d366; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 10px;">💬 إرسال الفاتورة عبر واتساب للزبون</button></a>', unsafe_allow_html=True)
+    else:
+        st.info("لا توجد فواتير سابقة لإعادة طباعتها.")
+    conn.close()
+    if st.button("إغلاق"):
+        st.rerun()
+
+@st.dialog("⚡ إضافة صنف سريع / خدمة سريعة (F10)")
+def fast_service_dialog():
+    st.subheader("إضافة صنف أو خدمة سريعة للسلة الحالية")
+    with st.form("fast_serv_form", clear_on_submit=True):
+        f_name = st.text_input("اسم الخدمة / الصنف السريع:")
+        f_price = st.number_input("السعر (د.ل):", min_value=0.0, value=0.0, step=0.5, format="%.2f")
+        f_qty = st.number_input("الكمية:", min_value=0.0, value=1.0, step=0.1, format="%.2f")
+        if st.form_submit_button("➕ اعتماد وإضافة للسلة"):
+            if f_name and f_price > 0 and f_qty > 0:
+                st.session_state["cart"].append({
+                    "id": 88888, "name": f"سريع: {f_name.strip()}", "price": f_price, "qty": f_qty, "total": f_price * f_qty
+                })
+                st.success("✅ تمت إضافة الصنف السريع للسلة بنجاح!")
+                st.rerun()
 
 @st.dialog("🔒 تأكيد كلمة السر المطلوبة")
 def admin_confirm_dialog(action_type, target_id, target_name=""):
@@ -550,7 +591,7 @@ dashboard_cards = {
     "⭐ لوحة الأصناف المفضلة (1-20)": {"icon": "⭐", "color": "linear-gradient(135deg, #e11d48, #be123c)", "desc": "تعديل واختيار الأصناف المفضلة للكاشير"},
     "📦 إدارة المخزن والفروع وتعديل الأسعار": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإدارة وتعديل أسعار الفروع"},
     "➕ إضافة فائض أو مرتجع وتوالف": {"icon": "➕", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "إضافة فائض للأصناف التي رصيدها صفر"},
-    "🔄 نقل وتحويل وتزويد الفروع (مع الأرشفة)": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تزويد الفروع والتحويلات بسلة أصناف متعددة"},
+    "🔄 تزويد الفروع من المخزن الرئيسي (مع الأرشفة)": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تزويد الفروع بضاعة من المخزن الرئيسي"},
     "📊 مركز التقارير والإدارة الفواتير والعملاء (واتساب والولاء)": {"icon": "📊", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "التقارير، طباعة وإرسال الفواتير عبر واتساب"}
 }
 
@@ -861,11 +902,11 @@ elif choice == "➕ إضافة فائض أو مرتجع وتوالف":
       st.success("✨ ممتاز! لا توجد أي أصناف برصيد (صفر) في هذا الفرع حالياً.")
   conn.close()
 
-elif choice == "🔄 نقل وتحويل وتزويد الفروع (مع الأرشفة)":
-  st.header("🔄 نقل وتحويل وتزويد الفروع (مع حفظ أرشيف الفواتير وإمكانية الإلغاء والاسترجاع)")
+elif choice == "🔄 تزويد الفروع من المخزن الرئيسي (مع الأرشفة)":
+  st.header("🔄 تزويد الفروع من المخزن الرئيسي (سلة أصناف متعددة مع حفظ الأرشيف والاسترجاع)")
   conn = get_db_connection()
   
-  tab_tr1, tab_tr2 = st.tabs(["🚀 تزويد أو تحويل بضاعة للفرع", "📋 سجل عمليات التزويد والتحويل (إلغاء واسترجاع)"])
+  tab_tr1, tab_tr2 = st.tabs(["🚀 تزويد بضاعة للفرع من المخزن", "📋 سجل عمليات التزويد والتحويل (إلغاء واسترجاع)"])
   
   with tab_tr1:
       main_store = conn.execute("SELECT id, branch_name FROM branches WHERE branch_type = 'مخزن' LIMIT 1").fetchone()
@@ -875,7 +916,7 @@ elif choice == "🔄 نقل وتحويل وتزويد الفروع (مع الأ�
           
           if other_branches:
               b_opts = {b["branch_name"]: b["id"] for b in other_branches}
-              sel_target_b = st.selectbox("اختر الفرع المستهدف لتزويده بالبضاعة:", list(b_opts.keys()))
+              sel_target_b = st.selectbox("اختر الفرع المستهدف لتزويده من المخزن الرئيسي:", list(b_opts.keys()))
               target_b_id = b_opts[sel_target_b]
               
               if "transfer_cart" not in st.session_state: st.session_state["transfer_cart"] = []
@@ -885,8 +926,8 @@ elif choice == "🔄 نقل وتحويل وتزويد الفروع (مع الأ�
               
               with st.form("add_transfer_item_form", clear_on_submit=True):
                   if m_opts:
-                      chosen_m_label = st.selectbox("اختر الصنف من المخزن:", list(m_opts.keys()))
-                      t_qty = st.number_input("الكمية المراد إرسالها (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
+                      chosen_m_label = st.selectbox("اختر الصنف من المخزن الرئيسي:", list(m_opts.keys()))
+                      t_qty = st.number_input("الكمية المراد إرسالها للفرع (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
                       if st.form_submit_button("➕ إضافة الصنف إلى سلة التزويد"):
                           if t_qty > 0:
                               it_obj = m_opts[chosen_m_label]
@@ -899,7 +940,7 @@ elif choice == "🔄 نقل وتحويل وتزويد الفروع (مع الأ�
                                   st.success(f"✅ تمت إضافة ({it_obj['item_name']}) للسلة.")
                                   st.rerun()
                               else:
-                                  st.warning("⚠️ الكمية المطلوبة تتجاوز المتاح بالمخزن.")
+                                  st.warning("⚠️ الكمية المطلوبة تتجاوز المتاح بالمخزن الرئيسي.")
                   else:
                       st.warning("⚠️ لا توجد أصناف متاحة بالمخزن الرئيسي.")
                       
@@ -926,7 +967,7 @@ elif choice == "🔄 نقل وتحويل وتزويد الفروع (مع الأ�
                                     (main_id, target_b_id, full_details))
                       conn.commit()
                       st.session_state["transfer_cart"] = []
-                      st.success(f"🎉 تم تزويد فرع ({sel_target_b}) بكافة الأصناف بنجاح وتلقائياً!")
+                      st.success(f"🎉 تم تزويد فرع ({sel_target_b}) من المخزن الرئيسي بكافة الأصناف بنجاح!")
                       st.rerun()
                       
                   if st.button("🗑️ تفريغ السلة"):
@@ -1129,8 +1170,8 @@ elif choice == "🥜 التحميص والخلط والمكسرات المشكل
       st.info("لا توجد خامات متوفرة بالمخزن الرئيسي.")
   conn.close()
 
-elif choice == "📊 مركز التقارير والإدارة الشاملة (مع التصدير وحركة الفروع)":
-  st.header("📊 مركز التقارير والإدارة الشاملة (الأرباح، حركة الفروع، طباعة الفواتير وإرسالها عبر واتساب)")
+elif choice == "📊 مركز التقارير والإدارة الفواتير والعملاء (واتساب والولاء)":
+  st.header("📊 مركز التقارير والإدارة الشاملة (الأرباح، حركة الفروع، طباعة وفواتير واتساب)")
   conn = get_db_connection()
   
   tab_c1, tab_c2, tab_c3, tab_c4, tab_c5 = st.tabs(["📊 الأرباح والخسائر والتقارير", "📦 تقرير حركة صنف (مع قائمة الفروع)", "📈 مبيعات الفروع بالفترة", "🖨️ طباعة وإرسال الفواتير (واتساب)", "🗑️ إدارة وحذف الفواتير والمصروفات"])
@@ -1239,11 +1280,9 @@ elif choice == "📊 مركز التقارير والإدارة الشاملة (
               """
               st.markdown(invoice_html, unsafe_allow_html=True)
               
-              # زر التنزيل كنص للفاتورة
               inv_txt_data = f"مجموعة أبو زيد التجارية\nفرع: {inv_data['branch_name']}\nرقم الفاتورة: #{inv_data['id']}\nالزبون: {inv_data['customer_name']}\nالإجمالي: {inv_data['total_amount']:,.2f} د.ل\nالتاريخ: {inv_data['created_at']}"
               st.download_button("📥 تنزيل الفاتورة (ملف نصي)", data=inv_txt_data, file_name=f"invoice_{inv_data['id']}.txt", mime="text/plain")
               
-              # رابط الواتساب المباشر
               wa_text = f"مجموعة أبو زيد التجارية%0Aفرع: {inv_data['branch_name']}%0Aفاتورة رقم: #{inv_data['id']}%0Aالزبون: {inv_data['customer_name']}%0Aالإجمالي: {inv_data['total_amount']:,.2f} د.ل%0Aشكراً لتعاملكم معنا ☕✨"
               c_phone = inv_data['customer_phone'] if inv_data['customer_phone'] else ""
               st.markdown(f'<a href="https://wa.me/{c_phone}?text={wa_text}" target="_blank"><button style="background: #25d366; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 10px;">💬 إرسال الفاتورة عبر واتساب للزبون</button></a>', unsafe_allow_html=True)
@@ -1402,11 +1441,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                   st.warning("السلة فارغة!")
       with hk_col2:
           if st.button("F2: إعادة طباعة آخر فاتورة", use_container_width=True):
-              last_inv = conn.execute("SELECT id, total_amount, created_at FROM invoices ORDER BY id DESC LIMIT 1").fetchone()
-              if last_inv:
-                  st.info(f"🖨️ جاري إعادة طباعة الفاتورة رقم #{last_inv['id']} بمبلغ {last_inv['total_amount']} د.ل")
-              else:
-                  st.warning("لا توجد فواتير سابقة لإعادة طباعتها.")
+              reprint_last_invoice_dialog()
       with hk_col3:
           if st.button("F3: تفريغ السلة", use_container_width=True):
               st.session_state["cart"] = []
@@ -1417,11 +1452,7 @@ elif choice == "🛒 نقطة البيع (POS)":
               st.info("💡 خاصية الخصم جاهزة للتطبيق على إجمالي الفاتورة.")
       with hk_col5:
           if st.button("F10: إضافة خدمة سريعة", use_container_width=True):
-              st.session_state["cart"].append({
-                  "id": 99999, "name": "خدمة عامة / توصيل", "price": 0.0, "qty": 1.0, "total": 0.0
-              })
-              st.success("✅ تمت إضافة خدمة سريعة للسلة!")
-              st.rerun()
+              fast_service_dialog()
 
       st.markdown("---")
       
