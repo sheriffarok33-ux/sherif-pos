@@ -290,11 +290,12 @@ def get_label(orig_name):
     return row["custom_name"] if row else orig_name
 
 def verify_admin_password(pass_input):
-    if st.session_state["role"] in ["Admin", "General_Supervisor", "Viewer"]:
+    role = st.session_state.get("role", "")
+    if role in ["Admin", "General_Supervisor"]:
         conn = get_db_connection()
-        admin_user = conn.execute("SELECT * FROM users WHERE id = ? AND password = ?", (st.session_state["user_id"], pass_input)).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE id = ? AND password = ?", (st.session_state["user_id"], pass_input)).fetchone()
         conn.close()
-        return admin_user is not None
+        return user is not None
     return False
 
 def check_user_permission(menu_name):
@@ -400,7 +401,13 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
             elif action_type == "حذف مصروف": conn.execute("DELETE FROM expenses WHERE id = ?", (target_id,))
             elif action_type == "حذف مشتريات": conn.execute("DELETE FROM purchases WHERE id = ?", (target_id,))
             elif action_type == "حذف فاتورة": conn.execute("DELETE FROM invoices WHERE id = ?", (target_id,))
-            elif action_type == "حذف مستخدم": conn.execute("DELETE FROM users WHERE id = ?", (target_id,))
+            elif action_type == "حذف مستخدم":
+                # حماية المدير العام من حذف حسابات الأدمن
+                target_user = conn.execute("SELECT role FROM users WHERE id = ?", (target_id,)).fetchone()
+                if target_user and target_user["role"] == "Admin" and st.session_state["role"] == "General_Supervisor":
+                    st.error("❌ عذراً، لا تملك صلاحية حذف حساب الأدمن الأساسي!")
+                else:
+                    conn.execute("DELETE FROM users WHERE id = ?", (target_id,))
             
             conn.commit()
             conn.close()
@@ -792,37 +799,46 @@ elif choice == "📦 إدارة المخزن والفروع":
   conn.close()
 
 elif choice == "💰 المصروفات":
-  st.header("💰 تسجيل المصروفات وتوزيع مصروف المخزن الرئيسي ديناميكياً على كافة الفروع الحالية والمستقبلية")
+  st.header("💰 تسجيل المصروفات وإدارة حذفها مع إجمالي المبالغ")
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
   with st.form("expense_form", clear_on_submit=True):
-      exp_type = st.radio("نوع المصروف:", ["خاص بفرع معين", "🌍 مصروف المخزن الرئيسي (يُقسم ويُوزع ديناميكياً على كافة الفروع الحالية والمستقبلية بالتساوي)"])
+      exp_type = st.radio("نوع المصروف:", ["خاص بفرع معين", "🌍 مصروف المخزن الرئيسي (يُسجل كإجمالي بالمخزن ويُوزع حصته بالتساوي على كافة الفروع)"])
       sel_b_name = st.selectbox("اختر الفرع:", list(b_dict.keys())) if exp_type == "خاص بفرع معين" else ""
       exp_amount = st.number_input("المبلغ الإجمالي (د.ل):", min_value=0.0, value=0.0, step=0.5)
       exp_desc = st.text_input("البيان (مثال: صيانة المخزن، فاتورة نقل عامة..):")
       exp_date_in = st.date_input("تاريخ المصروف الفعلي:", value=datetime.now())
       
-      if st.form_submit_button("💾 حفظ المصروف وتقسيمه بالسجلات"):
+      if st.form_submit_button("💾 حفظ المصروف وإثباته بالسجلات"):
           if exp_amount > 0 and exp_desc:
               cur_ex = conn.cursor()
               date_str = exp_date_in.strftime('%Y-%m-%d')
               if exp_type == "خاص بفرع معين":
                   cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (?, ?, ?, 0, ?)", (b_dict[sel_b_name], exp_amount, exp_desc.strip(), date_str))
               else:
-                  # جلب عدد الفروع الحالية ديناميكياً وتقسيم المبلغ الإجمالي عليها بالتساوي
                   total_branches_count = len(branches)
                   divided_amount = exp_amount / total_branches_count if total_branches_count > 0 else exp_amount
-                  cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (NULL, ?, ?, 1, ?)", (divided_amount, f"[مصروف مخزن مقسم على {total_branches_count} فروع] {exp_desc.strip()}", date_str))
+                  cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (NULL, ?, ?, 1, ?)", (exp_amount, f"[إجمالي مصروف مخزن موزّع] {exp_desc.strip()}", date_str))
               conn.commit()
-              st.success(f"💸 تم حفظ المصروف وتقسيمه على الفروع ديناميكياً بنجاح تام!")
+              st.success("💸 تم حفظ المصروف وإثباته بالسجلات بنجاح!")
               st.rerun()
   
-  exp_df = pd.read_sql("SELECT expenses.id AS 'رقم', IFNULL(branches.branch_name, '🌍 مصروف مخزن مقسم ديناميكياً على الفروع') AS 'الجهة / الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
+  exp_df = pd.read_sql("SELECT expenses.id AS 'رقم', IFNULL(branches.branch_name, '🌍 مصروف مخزن رئيسي (إجمالي)') AS 'الجهة / الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
   if not exp_df.empty:
+      # عرض الإجمالي تحت جدول المصروفات
+      total_exp = exp_df["المبلغ"].sum()
       st.dataframe(exp_df, use_container_width=True)
+      st.markdown(f"### 📌 إجمالي المصروفات المسجلة: <span style='color: #0284c7;'>{total_exp:,.2f} د.ل</span>", unsafe_allow_html=True)
+      
       st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(exp_df), file_name="expenses.xlsx")
+      
+      # خاصية التحكم في الحذف
+      st.markdown("---")
+      del_exp_id = st.selectbox("اختر رقم المصروف للحذف (إذا أردت مسحه):", exp_df["رقم"].tolist())
+      if st.button("🗑️ حذف المصروف المختار نهائياً", type="primary"):
+          admin_confirm_dialog("حذف مصروف", del_exp_id)
   conn.close()
 
 elif choice == "➕ الفائض والتوالف والمرتجعات":
@@ -925,9 +941,9 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
   conn.close()
 
 elif choice == "📥 المشتريات والموردين":
-  st.header("📥 المشتريات والموردين (متوسط التكلفة الحقيقي وتقرير الدائن والمدين لكل تاجر)")
+  st.header("📥 المشتريات والموردين (متوسط التكلفة الحقيقي وتقرير الدائن والمدين لكل تاجر وإدارة الحذف)")
   conn = get_db_connection()
-  tab_p1, tab_p2, tab_p3 = st.tabs(["➕ فاتورة مشتريات (تفريغ تلقائي للسلة)", "👥 الموردين وحسابات الدائن والمدين", "📋 سجل المشتريات"])
+  tab_p1, tab_p2, tab_p3 = st.tabs(["➕ فاتورة مشتريات (تفريغ تلقائي)", "👥 الموردين والديون والحذف", "📋 سجل المشتريات والحذف"])
   
   with tab_p1:
       branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
@@ -957,9 +973,10 @@ elif choice == "📥 المشتريات والموردين":
                       st.success("✅ تمت الإضافة!")
                       st.rerun()
       if st.session_state["purch_cart"]:
-          st.dataframe(pd.DataFrame(st.session_state["purch_cart"])[["code", "name", "qty", "price", "total"]], use_container_width=True)
+          df_pc = pd.DataFrame(st.session_state["purch_cart"])[["code", "name", "qty", "price", "total"]]
           p_g_tot = sum([x["total"] for x in st.session_state["purch_cart"]])
-          st.metric("الإجمالي", f"{p_g_tot:,.2f} د.ل")
+          st.dataframe(df_pc, use_container_width=True)
+          st.markdown(f"### 📌 إجمالي سلة المشتريات: <span style='color: #0284c7;'>{p_g_tot:,.2f} د.ل</span>", unsafe_allow_html=True)
           
           if st.button("💾 حفظ الفاتورة (تفريغ تلقائي للسلة)", type="primary"):
               if p_supp_name != "لا توجد موردين" and inv_num_in.strip():
@@ -986,7 +1003,7 @@ elif choice == "📥 المشتريات والموردين":
               else:
                   st.warning("⚠️ اختر المورد واكتب رقم الفاتورة.")
   with tab_p2:
-      st.subheader("👥 تقرير الدائن والمدين (مستحقات وأرصدة كل تاجر ومورد)")
+      st.subheader("👥 تقرير الدائن والمدين وإدارة الحذف")
       with st.form("new_sup", clear_on_submit=True):
           sname = st.text_input("اسم المورد الجديد:")
           sphone = st.text_input("الهاتف:")
@@ -997,13 +1014,26 @@ elif choice == "📥 المشتريات والموردين":
                   st.success("🎉 تم الحفظ!")
                   st.rerun()
               except: st.error("⚠️ موجود مسبقاً.")
-      supp_df = pd.read_sql("SELECT supplier_name AS 'اسم التاجر / المورد', phone AS 'الهاتف', balance AS 'المستحقات المالية (دائن / مدين) د.ل' FROM suppliers", conn)
+      supp_df = pd.read_sql("SELECT id, supplier_name AS 'اسم التاجر / المورد', phone AS 'الهاتف', balance AS 'المستحقات (دائن / مدين) د.ل' FROM suppliers", conn)
       if not supp_df.empty: 
+          tot_debts = supp_df["المستحقات (دائن / مدين) د.ل"].sum()
           st.dataframe(supp_df, use_container_width=True)
+          st.markdown(f"### 📌 إجمالي الديون والمستحقات للموردين: <span style='color: #0284c7;'>{tot_debts:,.2f} د.ل</span>", unsafe_allow_html=True)
           st.download_button("📥 تصدير تقرير الديون لـ Excel", data=to_excel(supp_df), file_name="suppliers_debts.xlsx")
+          
+          del_sup_id = st.selectbox("اختر رقم المورد للحذف:", supp_df["id"].tolist())
+          if st.button("🗑️ حذف المورد المختار", type="primary"):
+              admin_confirm_dialog("حذف مورد", del_sup_id)
   with tab_p3:
-      p_df = pd.read_sql("SELECT purchases.invoice_number AS 'رقم الفاتورة', branches.branch_name AS 'الفرع', purchases.supplier_name AS 'المورد', purchases.total_cost AS 'الإجمالي', purchases.invoice_date AS 'التاريخ' FROM purchases LEFT JOIN branches ON purchases.branch_id=branches.id ORDER BY purchases.id DESC", conn)
-      if not p_df.empty: st.dataframe(p_df, use_container_width=True)
+      p_df = pd.read_sql("SELECT purchases.id AS 'مسلسل', purchases.invoice_number AS 'رقم الفاتورة', branches.branch_name AS 'الفرع', purchases.supplier_name AS 'المورد', purchases.total_cost AS 'الإجمالي', purchases.invoice_date AS 'التاريخ' FROM purchases LEFT JOIN branches ON purchases.branch_id=branches.id ORDER BY purchases.id DESC", conn)
+      if not p_df.empty: 
+          tot_purch = p_df["الإجمالي"].sum()
+          st.dataframe(p_df, use_container_width=True)
+          st.markdown(f"### 📌 إجمالي المشتريات المسجلة: <span style='color: #0284c7;'>{tot_purch:,.2f} د.ل</span>", unsafe_allow_html=True)
+          
+          del_p_id = st.selectbox("اختر رقم مسلسل الفاتورة للحذف:", p_df["مسلسل"].tolist())
+          if st.button("🗑️ حذف فاتورة المشتريات المحددة", type="primary"):
+              admin_confirm_dialog("حذف مشتريات", del_p_id)
   conn.close()
 
 elif choice == "🥜 التحميص والخلط والمكسرات":
@@ -1068,7 +1098,7 @@ elif choice == "🥜 التحميص والخلط والمكسرات":
   conn.close()
 
 elif choice == "📊 التقارير والأرباح":
-  st.header("📊 مركز التقارير، الأرباح، وفواتير المبيعات")
+  st.header("📊 مركز التقارير، الأرباح، وفواتير المبيعات مع إجمالي التوتال")
   conn = get_db_connection()
   
   tab_r1, tab_r2, tab_r3, tab_r4 = st.tabs(["📊 الأرباح والخسائر", "📦 حركة صنف", "📈 مبيعات الفترات", "🖨️ طباعة وتنزيل الفواتير"])
@@ -1084,9 +1114,9 @@ elif choice == "📊 التقارير والأرباح":
       net = sales - (purch + exps)
       
       c1, c2, c3, c4 = st.columns(4)
-      with c1: st.metric("المبيعات", f"{sales:,.2f}")
-      with c2: st.metric("المشتريات", f"{purch:,.2f}")
-      with c3: st.metric("المصروفات", f"{exps:,.2f}")
+      with c1: st.metric("إجمالي المبيعات", f"{sales:,.2f}")
+      with c2: st.metric("إجمالي المشتريات", f"{purch:,.2f}")
+      with c3: st.metric("إجمالي المصروفات", f"{exps:,.2f}")
       with c4: st.metric("صافي الربح", f"{net:,.2f}")
   with tab_r2:
       all_items = conn.execute("SELECT DISTINCT item_code, item_name FROM items").fetchall()
@@ -1095,11 +1125,15 @@ elif choice == "📊 التقارير والأرباح":
           sel_it = st.selectbox("الصنف:", list(it_dict.keys()))
           if st.button("عرض الأرصدة بالفروع"):
               res = conn.execute("SELECT branches.branch_name, items.quantity, items.sale_price FROM items LEFT JOIN branches ON items.branch_id=branches.id WHERE items.item_code = ?", (it_dict[sel_it],)).fetchall()
+              tot_qty = sum([r['quantity'] for r in res])
               for r in res: st.write(f"- الفرع: **{r['branch_name']}** | الرصيد المتاح: **{r['quantity']} كجم** | السعر: {r['sale_price']} د.ل")
+              st.markdown(f"### 📌 إجمالي الكمية المتاحة في كافة الفروع: <span style='color: #0284c7;'>{tot_qty:,.2f} كجم</span>", unsafe_allow_html=True)
   with tab_r3:
       df_p = pd.read_sql("SELECT invoices.id AS 'الفاتورة', branches.branch_name AS 'الفرع', invoices.customer_name AS 'الزبون', invoices.total_amount AS 'المبلغ', invoices.created_at AS 'الوقت' FROM invoices LEFT JOIN branches ON invoices.branch_id=branches.id ORDER BY invoices.id DESC", conn)
       if not df_p.empty:
+          tot_sales_period = df_p["المبلغ"].sum()
           st.dataframe(df_p, use_container_width=True)
+          st.markdown(f"### 📌 إجمالي المبيعات بالفترة: <span style='color: #0284c7;'>{tot_sales_period:,.2f} د.ل</span>", unsafe_allow_html=True)
           st.download_button("📥 تصدير لـ Excel", data=to_excel(df_p), file_name="sales.xlsx")
   with tab_r4:
       all_invs = conn.execute("SELECT invoices.id, branches.branch_name, invoices.customer_name, invoices.total_amount, invoices.created_at FROM invoices LEFT JOIN branches ON invoices.branch_id=branches.id ORDER BY invoices.id DESC LIMIT 50").fetchall()
@@ -1121,7 +1155,7 @@ elif choice == "📊 التقارير والأرباح":
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين":
-  st.header("👥 إدارة المستخدمين والصلاحيات")
+  st.header("👥 إدارة المستخدمين والصلاحيات (وحماية الأدمن)")
   conn = get_db_connection()
   with st.form("new_u", clear_on_submit=True):
       uname = st.text_input("اسم المستخدم:")
@@ -1135,8 +1169,14 @@ elif choice == "👥 إدارة المستخدمين":
               st.success("🎉 تم الحفظ!")
               st.rerun()
           except: st.error("⚠️ المستخدم موجود مسبقاً.")
-  udf = pd.read_sql("SELECT username AS 'المستخدم', role AS 'الرتبة' FROM users", conn)
-  if not udf.empty: st.dataframe(udf, use_container_width=True)
+  
+  udf = pd.read_sql("SELECT id, username AS 'المستخدم', role AS 'الرتبة' FROM users", conn)
+  if not udf.empty: 
+      st.dataframe(udf, use_container_width=True)
+      st.markdown("---")
+      del_u_id = st.selectbox("اختر المستخدم للحذف:", udf["id"].tolist(), format_func=lambda x: f"رقم: {x} - {udf[udf['id']==x]['المستخدم'].values[0]} ({udf[udf['id']==x]['الرتبة'].values[0]})")
+      if st.button("🗑️ حذف المستخدم المختار", type="primary"):
+          admin_confirm_dialog("حذف مستخدم", del_u_id)
   conn.close()
 
 elif choice == "🛒 نقطة البيع (POS)":
