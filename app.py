@@ -65,7 +65,7 @@ DEFAULT_MENUS = [
     "📥 المشتريات والموردين (فواتير متعددة الأصناف)",
     "⚙️ إدارة الجرد والعمليات السنوية والتصفير",
     "🥜 التحميص والخلط والمكسرات المشكلة (متعدد الأصناف)",
-    "📊 مركز التقارير وإدارة الفواتير والعملاء (واتساب والولاء)",
+    "📊 مركز التقارير وإدارة الفواتير والعملاء (الولاء)",
     "👥 إدارة المستخدمين وصلاحياتهم الفردية",
     "⚙️ تخصيص وتعديل مسميات الأزرار"
 ]
@@ -264,7 +264,7 @@ def initialize_database():
 
   branch_count = cursor.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
   if branch_count == 0:
-      default_branches = [("المخزن الرئيسي", "مخزن"), ("فرع 1", "فرع"), ("فرع 2", "فرع"), ("فرع 3", "فرع"), ("فرع 4", "فرع")]
+      default_branches = [("المخزن الرئيسي", "مخزن"), ("فرع الجزيرة", "فرع"), ("فرع 2", "فرع"), ("فرع 3", "فرع"), ("فرع 4", "فرع")]
       for b_name, b_type in default_branches:
           cursor.execute("INSERT OR IGNORE INTO branches (branch_name, branch_type) VALUES (?, ?)", (b_name, b_type))
 
@@ -341,7 +341,7 @@ def set_page(page_name): st.session_state["page"] = page_name
 
 @st.dialog("🌟 ترحيب النظام")
 def welcome_user_dialog():
-    st.success(f"**أهلاً بك في عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕✨**")
+    st.success(f"**أهلاً بك يا عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕✨**")
     if st.button("OK (موافق)", use_container_width=True, type="primary"):
         st.session_state["show_welcome_dialog"] = False
         st.rerun()
@@ -363,9 +363,8 @@ def reprint_last_invoice_dialog():
             </div>
         """, unsafe_allow_html=True)
         
-        wa_text = f"مجموعة أبو زيد التجارية%0Aفرع: {last_inv['branch_name']}%0Aفاتورة رقم: #{last_inv['id']}%0Aالزبون: {last_inv['customer_name']}%0Aالإجمالي: {last_inv['total_amount']:,.2f} د.ل%0Aشكراً لتعاملكم معنا ☕✨"
-        c_phone = last_inv['customer_phone'] if last_inv['customer_phone'] else ""
-        st.markdown(f'<a href="https://wa.me/{c_phone}?text={wa_text}" target="_blank"><button style="background: #25d366; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 10px;">💬 إرسال الفاتورة عبر واتساب للزبون</button></a>', unsafe_allow_html=True)
+        inv_txt_data = f"مجموعة أبو زيد التجارية\nفرع: {last_inv['branch_name']}\nرقم الفاتورة: #{last_inv['id']}\nالزبون: {last_inv['customer_name']}\nالهاتف: {last_inv['customer_phone']}\nالإجمالي: {last_inv['total_amount']:,.2f} د.ل\nطريقة الدفع: {last_inv['payment_method']}\nالتاريخ: {last_inv['created_at']}\nشكراً لتعاملكم معنا ☕✨"
+        st.download_button("📥 تنزيل الفاتورة (ملف نصي للحفظ أو الإرسال اليدوي)", data=inv_txt_data, file_name=f"invoice_{last_inv['id']}.txt", mime="text/plain", use_container_width=True)
     else:
         st.info("لا توجد فواتير سابقة لإعادة طباعتها.")
     conn.close()
@@ -415,7 +414,7 @@ def checkout_payment_dialog(b_id, g_tot):
     st.subheader(f"إجمالي الفاتورة المطلوب: {g_tot:,.2f} د.ل")
     
     cust_name = st.text_input("اسم الزبون:", value="زبون نقدي")
-    cust_phone = st.text_input("رقم هاتف الزبون (واتساب):", value="")
+    cust_phone = st.text_input("رقم هاتف الزبون:", value="")
     
     conn = get_db_connection()
     applied_discount = 0.0
@@ -592,7 +591,7 @@ dashboard_cards = {
     "📦 إدارة المخزن والفروع وتعديل الأسعار": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإدارة وتعديل أسعار الفروع"},
     "➕ إضافة فائض أو مرتجع وتوالف": {"icon": "➕", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "إضافة فائض للأصناف التي رصيدها صفر"},
     "🔄 تزويد الفروع من المخزن الرئيسي (مع الأرشفة)": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تزويد الفروع بضاعة من المخزن الرئيسي"},
-    "📊 مركز التقارير والإدارة الفواتير والعملاء (واتساب والولاء)": {"icon": "📊", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "التقارير، طباعة وإرسال الفواتير عبر واتساب"}
+    "📊 مركز التقارير والإدارة الفواتير والعملاء (الولاء)": {"icon": "📊", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "التقارير، طباعة وتنزيل الفواتير للاستخدام اليدوي"}
 }
 
 # --- محتوى الصفحات ---
@@ -1170,11 +1169,11 @@ elif choice == "🥜 التحميص والخلط والمكسرات المشكل
       st.info("لا توجد خامات متوفرة بالمخزن الرئيسي.")
   conn.close()
 
-elif choice == "📊 مركز التقارير والإدارة الفواتير والعملاء (واتساب والولاء)":
-  st.header("📊 مركز التقارير والإدارة الشاملة (الأرباح، حركة الفروع، طباعة وفواتير واتساب)")
+elif choice == "📊 مركز التقارير والإدارة الفواتير والعملاء (الولاء)":
+  st.header("📊 مركز التقارير والإدارة الشاملة (الأرباح، حركة الفروع، وتنزيل الفواتير للاستخدام اليدوي)")
   conn = get_db_connection()
   
-  tab_c1, tab_c2, tab_c3, tab_c4, tab_c5 = st.tabs(["📊 الأرباح والخسائر والتقارير", "📦 تقرير حركة صنف (مع قائمة الفروع)", "📈 مبيعات الفروع بالفترة", "🖨️ طباعة وإرسال الفواتير (واتساب)", "🗑️ إدارة وحذف الفواتير والمصروفات"])
+  tab_c1, tab_c2, tab_c3, tab_c4, tab_c5 = st.tabs(["📊 الأرباح والخسائر والتقارير", "📦 تقرير حركة صنف (مع قائمة الفروع)", "📈 مبيعات الفروع بالفترة", "🖨️ طباعة وتنزيل الفواتير", "🗑️ إدارة وحذف الفواتير والمصروفات"])
   
   with tab_c1:
       branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
@@ -1255,11 +1254,11 @@ elif choice == "📊 مركز التقارير والإدارة الفواتير
               st.info("لا توجد مبيعات مسجلة في هذه الفترة.")
 
   with tab_c4:
-      st.subheader("🖨️ استعراض الفواتير لأي فرع وإرسالها للزبون عبر واتساب")
+      st.subheader("🖨️ استعراض الفواتير لأي فرع وتنزيلها لطباعتها أو حفظها يدوياً")
       all_invs = conn.execute("SELECT invoices.id, branches.branch_name, invoices.customer_name, invoices.total_amount, invoices.created_at FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id ORDER BY invoices.id DESC LIMIT 100").fetchall()
       if all_invs:
           inv_opts = {f"فاتورة رقم #{inv['id']} - الفرع: {inv['branch_name']} - الزبون: {inv['customer_name']} - القيمة: {inv['total_amount']} د.ل ({inv['created_at']})": inv['id'] for inv in all_invs}
-          sel_inv_lbl = st.selectbox("اختر الفاتورة للطباعة أو الإرسال:", list(inv_opts.keys()))
+          sel_inv_lbl = st.selectbox("اختر الفاتورة للاستعراض والتنزيل:", list(inv_opts.keys()))
           chosen_inv_id = inv_opts[sel_inv_lbl]
           
           inv_data = conn.execute("SELECT invoices.*, branches.branch_name FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id WHERE invoices.id = ?", (chosen_inv_id,)).fetchone()
@@ -1280,12 +1279,8 @@ elif choice == "📊 مركز التقارير والإدارة الفواتير
               """
               st.markdown(invoice_html, unsafe_allow_html=True)
               
-              inv_txt_data = f"مجموعة أبو زيد التجارية\nفرع: {inv_data['branch_name']}\nرقم الفاتورة: #{inv_data['id']}\nالزبون: {inv_data['customer_name']}\nالإجمالي: {inv_data['total_amount']:,.2f} د.ل\nالتاريخ: {inv_data['created_at']}"
-              st.download_button("📥 تنزيل الفاتورة (ملف نصي)", data=inv_txt_data, file_name=f"invoice_{inv_data['id']}.txt", mime="text/plain")
-              
-              wa_text = f"مجموعة أبو زيد التجارية%0Aفرع: {inv_data['branch_name']}%0Aفاتورة رقم: #{inv_data['id']}%0Aالزبون: {inv_data['customer_name']}%0Aالإجمالي: {inv_data['total_amount']:,.2f} د.ل%0Aشكراً لتعاملكم معنا ☕✨"
-              c_phone = inv_data['customer_phone'] if inv_data['customer_phone'] else ""
-              st.markdown(f'<a href="https://wa.me/{c_phone}?text={wa_text}" target="_blank"><button style="background: #25d366; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 10px;">💬 إرسال الفاتورة عبر واتساب للزبون</button></a>', unsafe_allow_html=True)
+              inv_txt_data = f"مجموعة أبو زيد التجارية\nفرع: {inv_data['branch_name']}\nرقم الفاتورة: #{inv_data['id']}\nالزبون: {inv_data['customer_name']}\nالهاتف: {inv_data['customer_phone']}\nالإجمالي: {inv_data['total_amount']:,.2f} د.ل\nطريقة الدفع: {inv_data['payment_method']}\nالتاريخ: {inv_data['created_at']}\nشكراً لتعاملكم معنا ☕✨"
+              st.download_button("📥 تنزيل الفاتورة (ملف نصي على الجهاز)", data=inv_txt_data, file_name=f"invoice_{inv_data['id']}.txt", mime="text/plain", use_container_width=True)
       else:
           st.info("لا توجد فواتير مسجلة بعد.")
 
