@@ -798,26 +798,28 @@ elif choice == "💰 المصروفات":
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
   with st.form("expense_form", clear_on_submit=True):
-      exp_type = st.radio("نوع المصروف:", ["خاص بفرع معين", "🌍 مصروف المخزن الرئيسي (يُوزع ديناميكياً على كافة الفروع الحالية والمستقبلية)"])
+      exp_type = st.radio("نوع المصروف:", ["خاص بفرع معين", "🌍 مصروف المخزن الرئيسي (يُقسم ويُوزع ديناميكياً على كافة الفروع الحالية والمستقبلية بالتساوي)"])
       sel_b_name = st.selectbox("اختر الفرع:", list(b_dict.keys())) if exp_type == "خاص بفرع معين" else ""
-      exp_amount = st.number_input("المبلغ (د.ل):", min_value=0.0, value=0.0, step=0.5)
+      exp_amount = st.number_input("المبلغ الإجمالي (د.ل):", min_value=0.0, value=0.0, step=0.5)
       exp_desc = st.text_input("البيان (مثال: صيانة المخزن، فاتورة نقل عامة..):")
       exp_date_in = st.date_input("تاريخ المصروف الفعلي:", value=datetime.now())
       
-      if st.form_submit_button("💾 حفظ المصروف وثباته بالسجلات"):
+      if st.form_submit_button("💾 حفظ المصروف وتقسيمه بالسجلات"):
           if exp_amount > 0 and exp_desc:
               cur_ex = conn.cursor()
               date_str = exp_date_in.strftime('%Y-%m-%d')
               if exp_type == "خاص بفرع معين":
                   cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (?, ?, ?, 0, ?)", (b_dict[sel_b_name], exp_amount, exp_desc.strip(), date_str))
               else:
-                  # تسجيل مصروف المخزن الموزع ديناميكياً ليعمل مع أي عدد من الفروع الحالية والمستقبلية
-                  cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (NULL, ?, ?, 1, ?)", (exp_amount, f"[مصروف مخزن رئيسي موزّع] {exp_desc.strip()}", date_str))
+                  # جلب عدد الفروع الحالية ديناميكياً وتقسيم المبلغ الإجمالي عليها بالتساوي
+                  total_branches_count = len(branches)
+                  divided_amount = exp_amount / total_branches_count if total_branches_count > 0 else exp_amount
+                  cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (NULL, ?, ?, 1, ?)", (divided_amount, f"[مصروف مخزن مقسم على {total_branches_count} فروع] {exp_desc.strip()}", date_str))
               conn.commit()
-              st.success("💸 تم حفظ المصروف وثباته بالسجلات طوال السنة المالية بنجاح تام!")
+              st.success(f"💸 تم حفظ المصروف وتقسيمه على الفروع ديناميكياً بنجاح تام!")
               st.rerun()
   
-  exp_df = pd.read_sql("SELECT expenses.id AS 'رقم', IFNULL(branches.branch_name, '🌍 مصروف مخزن موزّع ديناميكياً على الفروع') AS 'الجهة / الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
+  exp_df = pd.read_sql("SELECT expenses.id AS 'رقم', IFNULL(branches.branch_name, '🌍 مصروف مخزن مقسم ديناميكياً على الفروع') AS 'الجهة / الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
   if not exp_df.empty:
       st.dataframe(exp_df, use_container_width=True)
       st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(exp_df), file_name="expenses.xlsx")
