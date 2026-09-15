@@ -341,7 +341,7 @@ def set_page(page_name): st.session_state["page"] = page_name
 
 @st.dialog("🌟 ترحيب النظام")
 def welcome_user_dialog():
-    st.success(f"**أهلاً بك فى عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕✨**")
+    st.success(f"**أهلاً بك يا عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕✨**")
     if st.button("OK (موافق)", use_container_width=True, type="primary"):
         st.session_state["show_welcome_dialog"] = False
         st.rerun()
@@ -404,7 +404,7 @@ def checkout_payment_dialog(b_id, g_tot):
             
             can_proceed = True
             for c_item in st.session_state["cart"]:
-                if c_item["id"] != 99999:
+                if c_item["id"] != 99999 and c_item["id"] != 88888:
                     db_it = conn.execute("SELECT quantity FROM items WHERE id = ?", (c_item["id"],)).fetchone()
                     if db_it and float(db_it["quantity"]) < c_item["qty"]:
                         can_proceed = False
@@ -416,7 +416,7 @@ def checkout_payment_dialog(b_id, g_tot):
                                (target_inv_branch, st.session_state["user_id"], cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method))
                 
                 for c_item in st.session_state["cart"]:
-                    if c_item["id"] != 99999:
+                    if c_item["id"] != 99999 and c_item["id"] != 88888:
                         conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
                 
                 if cust_phone.strip() and cust_name.strip() != "زبون نقدي":
@@ -551,7 +551,7 @@ dashboard_cards = {
     "📦 إدارة المخزن والفروع وتعديل الأسعار": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإدارة وتعديل أسعار الفروع"},
     "➕ إضافة فائض أو مرتجع وتوالف": {"icon": "➕", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "إضافة فائض للأصناف التي رصيدها صفر"},
     "🔄 نقل وتحويل وتزويد الفروع (مع الأرشفة)": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تزويد الفروع والتحويلات بسلة أصناف متعددة"},
-    "📊 مركز التقارير والإدارة الشاملة (مع التصدير وحركة الفروع)": {"icon": "📊", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "المركّز الموحد للتقارير والأرباح والتصدير لـ Excel"}
+    "📊 مركز التقارير والإدارة الفواتير والعملاء (واتساب والولاء)": {"icon": "📊", "color": "linear-gradient(135deg, #6366f1, #4338ca)", "desc": "التقارير، طباعة وإرسال الفواتير عبر واتساب"}
 }
 
 # --- محتوى الصفحات ---
@@ -1223,21 +1223,30 @@ elif choice == "📊 مركز التقارير والإدارة الشاملة (
           
           inv_data = conn.execute("SELECT invoices.*, branches.branch_name FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id WHERE invoices.id = ?", (chosen_inv_id,)).fetchone()
           if inv_data:
-              st.markdown(f"""
-                  <div style="background: white; padding: 20px; border-radius: 10px; border: 1px solid #cbd5e1; color: black;">
-                      <h3 style="text-align: center; margin:0;">🥜 مجموعة أبو زيد التجارية</h3>
-                      <p style="text-align: center; margin:5px 0;">فرع: <b>{inv_data['branch_name']}</b> | فاتورة رقم: <b>#{inv_data['id']}</b></p>
-                      <p style="text-align: center; margin:0; font-size: 14px;">الزبون: <b>{inv_data['customer_name']}</b> ({inv_data['customer_phone']})</p>
-                      <p style="text-align: center; margin:0 0 15px 0; font-size: 13px; color: #64748b;">التاريخ: {inv_data['created_at']}</p>
+              invoice_html = f"""
+                  <div style="background: white; padding: 25px; border-radius: 12px; border: 2px solid #0284c7; color: black; max-width: 450px; margin: auto; font-family: 'Tajawal', sans-serif;">
+                      <h2 style="text-align: center; color: #0284c7; margin: 0;">🥜 مجموعة أبو زيد التجارية</h2>
+                      <p style="text-align: center; margin: 5px 0; font-size: 15px;">فرع: <b>{inv_data['branch_name']}</b></p>
                       <hr style="border: 0; border-top: 1px dashed #cbd5e1;">
-                      <h4 style="text-align: right;">إجمالي المبلغ المطلوب: <span style="color: #0284c7;">{inv_data['total_amount']:,.2f} د.ل</span></h4>
-                      <p>طريقة الدفع: {inv_data['payment_method']}</p>
+                      <p style="margin: 5px 0;"><b>رقم الفاتورة:</b> #{inv_data['id']}</p>
+                      <p style="margin: 5px 0;"><b>اسم الزبون:</b> {inv_data['customer_name']}</p>
+                      <p style="margin: 5px 0;"><b>رقم الهاتف:</b> {inv_data['customer_phone'] if inv_data['customer_phone'] else 'غير مسجل'}</p>
+                      <p style="margin: 5px 0;"><b>تاريخ الفاتورة:</b> {inv_data['created_at']}</p>
+                      <hr style="border: 0; border-top: 1px dashed #cbd5e1;">
+                      <h3 style="text-align: right; color: #1e293b;">إجمالي المبلغ: <span style="color: #0284c7;">{inv_data['total_amount']:,.2f} د.ل</span></h3>
+                      <p style="text-align: center; margin-top: 20px; font-size: 12px; color: #64748b;">شكراً لتعاملكم معنا.. نتمنى لكم يوماً سعيداً ☕✨</p>
                   </div>
-              """, unsafe_allow_html=True)
+              """
+              st.markdown(invoice_html, unsafe_allow_html=True)
               
+              # زر التنزيل كنص للفاتورة
+              inv_txt_data = f"مجموعة أبو زيد التجارية\nفرع: {inv_data['branch_name']}\nرقم الفاتورة: #{inv_data['id']}\nالزبون: {inv_data['customer_name']}\nالإجمالي: {inv_data['total_amount']:,.2f} د.ل\nالتاريخ: {inv_data['created_at']}"
+              st.download_button("📥 تنزيل الفاتورة (ملف نصي)", data=inv_txt_data, file_name=f"invoice_{inv_data['id']}.txt", mime="text/plain")
+              
+              # رابط الواتساب المباشر
               wa_text = f"مجموعة أبو زيد التجارية%0Aفرع: {inv_data['branch_name']}%0Aفاتورة رقم: #{inv_data['id']}%0Aالزبون: {inv_data['customer_name']}%0Aالإجمالي: {inv_data['total_amount']:,.2f} د.ل%0Aشكراً لتعاملكم معنا ☕✨"
               c_phone = inv_data['customer_phone'] if inv_data['customer_phone'] else ""
-              st.markdown(f'<a href="https://wa.me/{c_phone}?text={wa_text}" target="_blank"><button style="background: #25d366; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 إرسال الفاتورة عبر واتساب للزبون</button></a>', unsafe_allow_html=True)
+              st.markdown(f'<a href="https://wa.me/{c_phone}?text={wa_text}" target="_blank"><button style="background: #25d366; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 10px;">💬 إرسال الفاتورة عبر واتساب للزبون</button></a>', unsafe_allow_html=True)
       else:
           st.info("لا توجد فواتير مسجلة بعد.")
 
@@ -1415,6 +1424,20 @@ elif choice == "🛒 نقطة البيع (POS)":
               st.rerun()
 
       st.markdown("---")
+      
+      with st.expander("🔍 بيع صنف حر / غير موجود بقاعدة البيانات (بدون باركود)", expanded=False):
+          with st.form("free_item_form", clear_on_submit=True):
+              f_name = st.text_input("اسم الصنف أو الخدمة الحرة:")
+              f_price = st.number_input("سعر البيع (د.ل):", min_value=0.0, value=0.0, step=0.5, format="%.2f")
+              f_qty = st.number_input("الكمية (كجم / عدد):", min_value=0.0, value=1.0, step=0.1, format="%.2f")
+              if st.form_submit_button("➕ إضافة الصنف الحر للسلة"):
+                  if f_name and f_price > 0 and f_qty > 0:
+                      st.session_state["cart"].append({
+                          "id": 88888, "name": f"حر: {f_name.strip()}", "price": f_price, "qty": f_qty, "total": f_price * f_qty
+                      })
+                      st.success(f"✅ تمت إضافة الصنف ({f_name}) بنجاح للسلة!")
+                      st.rerun()
+
       col_g, col_c = st.columns([2, 1])
       with col_g:
           st.subheader("⭐ لوحة الأصناف المفضلة (أول 20 صنفاً أمام الكاشير)")
