@@ -341,7 +341,7 @@ def set_page(page_name): st.session_state["page"] = page_name
 
 @st.dialog("🌟 ترحيب النظام")
 def welcome_user_dialog():
-    st.success(f"**أهلاً بك يا عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕✨**")
+    st.success(f"**أهلاً بك في عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕✨**")
     if st.button("OK (موافق)", use_container_width=True, type="primary"):
         st.session_state["show_welcome_dialog"] = False
         st.rerun()
