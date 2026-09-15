@@ -401,6 +401,7 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
             elif action_type == "حذف مصروف": conn.execute("DELETE FROM expenses WHERE id = ?", (target_id,))
             elif action_type == "حذف مشتريات": conn.execute("DELETE FROM purchases WHERE id = ?", (target_id,))
             elif action_type == "حذف فاتورة": conn.execute("DELETE FROM invoices WHERE id = ?", (target_id,))
+            elif action_type == "حذف مورد": conn.execute("DELETE FROM suppliers WHERE id = ?", (target_id,))
             elif action_type == "حذف مستخدم":
                 target_user = conn.execute("SELECT role FROM users WHERE id = ?", (target_id,)).fetchone()
                 if target_user and target_user["role"] == "Admin" and st.session_state["role"] == "General_Supervisor":
@@ -628,6 +629,7 @@ elif choice == "⭐ لوحة المفضلة (1-20)":
                   conn.execute("UPDATE items SET favorite_rank = ? WHERE id = ?", (row['الرقم المفضل (1 إلى 20)'], row['id']))
               conn.commit()
               st.success("🎉 تم الحفظ بنجاح!")
+              st.rerun()
       conn.close()
 
 elif choice == "⚙️ تخصيص الأزرار":
@@ -644,6 +646,7 @@ elif choice == "⚙️ تخصيص الأزرار":
               conn.execute("INSERT OR REPLACE INTO custom_labels (original_name, custom_name) VALUES (?, ?)", (orig_sel, new_custom_name.strip()))
               conn.commit()
               st.success("🎉 تم الحفظ!")
+              st.rerun()
       conn.close()
 
 elif choice == "⚙️ الجرد والتصفير السنوي":
@@ -674,6 +677,7 @@ elif choice == "⚙️ الجرد والتصفير السنوي":
                       else: cur_inv.execute("UPDATE items SET quantity = 0 WHERE branch_id = ?", (scope_id,))
                   conn.commit()
                   st.success("🎉 تمت عملية التصفير بنجاح!")
+                  st.rerun()
               else:
                   st.error("❌ كلمة السر غير صحيحة!")
       conn.close()
@@ -721,6 +725,7 @@ elif choice == "📁 استيراد Excel":
                       count_imp += 1
                   conn.commit()
                   st.success(f"🎉 تم استيراد ({count_imp}) صنف بنجاح!")
+                  st.rerun()
               except Exception as e:
                   st.error(f"خطأ في الملف: {e}")
   conn.close()
@@ -804,13 +809,13 @@ elif choice == "💰 المصروفات":
   b_dict = {b["branch_name"]: b["id"] for b in branches}
   
   with st.form("expense_form", clear_on_submit=True):
-      exp_type = st.radio("نوع المصروف:", ["خاص بفرع معين", "🌍 مصروف المخزن الرئيسي (يُسجل كإجمالي بالمخزن ويُقسَم نصيب كل فرع بدقة وتلقائية)"])
+      exp_type = st.radio("نوع المصروف:", ["خاص بفرع معين", "🌍 مصروف المخزن الرئيسي (يُسجل إجمالي بالمخزن ويُقسَم نصيب كل فرع بالتساوي بدقة)"])
       sel_b_name = st.selectbox("اختر الفرع:", list(b_dict.keys())) if exp_type == "خاص بفرع معين" else ""
       exp_amount = st.number_input("المبلغ الإجمالي (د.ل):", min_value=0.0, value=0.0, step=0.5)
       exp_desc = st.text_input("البيان (مثال: صيانة المخزن، فاتورة نقل عامة..):")
       exp_date_in = st.date_input("تاريخ المصروف الفعلي:", value=datetime.now())
       
-      if st.form_submit_button("💾 حفظ المصروف وإثباته بالسجلات"):
+      if st.form_submit_button("💾 حفظ المصروف وتقسيمه بالسجلات"):
           if exp_amount > 0 and exp_desc:
               cur_ex = conn.cursor()
               date_str = exp_date_in.strftime('%Y-%m-%d')
@@ -818,14 +823,13 @@ elif choice == "💰 المصروفات":
                   cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (?, ?, ?, 0, ?)", (b_dict[sel_b_name], exp_amount, exp_desc.strip(), date_str))
               else:
                   total_branches_count = len(branches)
-                  # حساب نصيب كل فرع من القسمة العادلة
                   share_per_branch = exp_amount / total_branches_count if total_branches_count > 0 else exp_amount
-                  cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (NULL, ?, ?, 1, ?)", (exp_amount, f"[مصروف مخزن رئيسي إجمالي - نصيب الفروع: {share_per_branch:,.2f} لكل فرع] {exp_desc.strip()}", date_str))
+                  cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (NULL, ?, ?, 1, ?)", (exp_amount, f"[مصروف مخزن رئيسي إجمالي - نصيب كل فرع: {share_per_branch:,.2f} د.ل] {exp_desc.strip()}", date_str))
               conn.commit()
-              st.success("💸 تم حفظ المصروف وتقسيم الحصص بالتساوي على الفروع بنجاح تام!")
+              st.success(f"💸 تم حفظ المصروف وتقسيم الحصص بالتساوي على الفروع بنجاح تام!")
               st.rerun()
   
-  exp_df = pd.read_sql("SELECT expenses.id AS 'رقم', IFNULL(branches.branch_name, '🌍 مصروف مخزن رئيسي (إجمالي وتوزيع عادل)') AS 'الجهة / الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
+  exp_df = pd.read_sql("SELECT expenses.id AS 'رقم', IFNULL(branches.branch_name, '🌍 مصروف مخزن رئيسي (إجمالي وتوزيع حصص عادل)') AS 'الجهة / الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
   if not exp_df.empty:
       total_exp = exp_df["المبلغ"].sum()
       st.dataframe(exp_df, use_container_width=True)
