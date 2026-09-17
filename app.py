@@ -270,9 +270,10 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
             elif action_type == "حذف فاتورة": conn.execute("DELETE FROM invoices WHERE id = ?", (target_id,))
             elif action_type == "حذف مورد": conn.execute("DELETE FROM suppliers WHERE id = ?", (target_id,))
             elif action_type == "حذف مستخدم":
-                target_user = conn.execute("SELECT role FROM users WHERE id = ?", (target_id,)).fetchone()
-                if target_user and target_user["role"] == "Admin" and st.session_state["role"] == "General_Supervisor":
-                    st.error("❌ عذراً، لا تملك صلاحية حذف حساب الأدمن الأساسي!")
+                target_user = conn.execute("SELECT role, username FROM users WHERE id = ?", (target_id,)).fetchone()
+                # --- حماية مشددة: منع حذف حساب الأدمن الأساسي نهائياً بأي حال ---
+                if target_user and (target_user["role"] == "Admin" or target_user["username"].strip().lower() == "admin"):
+                    st.error("❌ تحذير أمني صارم: لا يمكن أبداً حذف حساب الأدمن (Admin) الأساسي للنظام!")
                 else:
                     conn.execute("DELETE FROM users WHERE id = ?", (target_id,))
             conn.commit()
@@ -497,7 +498,6 @@ elif choice == "📦 إدارة المخزن والفروع":
           for idx, row in edited_items.iterrows():
               cur_up.execute("UPDATE items SET item_code=?, item_name=?, quantity=?, buy_price=?, sale_price=?, avg_cost=? WHERE id=?", 
                              (row['كود الصنف'], row['اسم الصنف'], row['الكمية (كجم)'], row['سعر الشراء (د.ل)'], row['سعر البيع (د.ل)'], row['متوسط التكلفة (د.ل)'], row['id']))
-              # التعميم الفوري لكافة الفروع
               cur_up.execute("UPDATE items SET item_name=?, sale_price=? WHERE item_code=?", (row['اسم الصنف'], row['سعر البيع (د.ل)'], row['كود الصنف']))
           conn.commit()
           st.session_state["success_alert_msg"] = "تم حفظ وتعميم الأسعار على كافة الفروع بنجاح!"
@@ -643,7 +643,7 @@ elif choice == "📥 المشتريات والموردين":
                       old_avg = old_r["avg_cost"] if old_r["avg_cost"] > 0 else old_r["buy_price"]
                       new_tot_q = old_q + pi['qty']
                       
-                      # معادلة متوسط التكلفة الحقيقي والمرجح بدقة تامة
+                      # --- حساب دقيق لمتوسط التكلفة المرجح ---
                       if new_tot_q > 0:
                           new_avg_cost = ((old_q * old_avg) + (pi['qty'] * pi['price'])) / new_tot_q
                       else:
@@ -683,12 +683,12 @@ elif choice == "📥 المشتريات والموردين":
   conn.close()
 
 elif choice == "🥜 التحميص والخلط":
-  st.header("🥜 التحميص وخلط المكسرات (واختيار الصنف الناتج بحرية ويدوياً)")
+  st.header("🥜 التحميص وخلط المكسرات")
   conn = get_db_connection()
   main_s_id = conn.execute("SELECT id FROM branches WHERE branch_type='مخزن' LIMIT 1").fetchone()["id"]
   store_items = conn.execute("SELECT item_code, item_name, quantity, buy_price, avg_cost FROM items WHERE branch_id = ? AND quantity > 0", (main_s_id,)).fetchall()
   
-  mix_tab, roast_tab = st.tabs(["🥜 خلط المكسرات (اختيار الصنف الناتج وإدخال الكمية يدوياً)", "🔥 التحميص (اختيار صنف التحميص والكمية الناتجة)"])
+  mix_tab, roast_tab = st.tabs(["🥜 خلط المكسرات", "🔥 التحميص"])
   with mix_tab:
       if store_items:
           item_choices = {f"[{i['item_code']}] {i['item_name']} (متاح: {i['quantity']} كجم - متوسط التكلفة: {i['avg_cost'] or i['buy_price']} د.ل)": i for i in store_items}
@@ -705,7 +705,7 @@ elif choice == "🥜 التحميص والخلط":
               st.dataframe(pd.DataFrame(st.session_state["mix_list"]).rename(columns={"code": "كود الخام", "name": "اسم الخام", "qty": "الكمية المستخدمة", "cost": "متوسط التكلفة"}), use_container_width=True)
               with st.form("fin_mix"):
                   all_prod_opts = {f"[{i['item_code']}] {i['item_name']}": i for i in conn.execute("SELECT item_code, item_name FROM items WHERE branch_id = ?", (main_s_id,)).fetchall()}
-                  res_sel = st.selectbox("اختر الصنف الناتج النهائي من القائمة بعد الخلط (مثل لوز طايب، مكسرات مشكلة..):", list(all_prod_opts.keys()))
+                  res_sel = st.selectbox("اختر الصنف الناتج النهائي من القائمة بعد الخلط:", list(all_prod_opts.keys()))
                   final_weight = st.number_input("الوزن النهائي الناتج (كجم) يدوياً:", min_value=0.0, value=0.0, step=0.1, format="%.2f")
                   if st.form_submit_button("⚙️ اعتماد الخلطة وإضافة الناتج للمخزن الرئيسي"):
                       if res_sel and final_weight > 0:
@@ -728,7 +728,7 @@ elif choice == "🥜 التحميص والخلط":
               raw_w = st.number_input("الوزن الخام قبل التحميص (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
               
               all_out_opts = {f"[{i['item_code']}] {i['item_name']}": i for i in conn.execute("SELECT item_code, item_name FROM items WHERE branch_id = ?", (main_s_id,)).fetchall()}
-              sel_out = st.selectbox("اختر الصنف الناتج بعد التحميص (مثلاً لوز طايب):", list(all_out_opts.keys()))
+              sel_out = st.selectbox("اختر الصنف الناتج بعد التحميص:", list(all_out_opts.keys()))
               roasted_w = st.number_input("الوزن النهائي بعد التحميص (كجم يدوياً):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
               r_price = st.number_input("سعر بيع الصنف المحمص الناتج:", min_value=0.0, value=0.0, step=0.5, format="%.2f")
               
