@@ -175,12 +175,6 @@ def get_db_connection():
   conn.row_factory = sqlite3.Row
   return conn
 
-def get_label(orig_name):
-    conn = get_db_connection()
-    row = conn.execute("SELECT custom_name FROM custom_labels WHERE original_name = ?", (orig_name,)).fetchone()
-    conn.close()
-    return row["custom_name"] if row else orig_name
-
 def verify_admin_password(pass_input):
     role = st.session_state.get("role", "")
     if role in ["Admin", "General_Supervisor"]:
@@ -202,12 +196,6 @@ def check_user_permission(menu_name):
         if menu_name in user_row["custom_permissions"].split(","): return True
     allowed = st.session_state.get("allowed_menus", [])
     return menu_name in allowed
-
-def log_action(user_id, action, details):
-    if not user_id: return
-    conn = get_db_connection()
-    conn.execute("INSERT INTO activity_logs (user_id, action, details) VALUES (?, ?, ?)", (user_id, action, details))
-    conn.commit(); conn.close()
 
 def to_excel(df):
     output = io.BytesIO()
@@ -781,67 +769,72 @@ elif choice == "📥 المشتريات والموردين":
   conn.close()
 
 elif choice == "🥜 التحميص والخلط":
-  st.header("🥜 التحميص وخلط المكسرات")
-  conn = get_db_connection()
-  main_s_id = conn.execute("SELECT id FROM branches WHERE branch_type='مخزن' LIMIT 1").fetchone()["id"]
-  store_items = conn.execute("SELECT item_code, item_name, quantity, buy_price, avg_cost FROM items WHERE branch_id = ? AND quantity > 0", (main_s_id,)).fetchall()
-  
-  mix_tab, roast_tab = st.tabs(["🥜 خلط المكسرات", "🔥 التحميص"])
-  with mix_tab:
-      if store_items:
-          item_choices = {f"[{i['item_code']}] {i['item_name']} (متاح: {i['quantity']} كجم - متوسط التكلفة: {i['avg_cost'] or i['buy_price']} د.ل)": i for i in store_items}
-          if "mix_list" not in st.session_state: st.session_state["mix_list"] = []
-          with st.form("mix_f", clear_on_submit=True):
-              sel_c = st.selectbox("اختر الخام:", list(item_choices.keys()))
-              mqty = st.number_input("الوزن المستخدم (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
-              if st.form_submit_button("➕ إضافة الخام للخلطة"):
-                  if mqty > 0:
-                      it = item_choices[sel_c]
-                      st.session_state["mix_list"].append({"code": it['item_code'], "name": it['item_name'], "qty": mqty, "cost": it['avg_cost'] or it['buy_price']})
-                      st.rerun()
-          if st.session_state["mix_list"]:
-              st.dataframe(pd.DataFrame(st.session_state["mix_list"]).rename(columns={"code": "كود الخام", "name": "اسم الخام", "qty": "الكمية المستخدمة", "cost": "متوسط التكلفة"}), use_container_width=True)
-              with st.form("fin_mix"):
-                  all_prod_opts = {f"[{i['item_code']}] {i['item_name']}": i for i in conn.execute("SELECT item_code, item_name FROM items WHERE branch_id = ?", (main_s_id,)).fetchall()}
-                  res_sel = st.selectbox("اختر الصنف الناتج النهائي من القائمة بعد الخلط:", list(all_prod_opts.keys()))
-                  final_weight = st.number_input("الوزن النهائي الناتج (كجم) يدوياً:", min_value=0.0, value=0.0, step=0.1, format="%.2f")
-                  if st.form_submit_button("⚙️ اعتماد الخلطة وإضافة الناتج للمخزن الرئيسي"):
-                      if res_sel and final_weight > 0:
-                          cur_mx = conn.cursor()
-                          tot_cost = sum([x['qty'] * x['cost'] for x in st.session_state["mix_list"]])
-                          res_obj = all_prod_opts[res_sel]
-                          new_avg = tot_cost / final_weight if final_weight > 0 else 0
-                          for m in st.session_state["mix_list"]:
-                              cur_mx.execute("UPDATE items SET quantity = quantity - ? WHERE branch_id = ? AND item_code = ?", (m['qty'], main_s_id, m['code']))
-                          cur_mx.execute("UPDATE items SET quantity = quantity + ?, avg_cost = ? WHERE branch_id = ? AND item_code = ?", (final_weight, new_avg, main_s_id, res_obj['item_code']))
-                          conn.commit()
-                          st.session_state["mix_list"] = []
-                          st.session_state["success_alert_msg"] = "تمت عملية الخلط واعتماد الناتج بنجاح تام!"
-                          st.rerun()
-  with roast_tab:
-      if store_items:
-          roast_choices = {f"[{i['item_code']}] {i['item_name']} (تكلفة: {i['avg_cost'] or i['buy_price']} د.ل)": i for i in store_items}
-          with st.form("roast_f", clear_on_submit=True):
-              sel_r = st.selectbox("اختر صنف التحميص الأساسي:", list(roast_choices.keys()))
-              raw_w = st.number_input("الوزن الخام قبل التحميص (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
-              
-              all_out_opts = {f"[{i['item_code']}] {i['item_name']}": i for i in conn.execute("SELECT item_code, item_name FROM items WHERE branch_id = ?", (main_s_id,)).fetchall()}
-              sel_out = st.selectbox("اختر الصنف الناتج بعد التحميص:", list(all_out_opts.keys()))
-              roasted_w = st.number_input("الوزن النهائي بعد التحميص (كجم يدوياً):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
-              r_price = st.number_input("سعر بيع الصنف المحمص الناتج:", min_value=0.0, value=0.0, step=0.5, format="%.2f")
-              
-              if st.form_submit_button("🔥 اعتماد التحميص وخصم الخام وإضافة الناتج للمخزن"):
-                  if raw_w > 0 and roasted_w > 0:
-                      r_in_obj = roast_choices[sel_r]
-                      r_out_obj = all_out_opts[sel_out]
-                      cur_r = conn.cursor()
-                      cur_r.execute("UPDATE items SET quantity = quantity - ? WHERE branch_id = ? AND item_code = ?", (raw_w, main_s_id, r_in_obj['item_code']))
-                      cur_r.execute("UPDATE items SET quantity = quantity + ?, sale_price = ?, avg_cost = ? WHERE branch_id = ? AND item_code = ?", 
-                                    (roasted_w, r_price, r_in_obj['avg_cost'] or r_in_obj['buy_price'], main_s_id, r_out_obj['item_code']))
-                      conn.commit()
-                      st.session_state["success_alert_msg"] = "تمت عملية التحميص بنجاح تام!"
-                      st.rerun()
-  conn.close()
+    st.header("🥜 التحميص وخلط المكسرات")
+    conn = get_db_connection()
+    main_store_row = conn.execute("SELECT id FROM branches WHERE branch_type='مخزن' LIMIT 1").fetchone()
+    main_s_id = main_store_row["id"] if main_store_row else 1
+    
+    store_items = conn.execute("SELECT item_code, item_name, quantity, buy_price, sale_price, avg_cost FROM items WHERE branch_id = ? AND quantity > 0", (main_s_id,)).fetchall()
+    all_store_items = conn.execute("SELECT item_code, item_name, buy_price, sale_price, avg_cost FROM items WHERE branch_id = ?", (main_s_id,)).fetchall()
+    
+    mix_tab, roast_tab = st.tabs(["🥜 خلط المكسرات", "🔥 التحميص"])
+    
+    with mix_tab:
+        if store_items:
+            item_choices = {f"[{i['item_code']}] {i['item_name']} (متاح: {i['quantity']} كجم - تكلفة: {i['avg_cost'] or i['buy_price']} د.ل)": i for i in store_items}
+            if "mix_list" not in st.session_state: st.session_state["mix_list"] = []
+            with st.form("mix_f", clear_on_submit=True):
+                sel_c = st.selectbox("اختر الخام:", list(item_choices.keys()))
+                mqty = st.number_input("الوزن المستخدم (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
+                if st.form_submit_button("➕ إضافة الخام للخلطة"):
+                    if mqty > 0:
+                        it = item_choices[sel_c]
+                        st.session_state["mix_list"].append({"code": it['item_code'], "name": it['item_name'], "qty": mqty, "cost": it['avg_cost'] or it['buy_price']})
+                        st.rerun()
+            if st.session_state["mix_list"]:
+                st.dataframe(pd.DataFrame(st.session_state["mix_list"]).rename(columns={"code": "كود الخام", "name": "اسم الخام", "qty": "الكمية المستخدمة", "cost": "متوسط التكلفة"}), use_container_width=True)
+                with st.form("fin_mix"):
+                    all_prod_opts = {f"[{i['item_code']}] {i['item_name']} (سعر البيع: {i['sale_price']} د.ل | التكلفة: {i['avg_cost'] or i['buy_price']} د.ل)": i for i in all_store_items}
+                    res_sel = st.selectbox("اختر الصنف الناتج النهائي من القائمة بعد الخلط:", list(all_prod_opts.keys()))
+                    final_weight = st.number_input("الوزن النهائي الناتج (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
+                    if st.form_submit_button("⚙️ اعتماد الخلطة وإضافة الناتج للمخزن الرئيسي"):
+                        if res_sel and final_weight > 0:
+                            cur_mx = conn.cursor()
+                            tot_cost = sum([x['qty'] * x['cost'] for x in st.session_state["mix_list"]])
+                            res_obj = all_prod_opts[res_sel]
+                            new_avg = tot_cost / final_weight if final_weight > 0 else 0
+                            for m in st.session_state["mix_list"]:
+                                cur_mx.execute("UPDATE items SET quantity = quantity - ? WHERE branch_id = ? AND item_code = ?", (m['qty'], main_s_id, m['code']))
+                            cur_mx.execute("UPDATE items SET quantity = quantity + ?, avg_cost = ? WHERE branch_id = ? AND item_code = ?", (final_weight, new_avg, main_s_id, res_obj['item_code']))
+                            conn.commit()
+                            st.session_state["mix_list"] = []
+                            st.session_state["success_alert_msg"] = "تمت عملية الخلط واعتماد الناتج بنجاح تام!"
+                            st.rerun()
+                            
+    with roast_tab:
+        if store_items:
+            roast_choices = {f"[{i['item_code']}] {i['item_name']} (تكلفة: {i['avg_cost'] or i['buy_price']} د.ل)": i for i in store_items}
+            with st.form("roast_f", clear_on_submit=True):
+                sel_r = st.selectbox("اختر صنف التحميص الأساسي:", list(roast_choices.keys()))
+                raw_w = st.number_input("الوزن الخام قبل التحميص (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
+                
+                all_out_opts = {f"[{i['item_code']}] {i['item_name']} (سعر البيع الحالي: {i['sale_price']} د.ل | التكلفة: {i['avg_cost'] or i['buy_price']} د.ل)": i for i in all_store_items}
+                sel_out = st.selectbox("اختر الصنف الناتج بعد التحميص:", list(all_out_opts.keys()))
+                roasted_w = st.number_input("الوزن النهائي بعد التحميص (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
+                r_price = st.number_input("سعر بيع الصنف المحمص الناتج:", min_value=0.0, value=0.0, step=0.5, format="%.2f")
+                
+                if st.form_submit_button("🔥 اعتماد التحميص وخصم الخام وإضافة الناتج للمخزن"):
+                    if raw_w > 0 and roasted_w > 0:
+                        r_in_obj = roast_choices[sel_r]
+                        r_out_obj = all_out_opts[sel_out]
+                        cur_r = conn.cursor()
+                        cur_r.execute("UPDATE items SET quantity = quantity - ? WHERE branch_id = ? AND item_code = ?", (raw_w, main_s_id, r_in_obj['item_code']))
+                        cur_r.execute("UPDATE items SET quantity = quantity + ?, sale_price = ?, avg_cost = ? WHERE branch_id = ? AND item_code = ?", 
+                                      (roasted_w, r_price, r_in_obj['avg_cost'] or r_in_obj['buy_price'], main_s_id, r_out_obj['item_code']))
+                        conn.commit()
+                        st.session_state["success_alert_msg"] = "تمت عملية التحميص بنجاح تام!"
+                        st.rerun()
+    conn.close()
 
 elif choice == "📊 التقارير والأرباح":
   st.header("📊 التقارير والأرباح")
@@ -863,45 +856,57 @@ elif choice == "📊 التقارير والأرباح":
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين":
-  st.header("👥 إدارة المستخدمين والصلاحيات (مع حماية الأدمن وتوضيح الأسماء)")
-  conn = get_db_connection()
-  
-  branches_list = conn.execute("SELECT id, branch_name FROM branches").fetchall()
-  b_opts_dict = {b["branch_name"]: b["id"] for b in branches_list}
-  
-  with st.form("new_u", clear_on_submit=True):
-      uname = st.text_input("اسم المستخدم:")
-      uphone = st.text_input("الهاتف:")
-      upass = st.text_input("كلمة المرور:")
-      urole = st.selectbox("الرتبة:", ["Admin", "General_Supervisor", "Branch_Supervisor", "Cashier", "Viewer"])
-      sel_user_branch = st.selectbox("اختر الفرع المخصص لهذا المستخدم:", list(b_opts_dict.keys()))
-      assigned_b_id = b_opts_dict[sel_user_branch]
-      
-      if st.form_submit_button("💾 حفظ المستخدم الجديد") and uname and upass:
-          try:
-              conn.execute("INSERT INTO users (username, phone, password, role, branch_id) VALUES (?, ?, ?, ?, ?)", 
-                           (uname.strip(), uphone.strip(), upass, urole, assigned_b_id))
-              conn.commit()
-              st.session_state["success_alert_msg"] = "تم حفظ المستخدم وربطه بالفرع بنجاح!"
-              st.rerun()
-          except Exception as e: st.error(f"⚠️ خطأ: {e}")
-  
-  # --- عرض قائمة المستخدمين مع إظهار أسمائهم بوضوح في قائمة الحذف (مع حماية يوزر الأدمن تماماً) ---
-  udf = pd.read_sql("SELECT users.id AS 'المسلسل', users.username AS 'اسم المستخدم', users.role AS 'الرتبة', branches.branch_name AS 'الفرع' FROM users LEFT JOIN branches ON users.branch_id = branches.id", conn)
-  if not udf.empty:
-      st.dataframe(udf, use_container_width=True)
-      st.markdown("---")
-      del_u = st.selectbox("اختر المستخدم للحذف:", udf["المسلسل"].tolist(), format_func=lambda x: f"مسلسل: {x} - الاسم: {udf[udf['المسلسل']==x]['اسم المستخدم'].values[0]} | الرتبة: {udf[udf['المسلسل']==x]['الرتبة'].values[0]}")
-      
-      selected_row_user = conn.execute("SELECT username, role FROM users WHERE id = ?", (del_u,)).fetchone()
-      is_admin_target = selected_row_user and (selected_row_user["role"] == "Admin" or selected_row_user["username"].strip().lower() == "admin")
-      
-      if is_admin_target:
-          st.warning("🔒 هذا الحساب (Admin) محمي أمنياً ضد الحذف!")
-          
-      if st.button("🗑️ حذف المستخدم المختار", type="primary", disabled=is_admin_target): 
-          admin_confirm_dialog("حذف مستخدم", del_u)
-  conn.close()
+    st.header("👥 إدارة المستخدمين والصلاحيات")
+    conn = get_db_connection()
+    current_user_role = st.session_state.get("role", "")
+    
+    branches_list = conn.execute("SELECT id, branch_name FROM branches").fetchall()
+    b_opts_dict = {b["branch_name"]: b["id"] for b in branches_list}
+    
+    with st.form("new_u", clear_on_submit=True):
+        uname = st.text_input("اسم المستخدم:")
+        uphone = st.text_input("الهاتف:")
+        upass = st.text_input("كلمة المرور:", type="password")
+        
+        if current_user_role == "Admin":
+            available_roles = ["Admin", "General_Supervisor", "Branch_Supervisor", "Cashier", "Viewer"]
+        else:
+            available_roles = ["General_Supervisor", "Branch_Supervisor", "Cashier", "Viewer"]
+            
+        urole = st.selectbox("الرتبة:", available_roles)
+        sel_user_branch = st.selectbox("اختر الفرع المخصص لهذا المستخدم:", list(b_opts_dict.keys()))
+        assigned_b_id = b_opts_dict[sel_user_branch]
+        
+        if st.form_submit_button("💾 حفظ المستخدم الجديد") and uname and upass:
+            if urole == "Admin" and current_user_role != "Admin":
+                st.error("❌ عذراً، لا يمكن إضافة مشرف نظام (Admin) إلا بواسطة Admin آخر!")
+            else:
+                try:
+                    conn.execute("INSERT INTO users (username, phone, password, role, branch_id) VALUES (?, ?, ?, ?, ?)", 
+                                 (uname.strip(), uphone.strip(), upass, urole, assigned_b_id))
+                    conn.commit()
+                    st.session_state["success_alert_msg"] = "تم حفظ المستخدم وربطه بالفرع بنجاح!"
+                    st.rerun()
+                except Exception as e: st.error(f"⚠️ خطأ: {e}")
+    
+    udf = pd.read_sql("SELECT users.id AS 'المسلسل', users.username AS 'اسم المستخدم', users.role AS 'الرتبة', branches.branch_name AS 'الفرع' FROM users LEFT JOIN branches ON users.branch_id = branches.id", conn)
+    if not udf.empty:
+        st.dataframe(udf, use_container_width=True)
+        st.markdown("---")
+        del_u = st.selectbox("اختر المستخدم للحذف:", udf["المسلسل"].tolist(), format_func=lambda x: f"مسلسل: {x} - الاسم: {udf[udf['المسلسل']==x]['اسم المستخدم'].values[0]} | الرتبة: {udf[udf['المسلسل']==x]['الرتبة'].values[0]}")
+        
+        selected_row_user = conn.execute("SELECT username, role FROM users WHERE id = ?", (del_u,)).fetchone()
+        is_admin_target = selected_row_user and (selected_row_user["role"] == "Admin" or selected_row_user["username"].strip().lower() == "admin")
+        
+        can_delete = True
+        if is_admin_target:
+            can_delete = False
+        if current_user_role == "General_Supervisor" and is_admin_target:
+            can_delete = False
+            
+        if st.button("🗑️ حذف المستخدم المختار", type="primary", disabled=not can_delete): 
+            admin_confirm_dialog("حذف مستخدم", del_u)
+    conn.close()
 
 elif choice == "🛒 نقطة البيع (POS)":
   st.header("🛒 نقطة البيع (POS)")
