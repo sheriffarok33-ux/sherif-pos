@@ -338,7 +338,9 @@ if "barcode_scan" not in st.session_state: st.session_state["barcode_scan"] = ""
 if "show_welcome_dialog" not in st.session_state: st.session_state["show_welcome_dialog"] = False
 if "welcome_branch_name" not in st.session_state: st.session_state["welcome_branch_name"] = ""
 
-def set_page(page_name): st.session_state["page"] = page_name
+def set_page(page_name): 
+    st.session_state["page"] = page_name
+    st.rerun()
 
 @st.dialog("🌟 ترحيب النظام")
 def welcome_user_dialog():
@@ -579,8 +581,8 @@ menu_to_show = [m for m in DEFAULT_MENUS if check_user_permission(m)]
 
 for m in menu_to_show:
     disp_name = get_label(m)
-    if st.sidebar.button(disp_name, use_container_width=True, key=f"btn_menu_{m}"):
-        st.session_state["page"] = m; st.rerun()
+    if st.sidebar.button(disp_name, use_container_width=True, key=f"btn_menu_{m}", on_click=set_page, args=(m,)):
+        pass
 
 if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True, key="btn_logout_sidebar"):
     log_action(st.session_state["user_id"], "تسجيل خروج", "تم تسجيل الخروج")
@@ -822,6 +824,7 @@ elif choice == "💰 المصروفات":
               if exp_type == "خاص بفرع معين":
                   cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (?, ?, ?, 0, ?)", (b_dict[sel_b_name], exp_amount, exp_desc.strip(), date_str))
               else:
+                  # حساب عدد الفروع الحالية وتقسيم المبلغ بالتساوي ليعطي نصيب كل فرع بدقة
                   total_branches_count = len(branches)
                   share_per_branch = exp_amount / total_branches_count if total_branches_count > 0 else exp_amount
                   cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (NULL, ?, ?, 1, ?)", (exp_amount, f"[مصروف مخزن رئيسي إجمالي - نصيب كل فرع: {share_per_branch:,.2f} د.ل] {exp_desc.strip()}", date_str))
