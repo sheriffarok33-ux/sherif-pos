@@ -7,7 +7,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 
 st.set_page_config(
-    page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
+    page_title="مجموعة أبو زيد التجارية - نظام المحامص والمخازن الذكي",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -344,7 +344,7 @@ def set_page(page_name):
 
 @st.dialog("🌟 ترحيب النظام")
 def welcome_user_dialog():
-    st.success("**أهلاً بك يا عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕✨**")
+    st.success("**أهلاً بك فى عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕✨**")
     if st.button("OK (موافق)", use_container_width=True, type="primary"):
         st.session_state["show_welcome_dialog"] = False
         st.rerun()
@@ -772,7 +772,7 @@ elif choice == "📦 إدارة المخزن والفروع":
   sel_b_name = st.selectbox("اختر الفرع أو المخزن الرئيسي:", list(b_dict.keys()))
   current_b_id = b_dict[sel_b_name]
   
-  with st.expander("➕ إضافة صنف جديد يدوياً لهذا الفرع"):
+  with st.expander("➕   إضافة صنف جديد يدوياً لهذا الفرع"):
       with st.form("manual_add_item", clear_on_submit=True):
           m_code = st.text_input("كود الصنف:")
           m_name = st.text_input("اسم الصنف:")
