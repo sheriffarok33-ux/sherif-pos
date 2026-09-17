@@ -533,7 +533,6 @@ def process_scale_barcode():
                     "price": float(item["sale_price"]), "qty": 1.0, "total": float(item["sale_price"]) * 1.0
                 })
             else:
-                # إذا لم يتم العثور على الصنف نهائياً، يتم تفعيل نافذة التنبيه المنبثقة
                 st.session_state["missing_barcode_alert"] = code
         conn.close()
     st.session_state.barcode_scan = ""
@@ -780,7 +779,7 @@ elif choice == "🏢 إدارة الفروع":
   conn.close()
 
 elif choice == "📦 إدارة المخزن والفروع":
-  # --- تم تنظيف العناوين تماماً لمنع أي تداخل بصري ---
+  # --- تم إصلاح تداخل العناوين والكلمات الإنجليزية تماماً ---
   st.markdown("<h2>📦 إدارة المخزن والفروع</h2>", unsafe_allow_html=True)
   st.markdown("<p style='color: #475569; font-size: 15px;'>إضافة أصناف يدوياً وتعديل الأسعار والكميات لكل فرع بشكل مستقل تماماً بدون تعميم إجباري.</p>", unsafe_allow_html=True)
   st.markdown("---")
