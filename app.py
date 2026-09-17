@@ -779,7 +779,7 @@ elif choice == "🏢 إدارة الفروع":
   conn.close()
 
 elif choice == "📦 إدارة المخزن والفروع":
-  # --- تمت إزالة الـ expander بالكامل وإزالة أي تداخل أو رموز إنجليزية ---
+  # --- تم تنظيف العناوين تماماً وإزالة الـ expander وأي تداخل بصري ---
   st.markdown("<h2>📦 إدارة المخزن والفروع</h2>", unsafe_allow_html=True)
   st.markdown("<p style='color: #475569; font-size: 15px;'>إضافة أصناف يدوياً وتعديل الأسعار والكميات لكل فرع بشكل مستقل تماماً بدون تعميم إجباري.</p>", unsafe_allow_html=True)
   st.markdown("---")
@@ -1256,7 +1256,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                   with c2: st.write(f"{item['sale_price']} د.ل")
                   with c3:
                       with st.form(key=f"pos_q_{item['id']}", clear_on_submit=True):
-                          q_in = st.number_input("كمية", min_value=0.0, value=0.0, step=0.1, format="%.2f", key=f"q_{item['id']}")
+                          q_in = st.number_input("كمية", min_value=0.0, value=0.0, step=0.1, format="%.2f", key=f.get('q_' + str(item['id']), f"q_{item['id']}"))
                           if st.form_submit_button("➕ إضافة"):
                               if q_in > 0:
                                   st.session_state["cart"].append({"id": item["id"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(q_in), "total": float(item["sale_price"]) * float(q_in)})
