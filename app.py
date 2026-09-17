@@ -51,7 +51,7 @@ DEFAULT_MENUS = [
     "🛒 نقطة البيع (POS)",
     "⭐ لوحة المفضلة (1-20)",
     "📦 إدارة المخزن والفروع",
-    "➕ الفائض والتوالف والمرتجعات",
+    "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
     "🔄 تزويد الفروع والأرشيف",
     "🏢 إدارة الفروع",
     "📁 استيراد Excel",
@@ -60,8 +60,7 @@ DEFAULT_MENUS = [
     "⚙️ الجرد والتصفير السنوي",
     "🥜 التحميص والخلط",
     "📊 التقارير والأرباح",
-    "👥 إدارة المستخدمين",
-    "⚙️ تخصيص الأزرار"
+    "👥 إدارة المستخدمين"
 ]
 
 def initialize_database():
@@ -145,7 +144,6 @@ def initialize_database():
   """)
   cursor.execute("CREATE TABLE IF NOT EXISTS negative_sales_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
   cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role TEXT PRIMARY KEY, allowed_menus TEXT)")
-  cursor.execute("CREATE TABLE IF NOT EXISTS custom_labels (original_name TEXT PRIMARY KEY, custom_name TEXT NOT NULL)")
   cursor.execute("CREATE TABLE IF NOT EXISTS activity_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(DEFAULT_MENUS),))
@@ -175,12 +173,6 @@ def get_db_connection():
   conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = sqlite3.Row
   return conn
-
-def get_label(orig_name):
-    conn = get_db_connection()
-    row = conn.execute("SELECT custom_name FROM custom_labels WHERE original_name = ?", (orig_name,)).fetchone()
-    conn.close()
-    return row["custom_name"] if row else orig_name
 
 def verify_admin_password(pass_input):
     role = st.session_state.get("role", "")
@@ -271,7 +263,6 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
             elif action_type == "حذف مورد": conn.execute("DELETE FROM suppliers WHERE id = ?", (target_id,))
             elif action_type == "حذف مستخدم":
                 target_user = conn.execute("SELECT role, username FROM users WHERE id = ?", (target_id,)).fetchone()
-                # --- حماية مشددة: منع حذف حساب الأدمن الأساسي نهائياً بأي حال ---
                 if target_user and (target_user["role"] == "Admin" or target_user["username"].strip().lower() == "admin"):
                     st.error("❌ تحذير أمني صارم: لا يمكن أبداً حذف حساب الأدمن (Admin) الأساسي للنظام!")
                 else:
@@ -323,7 +314,7 @@ st.sidebar.markdown("---")
 
 menu_to_show = [m for m in DEFAULT_MENUS if check_user_permission(m)]
 for m in menu_to_show:
-    if st.sidebar.button(get_label(m), use_container_width=True, key=f"btn_menu_{m}", on_click=set_page, args=(m,)): pass
+    if st.sidebar.button(m, use_container_width=True, key=f"btn_menu_{m}", on_click=set_page, args=(m,)): pass
 
 if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
     st.session_state.clear(); st.rerun()
@@ -334,7 +325,7 @@ dashboard_cards = {
     "🛒 نقطة البيع (POS)": {"icon": "🛒", "color": "linear-gradient(135deg, #f59e0b, #ea580c)", "desc": "شاشة الكاشير"},
     "⭐ لوحة المفضلة (1-20)": {"icon": "⭐", "color": "linear-gradient(135deg, #e11d48, #be123c)", "desc": "الأصناف المفضلة للكاشير"},
     "📦 إدارة المخزن والفروع": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "جرد وإدارة وتعديل أسعار الفروع"},
-    "➕ الفائض والتوالف والمرتجعات": {"icon": "➕", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "إضافة فائض وتوالف"},
+    "➕ الفائض والتوالف والمرتجعات وتعديل السعر": {"icon": "➕", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "إضافة فائض، توالف، وتعديل السعر وتعميمه"},
     "🔄 تزويد الفروع والأرشيف": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تزويد الفروع"},
     "🥜 التحميص والخلط": {"icon": "🥜", "color": "linear-gradient(135deg, #d946ef, #a21caf)", "desc": "التحميص وخلط المكسرات وتحديد متوسط التكلفة"}
 }
@@ -345,7 +336,7 @@ if choice == "🏠 الرئيسية واللوحة":
   for i, (item, data) in enumerate(dashboard_cards.items()):
       if check_user_permission(item):
           with cols[i % 3]:
-              st.markdown(f'''<div style="background: {data['color']}; padding: 25px 15px; border-radius: 16px; color: white; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin-bottom: 10px; min-height: 150px;"><h1 style="margin:0; font-size: 45px; color: white !important;">{data['icon']}</h1><h3 style="margin: 10px 0 5px 0; color: white !important;">{get_label(item)}</h3><p style="margin:0; font-size: 14px; opacity: 0.9; color: white !important;">{data['desc']}</p></div>''', unsafe_allow_html=True)
+              st.markdown(f'''<div style="background: {data['color']}; padding: 25px 15px; border-radius: 16px; color: white; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin-bottom: 10px; min-height: 150px;"><h1 style="margin:0; font-size: 45px; color: white !important;">{data['icon']}</h1><h3 style="margin: 10px 0 5px 0; color: white !important;">{item}</h3><p style="margin:0; font-size: 14px; opacity: 0.9; color: white !important;">{data['desc']}</p></div>''', unsafe_allow_html=True)
               if st.button(f"دخول ➔", key=f"btn_card_{i}", on_click=set_page, args=(item,)): pass
               st.markdown("<br>", unsafe_allow_html=True)
 
@@ -364,21 +355,6 @@ elif choice == "⭐ لوحة المفضلة (1-20)":
           st.session_state["success_alert_msg"] = "تم حفظ الترتيب بنجاح!"
           st.rerun()
   conn.close()
-
-elif choice == "⚙️ تخصيص الأزرار":
-  st.header("⚙️ تخصيص مسميات القوائم والأزرار")
-  if st.session_state["role"] != "Admin": st.error("مخصص للأدمن فقط.")
-  else:
-      conn = get_db_connection()
-      with st.form("custom_label_form"):
-          orig_sel = st.selectbox("اختر القائمة للتعديل:", DEFAULT_MENUS)
-          new_name = st.text_input("الاسم الجديد:", value=get_label(orig_sel))
-          if st.form_submit_button("💾 حفظ التعديل"):
-              conn.execute("INSERT OR REPLACE INTO custom_labels (original_name, custom_name) VALUES (?, ?)", (orig_sel, new_name.strip()))
-              conn.commit()
-              st.session_state["success_alert_msg"] = "تم حفظ التعديل بنجاح!"
-              st.rerun()
-      conn.close()
 
 elif choice == "⚙️ الجرد والتصفير السنوي":
   st.header("⚙️ الجرد والعمليات السنوية والتصفير الشامل")
@@ -533,28 +509,38 @@ elif choice == "💰 المصروفات":
       if st.button("🗑️ حذف المصروف", type="primary"): admin_confirm_dialog("حذف مصروف", del_e)
   conn.close()
 
-elif choice == "➕ الفائض والتوالف والمرتجعات":
-  st.header("➕ الفائض والتوالف (مع أوبشن التلفيات)")
+elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
+  st.header("➕ الفائض، التوالف، وتعديل سعر الصنف مع التعميم الفوري")
   conn = get_db_connection()
   b_dict = {b["branch_name"]: b["id"] for b in conn.execute("SELECT id, branch_name FROM branches").fetchall()}
   sel_b = st.selectbox("اختر الفرع:", list(b_dict.keys()))
   cur_id = b_dict[sel_b]
   
-  op_type = st.radio("العملية:", ["➕ إضافة فائض صنف", "♻️ تسجيل توالف أو تلفيات"])
-  items_list = conn.execute("SELECT id, item_code, item_name, quantity FROM items WHERE branch_id = ?", (cur_id,)).fetchall()
+  op_type = st.radio("العملية:", ["➕ إضافة فائض صنف", "♻️ تسجيل توالف أو تلفيات", "✏️ تعديل سعر صنف وتعميمه على كافة الفروع"])
+  items_list = conn.execute("SELECT id, item_code, item_name, quantity, sale_price FROM items WHERE branch_id = ?", (cur_id,)).fetchall()
   if items_list:
-      i_opts = {f"[{i['item_code']}] {i['item_name']} (المتاح: {i['quantity']})": i for i in items_list}
+      i_opts = {f"[{i['item_code']}] {i['item_name']} (المتاح: {i['quantity']} - السعر الحالي: {i['sale_price']})": i for i in items_list}
       with st.form("surplus_return_form", clear_on_submit=True):
           chosen = st.selectbox("اختر الصنف:", list(i_opts.keys()))
-          qty = st.number_input("الكمية (كجم بالكسور):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
-          if st.form_submit_button("💾 تنفيذ العملية"):
-              if qty > 0:
-                  it = i_opts[chosen]
-                  mult = 1 if op_type.startswith("➕") else -1
-                  conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (qty * mult, it['id']))
+          it = i_opts[chosen]
+          
+          if op_type == "✏️ تعديل سعر صنف وتعميمه على كافة الفروع":
+              new_sale_p = st.number_input("سعر البيع الجديد (د.ل):", min_value=0.0, value=float(it['sale_price']), step=0.5)
+              if st.form_submit_button("💾 حفظ وتعميم السعر الجديد"):
+                  cur_up = conn.cursor()
+                  cur_up.execute("UPDATE items SET sale_price = ? WHERE item_code = ?", (new_sale_p, it['item_code']))
                   conn.commit()
-                  st.session_state["success_alert_msg"] = "تمت العملية بنجاح!"
+                  st.session_state["success_alert_msg"] = f"تم تحديث وتعميم السعر الجديد للصنف ({it['item_name']}) على كافة الفروع بنجاح!"
                   st.rerun()
+          else:
+              qty = st.number_input("الكمية (كجم بالكسور):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
+              if st.form_submit_button("💾 تنفيذ العملية"):
+                  if qty > 0:
+                      mult = 1 if op_type.startswith("➕") else -1
+                      conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (qty * mult, it['id']))
+                      conn.commit()
+                      st.session_state["success_alert_msg"] = "تمت العملية بنجاح!"
+                      st.rerun()
   conn.close()
 
 elif choice == "🔄 تزويد الفروع والأرشيف":
@@ -600,7 +586,7 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
   conn.close()
 
 elif choice == "📥 المشتريات والموردين":
-  st.header("📥 المشتريات والموردين (متوسط التكلفة الحقيقي والدائن والمدين)")
+  st.header("📥 المشتريات والموردين")
   conn = get_db_connection()
   tab_p1, tab_p2, tab_p3 = st.tabs(["➕ فاتورة مشتريات", "👥 الموردين", "📋 سجل المشتريات"])
   
@@ -642,22 +628,18 @@ elif choice == "📥 المشتريات والموردين":
                       old_q = old_r["quantity"]
                       old_avg = old_r["avg_cost"] if old_r["avg_cost"] > 0 else old_r["buy_price"]
                       new_tot_q = old_q + pi['qty']
-                      
-                      # --- حساب دقيق لمتوسط التكلفة المرجح ---
                       if new_tot_q > 0:
                           new_avg_cost = ((old_q * old_avg) + (pi['qty'] * pi['price'])) / new_tot_q
                       else:
                           new_avg_cost = pi['price']
-                          
                       cur_p.execute("UPDATE items SET quantity = quantity + ?, buy_price = ?, avg_cost = ? WHERE id = ?", (pi['qty'], pi['price'], new_avg_cost, pi['id']))
                       det.append(f"{pi['name']} ({pi['qty']} كجم بسعر {pi['price']})")
-                      
                   cur_p.execute("INSERT INTO purchases (branch_id, supplier_id, supplier_name, invoice_number, total_cost, payment_type, items_details, invoice_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                                 (b_dict[pb], sup_id, ps, inv_num.strip(), g_tot, ptype, " - ".join(det), datetime.now().strftime('%Y-%m-%d')))
                   if ptype == "آجل": cur_p.execute("UPDATE suppliers SET balance = balance + ? WHERE id = ?", (g_tot, sup_id))
                   conn.commit()
                   st.session_state["purch_cart"] = []
-                  st.session_state["success_alert_msg"] = "تم حفظ فاتورة المشتريات وحساب متوسط التكلفة بنجاح تام!"
+                  st.session_state["success_alert_msg"] = "تم حفظ فاتورة المشتريات بنجاح!"
                   st.rerun()
   with tab_p2:
       with st.form("new_sup", clear_on_submit=True):
@@ -672,13 +654,13 @@ elif choice == "📥 المشتريات والموردين":
       supp_df = pd.read_sql("SELECT id, supplier_name AS 'اسم التاجر / المورد', phone AS 'الهاتف', balance AS 'المستحقات (دائن / مدين) د.ل' FROM suppliers", conn)
       if not supp_df.empty: 
           st.dataframe(supp_df, use_container_width=True)
-          del_s = st.selectbox("اختر رقم المورد للحذف:", supp_df["id"].tolist())
+          del_s = st.selectbox("اختر المورد للحذف:", supp_df["id"].tolist(), format_func=lambda x: f"رقم: {x} - {supp_df[supp_df['id']==x]['اسم التاجر / المورد'].values[0]}")
           if st.button("🗑️ حذف المورد", type="primary"): admin_confirm_dialog("حذف مورد", del_s)
   with tab_p3:
       p_df = pd.read_sql("SELECT purchases.id AS 'مسلسل', purchases.invoice_number AS 'رقم الفاتورة', branches.branch_name AS 'الفرع', purchases.supplier_name AS 'المورد', purchases.total_cost AS 'الإجمالي (د.ل)', purchases.invoice_date AS 'التاريخ' FROM purchases LEFT JOIN branches ON purchases.branch_id=branches.id ORDER BY purchases.id DESC", conn)
       if not p_df.empty:
           st.dataframe(p_df, use_container_width=True)
-          del_pr = st.selectbox("اختر مسلسل الفاتورة للحذف:", p_df["مسلسل"].tolist())
+          del_pr = st.selectbox("اختر الفاتورة للحذف:", p_df["مسلسل"].tolist(), format_func=lambda x: f"مسلسل: {x} - فاتورة رقم: {p_df[p_df['مسلسل']==x]['رقم الفاتورة'].values[0]}")
           if st.button("🗑️ حذف فاتورة المشتريات", type="primary"): admin_confirm_dialog("حذف مشتريات", del_pr)
   conn.close()
 
@@ -765,23 +747,38 @@ elif choice == "📊 التقارير والأرباح":
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين":
-  st.header("👥 إدارة المستخدمين وصلاحياتهم")
+  st.header("👥 إدارة المستخدمين والصلاحيات (مع تحديد فرع الكاشير وحماية الأدمن)")
   conn = get_db_connection()
+  
+  branches_list = conn.execute("SELECT id, branch_name FROM branches").fetchall()
+  b_opts_dict = {b["branch_name"]: b["id"] for b in branches_list}
+  
   with st.form("new_u", clear_on_submit=True):
-      uname, uphone, upass = st.text_input("اسم المستخدم:"), st.text_input("الهاتف:"), st.text_input("كلمة المرور:")
+      uname = st.text_input("اسم المستخدم:")
+      uphone = st.text_input("الهاتف:")
+      upass = st.text_input("كلمة المرور:")
       urole = st.selectbox("الرتبة:", ["Admin", "General_Supervisor", "Branch_Supervisor", "Cashier", "Viewer"])
-      if st.form_submit_button("💾 حفظ") and uname and upass:
+      
+      # --- إظهار قائمة اختيار الفرع بوضوح تـام عند إنشاء مستخدم ---
+      sel_user_branch = st.selectbox("اختر الفرع المخصص لهذا المستخدم:", list(b_opts_dict.keys()))
+      assigned_b_id = b_opts_dict[sel_user_branch]
+      
+      if st.form_submit_button("💾 حفظ المستخدم الجديد") and uname and upass:
           try:
-              conn.execute("INSERT INTO users (username, phone, password, role) VALUES (?, ?, ?, ?)", (uname.strip(), uphone.strip(), upass, urole))
+              conn.execute("INSERT INTO users (username, phone, password, role, branch_id) VALUES (?, ?, ?, ?, ?)", 
+                           (uname.strip(), uphone.strip(), upass, urole, assigned_b_id))
               conn.commit()
-              st.session_state["success_alert_msg"] = "تم حفظ المستخدم بنجاح!"
+              st.session_state["success_alert_msg"] = "تم حفظ المستخدم وربطه بالفرع بنجاح!"
               st.rerun()
-          except: st.error("⚠️ موجود مسبقاً.")
-  udf = pd.read_sql("SELECT id AS 'المسلسل', username AS 'اسم المستخدم', role AS 'الرتبة' FROM users", conn)
+          except Exception as e: st.error(f"⚠️ خطأ: {e}")
+  
+  # --- عرض قائمة المستخدمين مع إظهار أسمائهم بوضوح في قائمة الحذف ---
+  udf = pd.read_sql("SELECT users.id AS 'المسلسل', users.username AS 'اسم المستخدم', users.role AS 'الرتبة', branches.branch_name AS 'الفرع' FROM users LEFT JOIN branches ON users.branch_id = branches.id", conn)
   if not udf.empty:
       st.dataframe(udf, use_container_width=True)
-      del_u = st.selectbox("اختر مسلسل المستخدم للحذف:", udf["المسلسل"].tolist())
-      if st.button("🗑️ حذف المستخدم", type="primary"): admin_confirm_dialog("حذف مستخدم", del_u)
+      st.markdown("---")
+      del_u = st.selectbox("اختر المستخدم للحذف:", udf["المسلسل"].tolist(), format_func=lambda x: f"مسلسل: {x} - الاسم: {udf[udf['المسلسل']==x]['اسم المستخدم'].values[0]} | الرتبة: {udf[udf['المسلسل']==x]['الرتبة'].values[0]}")
+      if st.button("🗑️ حذف المستخدم المختار", type="primary"): admin_confirm_dialog("حذف مستخدم", del_u)
   conn.close()
 
 elif choice == "🛒 نقطة البيع (POS)":
