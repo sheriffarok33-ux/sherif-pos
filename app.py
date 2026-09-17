@@ -842,7 +842,6 @@ elif choice == "📦 إدارة المخزن والفروع":
 
   st.markdown("---")
   st.markdown("### 📋 قائمة الأصناف والكميات الحالية")
-  # --- تم تصحيح وترجمة جميع رؤوس الأعمدة إلى اللغة العربية حصرياً ---
   items_df = pd.read_sql("SELECT id, item_code AS 'كود الصنف', item_name AS 'اسم الصنف', quantity AS 'الكمية (كجم)', sale_price AS 'سعر البيع (د.ل)', buy_price AS 'سعر الشراء (د.ل)', avg_cost AS 'متوسط التكلفة (د.ل)' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
   if not items_df.empty:
       edited_items = st.data_editor(items_df, hide_index=True, key="inv_editor_indep")
@@ -885,7 +884,6 @@ elif choice == "💰 المصروفات":
               st.session_state["success_alert_msg"] = "تم حفظ المصروف وتقسيم الحصص بالتساوي على الفروع بنجاح تام!"
               st.rerun()
   
-  # --- رؤوس جدول المصروفات بالعربي ---
   exp_df = pd.read_sql("SELECT expenses.id AS 'مسلسل', IFNULL(branches.branch_name, '🌍 مصروف مخزن رئيسي (إجمالي وتوزيع حصص عادل)') AS 'الجهة أو الفرع', expenses.amount AS 'المبلغ (د.ل)', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
   if not exp_df.empty:
       total_exp = exp_df["المبلغ (د.ل)"].sum()
@@ -992,7 +990,6 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
                   st.rerun()
   with tab_tr2:
       st.subheader("📋 أرشيف فواتير التزويد لكل فرع (لمعرفة ما تم تزويده ومتى)")
-      # --- رؤوس جدول الأرشيف بالعربي ---
       logs_df = pd.read_sql("SELECT transfer_logs.id AS 'رقم الفاتورة', b1.branch_name AS 'من المخزن', b2.branch_name AS 'إلى الفرع', transfer_logs.items_details AS 'الأصناف والكميات المزودة', transfer_logs.transfer_date AS 'التاريخ والوقت' FROM transfer_logs LEFT JOIN branches b1 ON transfer_logs.from_branch_id=b1.id LEFT JOIN branches b2 ON transfer_logs.to_branch_id=b2.id ORDER BY transfer_logs.id DESC", conn)
       if not logs_df.empty:
           st.dataframe(logs_df, use_container_width=True)
@@ -1194,7 +1191,6 @@ elif choice == "📊 التقارير والأرباح":
               for r in res: st.write(f"- الفرع: **{r['branch_name']}** | الرصيد المتاح: **{r['quantity']} كجم** | السعر: {r['sale_price']} د.ل | متوسط التكلفة: {r['avg_cost']} د.ل")
               st.markdown(f"### 📌 إجمالي الكمية المتاحة في كافة الفروع: <span style='color: #0284c7;'>{tot_qty:,.2f} كجم</span>", unsafe_allow_html=True)
   with tab_r3:
-      # --- رؤوس جدول مبيعات الفترات بالعربي ---
       df_p = pd.read_sql("SELECT invoices.id AS 'رقم الفاتورة', branches.branch_name AS 'الفرع', invoices.customer_name AS 'اسم الزبون', invoices.total_amount AS 'المبلغ الإجمالي (د.ل)', invoices.created_at AS 'الوقت والتاريخ' FROM invoices LEFT JOIN branches ON invoices.branch_id=branches.id ORDER BY invoices.id DESC", conn)
       if not df_p.empty:
           tot_sales_period = df_p["المبلغ الإجمالي (د.ل)"].sum()
@@ -1236,7 +1232,6 @@ elif choice == "👥 إدارة المستخدمين":
               st.rerun()
           except: st.error("⚠️ المستخدم موجود مسبقاً.")
   
-  # --- رؤوس جدول المستخدمين بالعربي ---
   udf = pd.read_sql("SELECT id AS 'المسلسل', username AS 'اسم المستخدم', role AS 'الرتبة' FROM users", conn)
   if not udf.empty: 
       st.dataframe(udf, use_container_width=True)
