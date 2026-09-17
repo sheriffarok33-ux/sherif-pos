@@ -758,7 +758,7 @@ elif choice == "📁 استيراد Excel":
                       for tid in target_ids:
                           exist_item = cur_ex.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (tid, code)).fetchone()
                           if exist_item:
-                              cur_ex.execute("UPDATE items SET quantity = ?, buy_price = ?, sale_price = ? WHERE id = ?", (qty, b_pr, s_pr, exist_item['id']))
+                              cur_ex.execute("UPDATE items SET quantity = ?, buy_price = ?, sale_price = ?, avg_cost = ? WHERE id = ?", (qty, b_pr, s_pr, b_pr, exist_item['id']))
                           else:
                               cur_ex.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, avg_cost, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)", 
                                              (tid, code, name, qty, b_pr, s_pr, b_pr))
