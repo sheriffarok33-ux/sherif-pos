@@ -16,22 +16,28 @@ st.set_page_config(
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
-    html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table { 
+    html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table, th, td { 
         font-family: 'Tajawal', sans-serif !important; 
         color: #000000 !important; 
-        font-weight: 700 !important;
+        font-weight: 900 !important;
+        font-size: 17px !important;
     }
     .main { background-color: #f8fafc; }
+    
+    h1 { font-size: 28px !important; color: #0f172a !important; }
+    h2 { font-size: 24px !important; color: #1e293b !important; }
+    h3 { font-size: 20px !important; color: #334155 !important; }
     
     div.stButton > button { 
         border-radius: 8px; 
         font-weight: 900 !important; 
         transition: all 0.3s ease; 
-        height: 45px; 
+        height: 50px; 
         background: linear-gradient(135deg, #0284c7, #0369a1);
         color: white !important;
         border: none;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        box-shadow: 0 3px 6px rgba(0,0,0,0.15);
+        font-size: 18px !important;
     }
     div.stButton > button:hover {
         background: linear-gradient(135deg, #0369a1, #075985);
@@ -43,11 +49,12 @@ st.markdown("""
     }
     [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p {
         color: #ffffff !important;
+        font-size: 17px !important;
     }
     [data-testid="stSidebar"] .stButton>button {
         background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
-        border-radius: 10px; padding: 10px 15px; text-align: right; font-weight: 900 !important;
-        transition: all 0.3s ease; margin-bottom: 5px; font-size: 15px; height: auto;
+        border-radius: 10px; padding: 12px 15px; text-align: right; font-weight: 900 !important;
+        transition: all 0.3s ease; margin-bottom: 8px; font-size: 17px !important; height: auto;
     }
     [data-testid="stSidebar"] .stButton>button:hover { 
         background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); 
@@ -170,6 +177,10 @@ def initialize_database():
   """)
   
   try: cursor.execute("ALTER TABLE purchases ADD COLUMN invoice_number TEXT")
+  except: pass
+  try: cursor.execute("ALTER TABLE purchases ADD COLUMN supplier_id INTEGER")
+  except: pass
+  try: cursor.execute("ALTER TABLE purchases ADD COLUMN supplier_name TEXT")
   except: pass
 
   cursor.execute("""
@@ -338,10 +349,19 @@ if "barcode_scan" not in st.session_state: st.session_state["barcode_scan"] = ""
 if "show_welcome_dialog" not in st.session_state: st.session_state["show_welcome_dialog"] = False
 if "welcome_branch_name" not in st.session_state: st.session_state["welcome_branch_name"] = ""
 if "missing_barcode_alert" not in st.session_state: st.session_state["missing_barcode_alert"] = ""
+if "success_alert_msg" not in st.session_state: st.session_state["success_alert_msg"] = ""
 
 def set_page(page_name): 
     st.session_state["page"] = page_name
     st.rerun()
+
+@st.dialog("🔔 تنبيه نجاح العملية")
+def success_action_dialog():
+    msg = st.session_state.get("success_alert_msg", "تمت العملية بنجاح!")
+    st.success(f"**{msg}**")
+    if st.button("موافق (OK)", use_container_width=True, type="primary"):
+        st.session_state["success_alert_msg"] = ""
+        st.rerun()
 
 @st.dialog("⚠️ تنبيه: صنف غير مسجل")
 def missing_barcode_dialog():
@@ -396,10 +416,10 @@ def fast_service_dialog():
                 st.session_state["cart"].append({
                     "id": 88888, "name": f"سريع: {f_name.strip()}", "price": f_price, "qty": f_qty, "total": f_price * f_qty
                 })
-                st.success("✅ تمت إضافة الصنف السريع للسلة بنجاح!")
+                st.session_state["success_alert_msg"] = "تمت إضافة الصنف السريع للسلة بنجاح!"
                 st.rerun()
 
-@st.dialog("🔒 تأكيد كلمة السر")
+@st.dialog("🔒 تأكيد كلمة السر للأمان")
 def admin_confirm_dialog(action_type, target_id, target_name=""):
     st.warning(f"⚠️ تأكيد أمني: تنفيذ عملية ({action_type}). يرجى إدخال كلمة السر:")
     admin_pass = st.text_input("كلمة السر:", type="password", key="diag_pass_input")
@@ -423,7 +443,7 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
             
             conn.commit()
             conn.close()
-            st.success("🗑️ تمت العملية بنجاح!")
+            st.session_state["success_alert_msg"] = f"تمت عملية ({action_type}) بنجاح!"
             st.rerun()
         else:
             st.error("❌ كلمة السر غير صحيحة!")
@@ -486,7 +506,7 @@ def checkout_payment_dialog(b_id, g_tot):
                 conn.commit()
                 conn.close()
                 st.session_state["cart"] = []
-                st.success("🎉 تم إصدار الفاتورة بنجاح!")
+                st.session_state["success_alert_msg"] = "تم إصدار الفاتورة بنجاح!"
                 st.rerun()
             else:
                 conn.close()
@@ -586,6 +606,9 @@ if st.session_state.get("show_welcome_dialog", False):
 if st.session_state.get("missing_barcode_alert", ""):
     missing_barcode_dialog()
 
+if st.session_state.get("success_alert_msg", ""):
+    success_action_dialog()
+
 # --- القائمة الجانبية ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
@@ -645,7 +668,7 @@ elif choice == "⭐ لوحة المفضلة (1-20)":
               for idx, row in edited_fav.iterrows():
                   conn.execute("UPDATE items SET favorite_rank = ? WHERE id = ?", (row['الرقم المفضل (1 إلى 20)'], row['id']))
               conn.commit()
-              st.success("🎉 تم الحفظ بنجاح!")
+              st.session_state["success_alert_msg"] = "تم حفظ الترتيب بنجاح!"
               st.rerun()
       conn.close()
 
@@ -662,7 +685,7 @@ elif choice == "⚙️ تخصيص الأزرار":
           if st.form_submit_button("💾 حفظ التعديل"):
               conn.execute("INSERT OR REPLACE INTO custom_labels (original_name, custom_name) VALUES (?, ?)", (orig_sel, new_custom_name.strip()))
               conn.commit()
-              st.success("🎉 تم الحفظ!")
+              st.session_state["success_alert_msg"] = "تم حفظ التعديل بنجاح!"
               st.rerun()
       conn.close()
 
@@ -693,7 +716,7 @@ elif choice == "⚙️ الجرد والتصفير السنوي":
                       if scope_id == "ALL": cur_inv.execute("UPDATE items SET quantity = 0")
                       else: cur_inv.execute("UPDATE items SET quantity = 0 WHERE branch_id = ?", (scope_id,))
                   conn.commit()
-                  st.success("🎉 تمت عملية التصفير بنجاح!")
+                  st.session_state["success_alert_msg"] = "تمت عملية التصفير بنجاح!"
                   st.rerun()
               else:
                   st.error("❌ كلمة السر غير صحيحة!")
@@ -741,7 +764,7 @@ elif choice == "📁 استيراد Excel":
                                              (tid, code, name, qty, b_pr, s_pr, b_pr))
                       count_imp += 1
                   conn.commit()
-                  st.success(f"🎉 تم استيراد ({count_imp}) صنف بنجاح!")
+                  st.session_state["success_alert_msg"] = f"تم استيراد ({count_imp}) صنف بنجاح!"
                   st.rerun()
               except Exception as e:
                   st.error(f"خطأ في الملف: {e}")
@@ -758,30 +781,38 @@ elif choice == "🏢 إدارة الفروع":
               try:
                   conn.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", (nb_name.strip(), nb_type))
                   conn.commit()
-                  st.success("🎉 تم إضافة الفرع بنجاح!")
+                  st.session_state["success_alert_msg"] = "تم إضافة الفرع بنجاح!"
                   st.rerun()
               except:
                   st.error("⚠️ الاسم موجود مسبقاً.")
   
+  st.markdown("---")
+  st.subheader("📋 قائمة الفروع الحالية (مع خيارات التعديل والحذف)")
   branches_list = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
   for b in branches_list:
       with st.form(f"branch_edit_{b['id']}"):
-          col1, col2, col3 = st.columns([2, 1, 1])
-          with col1: new_bn = st.text_input("الاسم:", value=b["branch_name"])
-          with col2: new_bt = st.selectbox("النوع:", ["فرع", "مخزن"], index=0 if b["branch_type"]=="فرع" else 1)
+          col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+          with col1: new_bn = st.text_input("الاسم:", value=b["branch_name"], key=f"bn_{b['id']}")
+          with col2: new_bt = st.selectbox("النوع:", ["فرع", "مخزن"], index=0 if b["branch_type"]=="فرع" else 1, key=f"bt_{b['id']}")
           with col3:
               st.markdown("<br>", unsafe_allow_html=True)
-              if st.form_submit_button("💾 حفظ"):
-                  conn.execute("UPDATE branches SET branch_name=?, branch_type=? WHERE id=?", (new_bn.strip(), new_bt, b['id']))
-                  conn.commit()
-                  st.success("🎉 تم التحديث!")
-                  st.rerun()
+              save_b_btn = st.form_submit_button("💾 حفظ التعديل")
+          with col4:
+              st.markdown("<br>", unsafe_allow_html=True)
+              del_b_btn = st.form_submit_button("🗑️ حذف الفرع")
+              
+          if save_b_btn:
+              conn.execute("UPDATE branches SET branch_name=?, branch_type=? WHERE id=?", (new_bn.strip(), new_bt, b['id']))
+              conn.commit()
+              st.session_state["success_alert_msg"] = f"تم تحديث بيانات الفرع ({new_bn}) بنجاح!"
+              st.rerun()
+          if del_b_btn:
+              admin_confirm_dialog("حذف فرع", b['id'])
   conn.close()
 
 elif choice == "📦 إدارة المخزن والفروع":
-  # --- تم تنظيف العناوين تماماً وإزالة الـ expander وأي تداخل بصري ---
   st.markdown("<h2>📦 إدارة المخزن والفروع</h2>", unsafe_allow_html=True)
-  st.markdown("<p style='color: #475569; font-size: 15px;'>إضافة أصناف يدوياً وتعديل الأسعار والكميات لكل فرع بشكل مستقل تماماً بدون تعميم إجباري.</p>", unsafe_allow_html=True)
+  st.markdown("<p style='color: #475569; font-size: 17px;'>إضافة أصناف يدوياً وتعديل الأسعار والكميات ومتوسط التكلفة لكل فرع بشكل مستقل تماماً.</p>", unsafe_allow_html=True)
   st.markdown("---")
 
   conn = get_db_connection()
@@ -798,27 +829,29 @@ elif choice == "📦 إدارة المخزن والفروع":
       m_qty = st.number_input("الكمية المبدئية (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
       m_buy = st.number_input("سعر الشراء (د.ل):", min_value=0.0, value=0.0, step=0.5, format="%.2f")
       m_sale = st.number_input("سعر البيع (د.ل):", min_value=0.0, value=0.0, step=0.5, format="%.2f")
+      m_avg = st.number_input("متوسط التكلفة (د.ل):", min_value=0.0, value=0.0, step=0.5, format="%.2f")
       if st.form_submit_button("💾 حفظ الصنف الجديد") and m_code and m_name:
           try:
               conn.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, avg_cost, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)",
-                           (current_b_id, m_code.strip(), m_name.strip(), m_qty, m_buy, m_sale, m_buy))
+                           (current_b_id, m_code.strip(), m_name.strip(), m_qty, m_buy, m_sale, m_avg if m_avg > 0 else m_buy))
               conn.commit()
-              st.success("🎉 تم إضافة الصنف يدوياً بنجاح!")
+              st.session_state["success_alert_msg"] = "تم إضافة الصنف يدوياً بنجاح!"
               st.rerun()
           except:
               st.error("⚠️ خطأ أو كود الصنف موجود مسبقاً في هذا الفرع.")
 
   st.markdown("---")
   st.markdown("### 📋 قائمة الأصناف والكميات الحالية")
-  items_df = pd.read_sql("SELECT id, item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', sale_price AS 'سعر البيع', buy_price AS 'سعر الشراء' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
+  # --- تم تصحيح وترجمة جميع رؤوس الأعمدة إلى اللغة العربية حصرياً ---
+  items_df = pd.read_sql("SELECT id, item_code AS 'كود الصنف', item_name AS 'اسم الصنف', quantity AS 'الكمية (كجم)', sale_price AS 'سعر البيع (د.ل)', buy_price AS 'سعر الشراء (د.ل)', avg_cost AS 'متوسط التكلفة (د.ل)' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
   if not items_df.empty:
       edited_items = st.data_editor(items_df, hide_index=True, key="inv_editor_indep")
       if st.button("💾 حفظ تعديلات هذا الفرع فقط (بدون تعميم)"):
           for idx, row in edited_items.iterrows():
-              conn.execute("UPDATE items SET item_code=?, item_name=?, quantity=?, buy_price=?, sale_price=? WHERE id=?", 
-                           (row['الكود'], row['اسم الصنف'], row['الكمية'], row['سعر الشراء'], row['سعر البيع'], row['id']))
+              conn.execute("UPDATE items SET item_code=?, item_name=?, quantity=?, buy_price=?, sale_price=?, avg_cost=? WHERE id=?", 
+                           (row['كود الصنف'], row['اسم الصنف'], row['الكمية (كجم)'], row['سعر الشراء (د.ل)'], row['سعر البيع (د.ل)'], row['متوسط التكلفة (د.ل)'], row['id']))
           conn.commit()
-          st.success("🎉 تم حفظ التعديلات للفرع بشكل مستقل تماماً!")
+          st.session_state["success_alert_msg"] = "تم حفظ التعديلات للفرع بشكل مستقل تماماً!"
           st.rerun()
       st.download_button("📥 تصدير لـ Excel", data=to_excel(items_df), file_name="branch_inventory.xlsx")
   else:
@@ -849,19 +882,20 @@ elif choice == "💰 المصروفات":
                   share_per_branch = exp_amount / total_branches_count if total_branches_count > 0 else exp_amount
                   cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (NULL, ?, ?, 1, ?)", (exp_amount, f"[مصروف مخزن رئيسي إجمالي - نصيب كل فرع: {share_per_branch:,.2f} د.ل] {exp_desc.strip()}", date_str))
               conn.commit()
-              st.success(f"💸 تم حفظ المصروف وتقسيم الحصص بالتساوي على الفروع بنجاح تام!")
+              st.session_state["success_alert_msg"] = "تم حفظ المصروف وتقسيم الحصص بالتساوي على الفروع بنجاح تام!"
               st.rerun()
   
-  exp_df = pd.read_sql("SELECT expenses.id AS 'رقم', IFNULL(branches.branch_name, '🌍 مصروف مخزن رئيسي (إجمالي وتوزيع حصص عادل)') AS 'الجهة / الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
+  # --- رؤوس جدول المصروفات بالعربي ---
+  exp_df = pd.read_sql("SELECT expenses.id AS 'مسلسل', IFNULL(branches.branch_name, '🌍 مصروف مخزن رئيسي (إجمالي وتوزيع حصص عادل)') AS 'الجهة أو الفرع', expenses.amount AS 'المبلغ (د.ل)', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
   if not exp_df.empty:
-      total_exp = exp_df["المبلغ"].sum()
+      total_exp = exp_df["المبلغ (د.ل)"].sum()
       st.dataframe(exp_df, use_container_width=True)
       st.markdown(f"### 📌 إجمالي المصروفات المسجلة: <span style='color: #0284c7;'>{total_exp:,.2f} د.ل</span>", unsafe_allow_html=True)
       
       st.download_button("📥 تصدير المصروفات لـ Excel", data=to_excel(exp_df), file_name="expenses.xlsx")
       
       st.markdown("---")
-      del_exp_id = st.selectbox("اختر رقم المصروف للحذف (إذا أردت مسحه):", exp_df["رقم"].tolist())
+      del_exp_id = st.selectbox("اختر رقم المصروف للحذف (إذا أردت مسحه):", exp_df["مسلسل"].tolist())
       if st.button("🗑️ حذف المصروف المختار نهائياً", type="primary"):
           admin_confirm_dialog("حذف مصروف", del_exp_id)
   conn.close()
@@ -889,7 +923,7 @@ elif choice == "➕ الفائض والتوالف والمرتجعات":
                   sel_item = i_opts[chosen_lbl]
                   conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (qty_val, sel_item['id']))
                   conn.commit()
-                  st.success("🚀 تمت عملية الفائض أو تسجيل التوالف والمرتجع بنجاح!")
+                  st.session_state["success_alert_msg"] = "تمت عملية الفائض أو تسجيل التوالف والمرتجع بنجاح!"
                   st.rerun()
   else:
       st.info("لا توجد أصناف مسجلة.")
@@ -926,13 +960,14 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
                               "buy_price": it_obj['buy_price'], "sale_price": it_obj['sale_price'], "avg_cost": it_obj['avg_cost'],
                               "expiry": it_obj['expiry_date'], "no_expiry": it_obj['no_expiry']
                           })
-                          st.success("✅ تمت الإضافة للسلة!")
+                          st.session_state["success_alert_msg"] = "تمت إضافة الصنف للسلة!"
                           st.rerun()
               else:
                   st.warning("المخزن الرئيسي فارغ.")
                   
           if st.session_state["transfer_cart"]:
-              st.dataframe(pd.DataFrame(st.session_state["transfer_cart"])[["code", "name", "qty"]], use_container_width=True)
+              df_tc_show = pd.DataFrame(st.session_state["transfer_cart"]).rename(columns={"code": "كود الصنف", "name": "اسم الصنف", "qty": "الكمية المزودة"})
+              st.dataframe(df_tc_show[["كود الصنف", "اسم الصنف", "الكمية المزودة"]], use_container_width=True)
               if st.button("🚀 حفظ وإنهاء وإرسال فاتورة التزويد للفرع", type="primary"):
                   cur_tr = conn.cursor()
                   details_list = []
@@ -950,14 +985,15 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
                                 (main_id, target_b_id, " - ".join(details_list)))
                   conn.commit()
                   st.session_state["transfer_cart"] = []
-                  st.success("🎉 تم تزويد الفرع بنجاح وإصدار الفاتورة وتوثيقها!")
+                  st.session_state["success_alert_msg"] = "تم تزويد الفرع بنجاح وإصدار الفاتورة وتوثيقها!"
                   st.rerun()
               if st.button("🗑️ تفريغ السلة"):
                   st.session_state["transfer_cart"] = []
                   st.rerun()
   with tab_tr2:
       st.subheader("📋 أرشيف فواتير التزويد لكل فرع (لمعرفة ما تم تزويده ومتى)")
-      logs_df = pd.read_sql("SELECT transfer_logs.id AS 'رقم الفاتورة', b1.branch_name AS 'من', b2.branch_name AS 'إلى الفرع', transfer_logs.items_details AS 'الأصناف والكميات المزودة', transfer_logs.transfer_date AS 'التاريخ والوقت' FROM transfer_logs LEFT JOIN branches b1 ON transfer_logs.from_branch_id=b1.id LEFT JOIN branches b2 ON transfer_logs.to_branch_id=b2.id ORDER BY transfer_logs.id DESC", conn)
+      # --- رؤوس جدول الأرشيف بالعربي ---
+      logs_df = pd.read_sql("SELECT transfer_logs.id AS 'رقم الفاتورة', b1.branch_name AS 'من المخزن', b2.branch_name AS 'إلى الفرع', transfer_logs.items_details AS 'الأصناف والكميات المزودة', transfer_logs.transfer_date AS 'التاريخ والوقت' FROM transfer_logs LEFT JOIN branches b1 ON transfer_logs.from_branch_id=b1.id LEFT JOIN branches b2 ON transfer_logs.to_branch_id=b2.id ORDER BY transfer_logs.id DESC", conn)
       if not logs_df.empty:
           st.dataframe(logs_df, use_container_width=True)
           st.download_button("📥 تصدير سجل تزويد الفروع لـ Excel", data=to_excel(logs_df), file_name="branch_supplies.xlsx")
@@ -995,12 +1031,12 @@ elif choice == "📥 المشتريات والموردين":
                   if p_qty > 0:
                       it_obj = item_opts[chosen_ik]
                       st.session_state["purch_cart"].append({"id": it_obj['id'], "code": it_obj['item_code'], "name": it_obj['item_name'], "qty": p_qty, "price": p_price, "total": p_qty * p_price})
-                      st.success("✅ تمت الإضافة!")
+                      st.session_state["success_alert_msg"] = "تمت إضافة الصنف للسلة!"
                       st.rerun()
       if st.session_state["purch_cart"]:
-          df_pc = pd.DataFrame(st.session_state["purch_cart"])[["code", "name", "qty", "price", "total"]]
+          df_pc = pd.DataFrame(st.session_state["purch_cart"]).rename(columns={"code": "كود الصنف", "name": "اسم الصنف", "qty": "الكمية", "price": "سعر الشراء", "total": "الإجمالي"})
+          st.dataframe(df_pc[["كود الصنف", "اسم الصنف", "الكمية", "سعر الشراء", "الإجمالي"]], use_container_width=True)
           p_g_tot = sum([x["total"] for x in st.session_state["purch_cart"]])
-          st.dataframe(df_pc, use_container_width=True)
           st.markdown(f"### 📌 إجمالي سلة المشتريات: <span style='color: #0284c7;'>{p_g_tot:,.2f} د.ل</span>", unsafe_allow_html=True)
           
           if st.button("💾 حفظ الفاتورة (تفريغ تلقائي للسلة)", type="primary"):
@@ -1023,7 +1059,7 @@ elif choice == "📥 المشتريات والموردين":
                       cur_p.execute("UPDATE suppliers SET balance = balance + ? WHERE id = ?", (p_g_tot, supp_id))
                   conn.commit()
                   st.session_state["purch_cart"] = []
-                  st.success("🎉 تم الحفظ وتفريغ السلة تلقائياً بنجاح!")
+                  st.session_state["success_alert_msg"] = "تم حفظ فاتورة المشتريات وتفريغ السلة تلقائياً بنجاح!"
                   st.rerun()
               else:
                   st.warning("⚠️ اختر المورد واكتب رقم الفاتورة.")
@@ -1036,7 +1072,7 @@ elif choice == "📥 المشتريات والموردين":
               try:
                   conn.execute("INSERT INTO suppliers (supplier_name, phone) VALUES (?, ?)", (sname.strip(), sphone.strip()))
                   conn.commit()
-                  st.success("🎉 تم الحفظ!")
+                  st.session_state["success_alert_msg"] = "تم حفظ المورد بنجاح!"
                   st.rerun()
               except: st.error("⚠️ موجود مسبقاً.")
       supp_df = pd.read_sql("SELECT id, supplier_name AS 'اسم التاجر / المورد', phone AS 'الهاتف', balance AS 'المستحقات (دائن / مدين) د.ل' FROM suppliers", conn)
@@ -1050,9 +1086,9 @@ elif choice == "📥 المشتريات والموردين":
           if st.button("🗑️ حذف المورد المختار", type="primary"):
               admin_confirm_dialog("حذف مورد", del_sup_id)
   with tab_p3:
-      p_df = pd.read_sql("SELECT purchases.id AS 'مسلسل', purchases.invoice_number AS 'رقم الفاتورة', branches.branch_name AS 'الفرع', purchases.supplier_name AS 'المورد', purchases.total_cost AS 'الإجمالي', purchases.invoice_date AS 'التاريخ' FROM purchases LEFT JOIN branches ON purchases.branch_id=branches.id ORDER BY purchases.id DESC", conn)
+      p_df = pd.read_sql("SELECT purchases.id AS 'مسلسل', purchases.invoice_number AS 'رقم الفاتورة', branches.branch_name AS 'الفرع', purchases.supplier_name AS 'المورد', purchases.total_cost AS 'الإجمالي (د.ل)', purchases.invoice_date AS 'التاريخ' FROM purchases LEFT JOIN branches ON purchases.branch_id=branches.id ORDER BY purchases.id DESC", conn)
       if not p_df.empty: 
-          tot_purch = p_df["الإجمالي"].sum()
+          tot_purch = p_df["الإجمالي (د.ل)"].sum()
           st.dataframe(p_df, use_container_width=True)
           st.markdown(f"### 📌 إجمالي المشتريات المسجلة: <span style='color: #0284c7;'>{tot_purch:,.2f} د.ل</span>", unsafe_allow_html=True)
           
@@ -1074,20 +1110,21 @@ elif choice == "🥜 التحميص والخلط والمكسرات":
   with mix_tab:
       st.info("💡 الخلط: دمج عدة خامات (لوز، فستق..) بسعر تكلفتها، وخصمها من المخزن، وإضافة الوزن والمجموع إلى صنف 'مكسرات مشكلة' الموجود مسبقاً بنفس كوده مع حساب متوسط التكلفة الجديد.")
       if store_items:
-          item_choices = {f"[{i['item_code']}] {i['item_name']} (متاح: {i['quantity']} كجم)": i for i in store_items}
+          item_choices = {f"[{i['item_code']}] {i['item_name']} (متاح: {i['quantity']} كجم - التكلفة: {i['avg_cost'] or i['buy_price']} د.ل)": i for i in store_items}
           if "mix_list" not in st.session_state: st.session_state["mix_list"] = []
           
           with st.form("mix_f", clear_on_submit=True):
-              sel_c = st.selectbox("اختر الخام للخلط:", list(item_choices.keys()))
+              sel_c = st.selectbox("اختر الخام للخلط (مع عرض متوسط التكلفة):", list(item_choices.keys()))
               mqty = st.number_input("الوزن المستخدم من الخامات (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
               if st.form_submit_button("➕ إضافة الخام للخلطة"):
                   if mqty > 0:
                       it_obj = item_choices[sel_c]
                       st.session_state["mix_list"].append({"code": it_obj['item_code'], "name": it_obj['item_name'], "qty": mqty, "cost": it_obj['avg_cost'] or it_obj['buy_price']})
-                      st.success("✅ تمت الإضافة لقائمة الخلط!")
+                      st.session_state["success_alert_msg"] = "تمت إضافة الخام لقائمة الخلط!"
                       st.rerun()
           if st.session_state["mix_list"]:
-              st.dataframe(pd.DataFrame(st.session_state["mix_list"])[["code", "name", "qty"]], use_container_width=True)
+              df_mx_show = pd.DataFrame(st.session_state["mix_list"]).rename(columns={"code": "كود الخام", "name": "اسم الخام", "qty": "الكمية المستخدمة", "cost": "التكلفة"})
+              st.dataframe(df_mx_show[["كود الخام", "اسم الخام", "الكمية المستخدمة", "التكلفة"]], use_container_width=True)
               with st.form("fin_mix"):
                   res_name = st.selectbox("اختر الصنف الناتج النهائي بعد الخلط (مثل: مكسرات مشكلة مسجلة):", [i['item_name'] for i in store_items])
                   if st.form_submit_button("⚙️ اعتماد الخلطة وخصم الخامات وتحديث صنف المكسرات المشكلة"):
@@ -1101,24 +1138,27 @@ elif choice == "🥜 التحميص والخلط والمكسرات":
                       cur_mx.execute("UPDATE items SET quantity = quantity + ?, avg_cost = ? WHERE branch_id = ? AND item_name = ?", (total_weight, new_avg, main_s_id, res_name))
                       conn.commit()
                       st.session_state["mix_list"] = []
-                      st.success("🎉 تمت عملية الخلط وحساب متوسط التكلفة وتحديث الأصناف بنجاح تام!")
+                      st.session_state["success_alert_msg"] = "تمت عملية الخلط وحساب متوسط التكلفة وتحديث الأصناف بنجاح تام!"
                       st.rerun()
   with roast_tab:
       st.info("🔥 التحميص: عملية يفقد فيها الصنف وزناً (مثال: استلام 10 كجم تعود بعد التحميص 9 كجم). يتم خصم الخام بالكامل وإضافة الوزن المحمص الفعلي للصنف المتكود.")
       if store_items:
+          item_choices_roast = {f"[{i['item_code']}] {i['item_name']} (متوسط التكلفة: {i['avg_cost'] or i['buy_price']} د.ل)": i for i in store_items}
           with st.form("roast_f", clear_on_submit=True):
-              sel_r = st.selectbox("اختر الصنف المراد تحميصه:", list(item_choices.keys()))
+              sel_r = st.selectbox("اختر الصنف المراد تحميصه (مع عرض متوسط التكلفة):", list(item_choices_roast.keys()))
               raw_w = st.number_input("الوزن الخام قبل التحميص (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
               roasted_w = st.number_input("الوزن الفعلي بعد التحميص (يقل الوزن):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
               r_price = st.number_input("سعر بيع المحمص (د.ل):", min_value=0.0, value=0.0, step=0.5, format="%.2f")
+              r_avg_in = st.number_input("متوسط التكلفة الجديد للصنف المحمص (د.ل):", min_value=0.0, value=0.0, step=0.5, format="%.2f")
               if st.form_submit_button("🔥 اعتماد التحميص وخصم الخام وإضافة الوزن المحمص الجديد"):
                   if raw_w > 0 and roasted_w > 0:
-                      r_obj = item_choices[sel_r]
+                      r_obj = item_choices_roast[sel_r]
                       cur_r = conn.cursor()
                       cur_r.execute("UPDATE items SET quantity = quantity - ? WHERE branch_id = ? AND item_code = ?", (raw_w, main_s_id, r_obj['item_code']))
-                      cur_r.execute("UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE branch_id = ? AND item_code = ?", (roasted_w, r_price, main_s_id, r_obj['item_code']))
+                      cur_r.execute("UPDATE items SET quantity = quantity + ?, sale_price = ?, avg_cost = ? WHERE branch_id = ? AND item_code = ?", 
+                                    (roasted_w, r_price, r_avg_in if r_avg_in > 0 else (r_obj['avg_cost'] or r_obj['buy_price']), main_s_id, r_obj['item_code']))
                       conn.commit()
-                      st.success("🎉 تمت عملية التحميص وتحديث الأرصدة بنجاح!")
+                      st.session_state["success_alert_msg"] = "تمت عملية التحميص وتحديث الأرصدة ومتوسط التكلفة بنجاح!"
                       st.rerun()
   conn.close()
 
@@ -1148,15 +1188,16 @@ elif choice == "📊 التقارير والأرباح":
       if all_items:
           it_dict = {f"[{i['item_code']}] {i['item_name']}": i['item_code'] for i in all_items}
           sel_it = st.selectbox("الصنف:", list(it_dict.keys()))
-          if st.button("عرض الأرصدة بالفروع"):
-              res = conn.execute("SELECT branches.branch_name, items.quantity, items.sale_price FROM items LEFT JOIN branches ON items.branch_id=branches.id WHERE items.item_code = ?", (it_dict[sel_it],)).fetchall()
+          if st.button("عرض الأرصدة بالفروع ومتوسط التكلفة"):
+              res = conn.execute("SELECT branches.branch_name, items.quantity, items.sale_price, items.avg_cost FROM items LEFT JOIN branches ON items.branch_id=branches.id WHERE items.item_code = ?", (it_dict[sel_it],)).fetchall()
               tot_qty = sum([r['quantity'] for r in res])
-              for r in res: st.write(f"- الفرع: **{r['branch_name']}** | الرصيد المتاح: **{r['quantity']} كجم** | السعر: {r['sale_price']} د.ل")
+              for r in res: st.write(f"- الفرع: **{r['branch_name']}** | الرصيد المتاح: **{r['quantity']} كجم** | السعر: {r['sale_price']} د.ل | متوسط التكلفة: {r['avg_cost']} د.ل")
               st.markdown(f"### 📌 إجمالي الكمية المتاحة في كافة الفروع: <span style='color: #0284c7;'>{tot_qty:,.2f} كجم</span>", unsafe_allow_html=True)
   with tab_r3:
-      df_p = pd.read_sql("SELECT invoices.id AS 'الفاتورة', branches.branch_name AS 'الفرع', invoices.customer_name AS 'الزبون', invoices.total_amount AS 'المبلغ', invoices.created_at AS 'الوقت' FROM invoices LEFT JOIN branches ON invoices.branch_id=branches.id ORDER BY invoices.id DESC", conn)
+      # --- رؤوس جدول مبيعات الفترات بالعربي ---
+      df_p = pd.read_sql("SELECT invoices.id AS 'رقم الفاتورة', branches.branch_name AS 'الفرع', invoices.customer_name AS 'اسم الزبون', invoices.total_amount AS 'المبلغ الإجمالي (د.ل)', invoices.created_at AS 'الوقت والتاريخ' FROM invoices LEFT JOIN branches ON invoices.branch_id=branches.id ORDER BY invoices.id DESC", conn)
       if not df_p.empty:
-          tot_sales_period = df_p["المبلغ"].sum()
+          tot_sales_period = df_p["المبلغ الإجمالي (د.ل)"].sum()
           st.dataframe(df_p, use_container_width=True)
           st.markdown(f"### 📌 إجمالي المبيعات بالفترة: <span style='color: #0284c7;'>{tot_sales_period:,.2f} د.ل</span>", unsafe_allow_html=True)
           st.download_button("📥 تصدير لـ Excel", data=to_excel(df_p), file_name="sales.xlsx")
@@ -1191,15 +1232,16 @@ elif choice == "👥 إدارة المستخدمين":
           try:
               conn.execute("INSERT INTO users (username, phone, password, role) VALUES (?, ?, ?, ?)", (uname.strip(), uphone.strip(), upass, urole))
               conn.commit()
-              st.success("🎉 تم الحفظ!")
+              st.session_state["success_alert_msg"] = "تم حفظ المستخدم بنجاح!"
               st.rerun()
           except: st.error("⚠️ المستخدم موجود مسبقاً.")
   
-  udf = pd.read_sql("SELECT id, username AS 'المستخدم', role AS 'الرتبة' FROM users", conn)
+  # --- رؤوس جدول المستخدمين بالعربي ---
+  udf = pd.read_sql("SELECT id AS 'المسلسل', username AS 'اسم المستخدم', role AS 'الرتبة' FROM users", conn)
   if not udf.empty: 
       st.dataframe(udf, use_container_width=True)
       st.markdown("---")
-      del_u_id = st.selectbox("اختر المستخدم للحذف:", udf["id"].tolist(), format_func=lambda x: f"رقم: {x} - {udf[udf['id']==x]['المستخدم'].values[0]} ({udf[udf['id']==x]['الرتبة'].values[0]})")
+      del_u_id = st.selectbox("اختر المستخدم للحذف:", udf["المسلسل"].tolist(), format_func=lambda x: f"رقم: {x} - {udf[udf['المسلسل']==x]['اسم المستخدم'].values[0]} ({udf[udf['المسلسل']==x]['الرتبة'].values[0]})")
       if st.button("🗑️ حذف المستخدم المختار", type="primary"):
           admin_confirm_dialog("حذف مستخدم", del_u_id)
   conn.close()
@@ -1252,11 +1294,11 @@ elif choice == "🛒 نقطة البيع (POS)":
           if fav_items:
               for item in fav_items:
                   c1, c2, c3 = st.columns([2, 1, 1])
-                  with c1: st.write(f"<b>{item['item_name']}</b> (المتاح: {item['quantity']} كجم)", unsafe_allow_html=True)
+                  with c1: st.write(f"<b>{item['item_name']}</b> (المتاح: {item['quantity']} كجم - التكلفة: {item['avg_cost'] or item['buy_price']} د.ل)", unsafe_allow_html=True)
                   with c2: st.write(f"{item['sale_price']} د.ل")
                   with c3:
                       with st.form(key=f"pos_q_{item['id']}", clear_on_submit=True):
-                          q_in = st.number_input("كمية", min_value=0.0, value=0.0, step=0.1, format="%.2f", key=f.get('q_' + str(item['id']), f"q_{item['id']}"))
+                          q_in = st.number_input("كمية", min_value=0.0, value=0.0, step=0.1, format="%.2f", key=f"q_{item['id']}")
                           if st.form_submit_button("➕ إضافة"):
                               if q_in > 0:
                                   st.session_state["cart"].append({"id": item["id"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(q_in), "total": float(item["sale_price"]) * float(q_in)})
@@ -1266,8 +1308,8 @@ elif choice == "🛒 نقطة البيع (POS)":
       with col_c:
           st.subheader("سلة المبيعات")
           if st.session_state["cart"]:
-              df_c = pd.DataFrame(st.session_state["cart"])
-              st.dataframe(df_c[["name", "price", "qty", "total"]], use_container_width=True)
+              df_c = pd.DataFrame(st.session_state["cart"]).rename(columns={"name": "اسم الصنف", "price": "السعر", "qty": "الكمية", "total": "الإجمالي"})
+              st.dataframe(df_c[["اسم الصنف", "السعر", "الكمية", "الإجمالي"]], use_container_width=True)
               g_tot = sum([x["total"] for x in st.session_state["cart"]])
               st.metric("الإجمالي", f"{g_tot:,.2f} د.ل")
               if st.button("🖨️ إتمام وطباعة الفاتورة", type="primary", use_container_width=True):
