@@ -7,12 +7,12 @@ import streamlit as st
 from datetime import datetime, timedelta
 
 st.set_page_config(
-    page_title="مجموعة أبو زيد التجارية - نظام المحامص والمخازن الذكي",
+    page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# --- تنسيق الخطوط والألوان (نص أسود عريض وواضح جداً لراحة العين) ---
+# --- تنسيق الخطوط والألوان (نص أسود عريض وواضح جداً لراحة العين وبدون أي تداخل) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -337,14 +337,24 @@ if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيس
 if "barcode_scan" not in st.session_state: st.session_state["barcode_scan"] = ""
 if "show_welcome_dialog" not in st.session_state: st.session_state["show_welcome_dialog"] = False
 if "welcome_branch_name" not in st.session_state: st.session_state["welcome_branch_name"] = ""
+if "missing_barcode_alert" not in st.session_state: st.session_state["missing_barcode_alert"] = ""
 
 def set_page(page_name): 
     st.session_state["page"] = page_name
     st.rerun()
 
+@st.dialog("⚠️ تنبيه: صنف غير مسجل")
+def missing_barcode_dialog():
+    code_text = st.session_state.get("missing_barcode_alert", "")
+    st.error(f"❌ عذراً، هذا الباركود أو الكود (**{code_text}**) غير مسجل في قاعدة البيانات!")
+    st.info("💡 يرجى إضافة هذا الصنف أولاً من شاشة (إدارة المخزن والفروع) أو التأكد من رقم الباركود.")
+    if st.button("موافق (OK)", use_container_width=True, type="primary"):
+        st.session_state["missing_barcode_alert"] = ""
+        st.rerun()
+
 @st.dialog("🌟 ترحيب النظام")
 def welcome_user_dialog():
-    st.success("**أهلاً بك فى عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕✨**")
+    st.success("**أهلاً بك يا عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕✨**")
     if st.button("OK (موافق)", use_container_width=True, type="primary"):
         st.session_state["show_welcome_dialog"] = False
         st.rerun()
@@ -522,6 +532,9 @@ def process_scale_barcode():
                     "id": item["id"], "code": item["item_code"], "name": item["item_name"],
                     "price": float(item["sale_price"]), "qty": 1.0, "total": float(item["sale_price"]) * 1.0
                 })
+            else:
+                # إذا لم يتم العثور على الصنف نهائياً، يتم تفعيل نافذة التنبيه المنبثقة
+                st.session_state["missing_barcode_alert"] = code
         conn.close()
     st.session_state.barcode_scan = ""
 
@@ -570,6 +583,9 @@ if not st.session_state["logged_in"]:
 
 if st.session_state.get("show_welcome_dialog", False):
     welcome_user_dialog()
+
+if st.session_state.get("missing_barcode_alert", ""):
+    missing_barcode_dialog()
 
 # --- القائمة الجانبية ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
@@ -764,7 +780,11 @@ elif choice == "🏢 إدارة الفروع":
   conn.close()
 
 elif choice == "📦 إدارة المخزن والفروع":
-  st.header("📦 إدارة المخزن والفروع (إضافة أصناف يدوياً وتعديل الأسعار بدون تعميم)")
+  # --- تم تنظيف العناوين تماماً لمنع أي تداخل بصري ---
+  st.markdown("<h2>📦 إدارة المخزن والفروع</h2>", unsafe_allow_html=True)
+  st.markdown("<p style='color: #475569; font-size: 15px;'>إضافة أصناف يدوياً وتعديل الأسعار والكميات لكل فرع بشكل مستقل تماماً بدون تعميم إجباري.</p>", unsafe_allow_html=True)
+  st.markdown("---")
+
   conn = get_db_connection()
   branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
   b_dict = {b["branch_name"]: b["id"] for b in branches}
@@ -772,7 +792,7 @@ elif choice == "📦 إدارة المخزن والفروع":
   sel_b_name = st.selectbox("اختر الفرع أو المخزن الرئيسي:", list(b_dict.keys()))
   current_b_id = b_dict[sel_b_name]
   
-  with st.expander("➕   إضافة صنف جديد يدوياً لهذا الفرع"):
+  with st.expander("➕ إضافة صنف جديد يدوياً لهذا الفرع"):
       with st.form("manual_add_item", clear_on_submit=True):
           m_code = st.text_input("كود الصنف:")
           m_name = st.text_input("اسم الصنف:")
@@ -824,7 +844,6 @@ elif choice == "💰 المصروفات":
               if exp_type == "خاص بفرع معين":
                   cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (?, ?, ?, 0, ?)", (b_dict[sel_b_name], exp_amount, exp_desc.strip(), date_str))
               else:
-                  # حساب عدد الفروع الحالية وتقسيم المبلغ بالتساوي ليعطي نصيب كل فرع بدقة
                   total_branches_count = len(branches)
                   share_per_branch = exp_amount / total_branches_count if total_branches_count > 0 else exp_amount
                   cur_ex.execute("INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date) VALUES (NULL, ?, ?, 1, ?)", (exp_amount, f"[مصروف مخزن رئيسي إجمالي - نصيب كل فرع: {share_per_branch:,.2f} د.ل] {exp_desc.strip()}", date_str))
