@@ -144,6 +144,7 @@ def initialize_database():
   """)
   cursor.execute("CREATE TABLE IF NOT EXISTS negative_sales_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
   cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role TEXT PRIMARY KEY, allowed_menus TEXT)")
+  cursor.execute("CREATE TABLE IF NOT EXISTS custom_labels (original_name TEXT PRIMARY KEY, custom_name TEXT NOT NULL)")
   cursor.execute("CREATE TABLE IF NOT EXISTS activity_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
   try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(DEFAULT_MENUS),))
@@ -173,6 +174,12 @@ def get_db_connection():
   conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = sqlite3.Row
   return conn
+
+def get_label(orig_name):
+    conn = get_db_connection()
+    row = conn.execute("SELECT custom_name FROM custom_labels WHERE original_name = ?", (orig_name,)).fetchone()
+    conn.close()
+    return row["custom_name"] if row else orig_name
 
 def verify_admin_password(pass_input):
     role = st.session_state.get("role", "")
@@ -273,6 +280,115 @@ def admin_confirm_dialog(action_type, target_id, target_name=""):
             st.rerun()
         else:
             st.error("❌ كلمة السر غير صحيحة!")
+
+@st.dialog("💳 شاشة إتمام الدفع")
+def checkout_payment_dialog(b_id, g_tot):
+    st.subheader(f"إجمالي الفاتورة المطلوب: {g_tot:,.2f} د.ل")
+    cust_name = st.text_input("اسم الزبون:", value="زبون نقدي")
+    cust_phone = st.text_input("رقم هاتف الزبون:", value="")
+    
+    conn = get_db_connection()
+    applied_discount = 0.0
+    if cust_phone.strip():
+        cust_db = conn.execute("SELECT * FROM customers WHERE phone = ?", (cust_phone.strip(),)).fetchone()
+        if cust_db and float(cust_db["total_purchases"]) >= 1000.0:
+            st.success("🎁 يستحق الزبون خصم الولاء: **50.00 د.ل**")
+            if st.checkbox("تطبيق خصم الولاء (50 دينار)"):
+                applied_discount = 50.0
+                
+    final_tot = max(0.0, g_tot - applied_discount)
+    pay_method = st.selectbox("نوع الدفع:", ["كاش (نقدي)", "شبكة / بطاقة", "آجل"])
+    paid_amount = st.number_input("المبلغ المدفوع (د.ل):", min_value=0.0, value=float(final_tot), step=0.5, format="%.2f")
+    
+    change_due = paid_amount - final_tot
+    if change_due >= 0:
+        st.success(f"💵 الباقي المستحق: **{change_due:,.2f} د.ل**")
+    else:
+        st.error(f"⚠️ المبلغ غير كافٍ! العجز: **{abs(change_due):,.2f} د.ل**")
+    
+    if st.button("🖨️ تأكيد وإصدار الفاتورة", type="primary", use_container_width=True):
+        if paid_amount >= final_tot or pay_method == "آجل":
+            target_inv_branch = b_id if b_id != "ALL" else conn.execute("SELECT id FROM branches LIMIT 1").fetchone()["id"]
+            
+            can_proceed = True
+            for c_item in st.session_state["cart"]:
+                if c_item["id"] != 99999 and c_item["id"] != 88888:
+                    db_it = conn.execute("SELECT quantity FROM items WHERE id = ?", (c_item["id"],)).fetchone()
+                    if db_it and float(db_it["quantity"]) < c_item["qty"]:
+                        can_proceed = False
+                        st.warning(f"⚠️ الصنف ({c_item['name']}) غير متوفر بالكمية المطلوبة!")
+
+            if can_proceed:
+                cur_in = conn.cursor()
+                cur_in.execute("INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method) VALUES (?, ?, ?, ?, ?, ?)", 
+                               (target_inv_branch, st.session_state["user_id"], cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method))
+                
+                for c_item in st.session_state["cart"]:
+                    if c_item["id"] != 99999 and c_item["id"] != 88888:
+                        conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
+                
+                if cust_phone.strip() and cust_name.strip() != "زبون نقدي":
+                    existing_cust = cur_in.execute("SELECT id, total_purchases FROM customers WHERE phone = ?", (cust_phone.strip(),)).fetchone()
+                    if existing_cust:
+                        cur_in.execute("UPDATE customers SET total_purchases = total_purchases + ?, customer_name = ? WHERE id = ?", 
+                                       (final_tot, cust_name.strip(), existing_cust['id']))
+                    else:
+                        cur_in.execute("INSERT INTO customers (customer_name, phone, total_purchases) VALUES (?, ?, ?)", 
+                                       (cust_name.strip(), cust_phone.strip(), final_tot))
+                        
+                conn.commit()
+                conn.close()
+                st.session_state["cart"] = []
+                st.session_state["success_alert_msg"] = "تم إصدار الفاتورة بنجاح!"
+                st.rerun()
+            else:
+                conn.close()
+        else:
+            st.warning("⚠️ المبلغ المدفوع أقل من الإجمالي.")
+    conn.close()
+
+def process_scale_barcode():
+    code = st.session_state.barcode_scan.strip()
+    if code:
+        b_id = st.session_state.get("branch_id")
+        conn = get_db_connection()
+        item = None
+        if code.startswith("20") and len(code) >= 12:
+            item_code = code[2:7]
+            scale_value = float(code[7:]) / 100.0
+            if b_id == "ALL":
+                item = conn.execute("SELECT * FROM items WHERE item_code = ? LIMIT 1", (item_code,)).fetchone()
+            else:
+                item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (item_code, b_id)).fetchone()
+            if item:
+                unit_price = float(item["sale_price"])
+                calculated_qty = scale_value / unit_price if unit_price > 0 else 1.0
+                if float(item["quantity"]) <= 0:
+                    conn.execute("INSERT INTO negative_sales_logs (branch_id, user_id, item_name, sale_qty) VALUES (?, ?, ?, ?)", 
+                                 (item["branch_id"], st.session_state["user_id"], item["item_name"], calculated_qty))
+                    conn.commit()
+                st.session_state["cart"].append({
+                    "id": item["id"], "code": item["item_code"], "name": item["item_name"],
+                    "price": unit_price, "qty": float(calculated_qty), "total": float(scale_value)
+                })
+        if not item:
+            if b_id == "ALL":
+                item = conn.execute("SELECT * FROM items WHERE item_code = ? LIMIT 1", (code,)).fetchone()
+            else:
+                item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
+            if item:
+                if float(item["quantity"]) <= 0:
+                    conn.execute("INSERT INTO negative_sales_logs (branch_id, user_id, item_name, sale_qty) VALUES (?, ?, ?, ?)", 
+                                 (item["branch_id"], st.session_state["user_id"], item["item_name"], 1.0))
+                    conn.commit()
+                st.session_state["cart"].append({
+                    "id": item["id"], "code": item["item_code"], "name": item["item_name"],
+                    "price": float(item["sale_price"]), "qty": 1.0, "total": float(item["sale_price"]) * 1.0
+                })
+            else:
+                st.session_state["missing_barcode_alert"] = code
+        conn.close()
+    st.session_state.barcode_scan = ""
 
 # --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
@@ -747,7 +863,7 @@ elif choice == "📊 التقارير والأرباح":
   conn.close()
 
 elif choice == "👥 إدارة المستخدمين":
-  st.header("👥 إدارة المستخدمين والصلاحيات (مع تحديد فرع الكاشير وحماية الأدمن)")
+  st.header("👥 إدارة المستخدمين والصلاحيات (مع حماية الأدمن وتوضيح الأسماء)")
   conn = get_db_connection()
   
   branches_list = conn.execute("SELECT id, branch_name FROM branches").fetchall()
@@ -758,8 +874,6 @@ elif choice == "👥 إدارة المستخدمين":
       uphone = st.text_input("الهاتف:")
       upass = st.text_input("كلمة المرور:")
       urole = st.selectbox("الرتبة:", ["Admin", "General_Supervisor", "Branch_Supervisor", "Cashier", "Viewer"])
-      
-      # --- إظهار قائمة اختيار الفرع بوضوح تـام عند إنشاء مستخدم ---
       sel_user_branch = st.selectbox("اختر الفرع المخصص لهذا المستخدم:", list(b_opts_dict.keys()))
       assigned_b_id = b_opts_dict[sel_user_branch]
       
@@ -772,13 +886,21 @@ elif choice == "👥 إدارة المستخدمين":
               st.rerun()
           except Exception as e: st.error(f"⚠️ خطأ: {e}")
   
-  # --- عرض قائمة المستخدمين مع إظهار أسمائهم بوضوح في قائمة الحذف ---
+  # --- عرض قائمة المستخدمين مع إظهار أسمائهم بوضوح في قائمة الحذف (مع حماية يوزر الأدمن تماماً) ---
   udf = pd.read_sql("SELECT users.id AS 'المسلسل', users.username AS 'اسم المستخدم', users.role AS 'الرتبة', branches.branch_name AS 'الفرع' FROM users LEFT JOIN branches ON users.branch_id = branches.id", conn)
   if not udf.empty:
       st.dataframe(udf, use_container_width=True)
       st.markdown("---")
       del_u = st.selectbox("اختر المستخدم للحذف:", udf["المسلسل"].tolist(), format_func=lambda x: f"مسلسل: {x} - الاسم: {udf[udf['المسلسل']==x]['اسم المستخدم'].values[0]} | الرتبة: {udf[udf['المسلسل']==x]['الرتبة'].values[0]}")
-      if st.button("🗑️ حذف المستخدم المختار", type="primary"): admin_confirm_dialog("حذف مستخدم", del_u)
+      
+      selected_row_user = conn.execute("SELECT username, role FROM users WHERE id = ?", (del_u,)).fetchone()
+      is_admin_target = selected_row_user and (selected_row_user["role"] == "Admin" or selected_row_user["username"].strip().lower() == "admin")
+      
+      if is_admin_target:
+          st.warning("🔒 هذا الحساب (Admin) محمي أمنياً ضد الحذف!")
+          
+      if st.button("🗑️ حذف المستخدم المختار", type="primary", disabled=is_admin_target): 
+          admin_confirm_dialog("حذف مستخدم", del_u)
   conn.close()
 
 elif choice == "🛒 نقطة البيع (POS)":
