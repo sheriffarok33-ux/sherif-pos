@@ -779,8 +779,8 @@ elif choice == "🏢 إدارة الفروع":
   conn.close()
 
 elif choice == "📦 إدارة المخزن والفروع":
-  # --- تم تنظيف العنوان بالكامل لمنع أي تداخل بصري أو ظهور أحرف إنجليزية ---
-  st.markdown("<h2>إدارة المخزن والفروع</h2>", unsafe_allow_html=True)
+  # --- تمت إزالة الـ expander بالكامل وإزالة أي تداخل أو رموز إنجليزية ---
+  st.markdown("<h2>📦 إدارة المخزن والفروع</h2>", unsafe_allow_html=True)
   st.markdown("<p style='color: #475569; font-size: 15px;'>إضافة أصناف يدوياً وتعديل الأسعار والكميات لكل فرع بشكل مستقل تماماً بدون تعميم إجباري.</p>", unsafe_allow_html=True)
   st.markdown("---")
 
@@ -791,23 +791,25 @@ elif choice == "📦 إدارة المخزن والفروع":
   sel_b_name = st.selectbox("اختر الفرع أو المخزن الرئيسي:", list(b_dict.keys()))
   current_b_id = b_dict[sel_b_name]
   
-  with st.expander("➕ إضافة صنف جديد يدوياً لهذا الفرع"):
-      with st.form("manual_add_item", clear_on_submit=True):
-          m_code = st.text_input("كود الصنف:")
-          m_name = st.text_input("اسم الصنف:")
-          m_qty = st.number_input("الكمية المبدئية (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
-          m_buy = st.number_input("سعر الشراء (د.ل):", min_value=0.0, value=0.0, step=0.5, format="%.2f")
-          m_sale = st.number_input("سعر البيع (د.ل):", min_value=0.0, value=0.0, step=0.5, format="%.2f")
-          if st.form_submit_button("💾 حفظ الصنف الجديد") and m_code and m_name:
-              try:
-                  conn.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, avg_cost, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)",
-                               (current_b_id, m_code.strip(), m_name.strip(), m_qty, m_buy, m_sale, m_buy))
-                  conn.commit()
-                  st.success("🎉 تم إضافة الصنف يدوياً بنجاح!")
-                  st.rerun()
-              except:
-                  st.error("⚠️ خطأ أو كود الصنف موجود مسبقاً في هذا الفرع.")
+  st.markdown("### ➕ إضافة صنف جديد يدوياً لهذا الفرع")
+  with st.form("manual_add_item", clear_on_submit=True):
+      m_code = st.text_input("كود الصنف:")
+      m_name = st.text_input("اسم الصنف:")
+      m_qty = st.number_input("الكمية المبدئية (كجم):", min_value=0.0, value=0.0, step=0.1, format="%.2f")
+      m_buy = st.number_input("سعر الشراء (د.ل):", min_value=0.0, value=0.0, step=0.5, format="%.2f")
+      m_sale = st.number_input("سعر البيع (د.ل):", min_value=0.0, value=0.0, step=0.5, format="%.2f")
+      if st.form_submit_button("💾 حفظ الصنف الجديد") and m_code and m_name:
+          try:
+              conn.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, avg_cost, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)",
+                           (current_b_id, m_code.strip(), m_name.strip(), m_qty, m_buy, m_sale, m_buy))
+              conn.commit()
+              st.success("🎉 تم إضافة الصنف يدوياً بنجاح!")
+              st.rerun()
+          except:
+              st.error("⚠️ خطأ أو كود الصنف موجود مسبقاً في هذا الفرع.")
 
+  st.markdown("---")
+  st.markdown("### 📋 قائمة الأصناف والكميات الحالية")
   items_df = pd.read_sql("SELECT id, item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', sale_price AS 'سعر البيع', buy_price AS 'سعر الشراء' FROM items WHERE branch_id = ?", conn, params=(current_b_id,))
   if not items_df.empty:
       edited_items = st.data_editor(items_df, hide_index=True, key="inv_editor_indep")
