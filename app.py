@@ -12,7 +12,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- تنسيق الخطوط والألوان (نص أسود عريض وواضح جداً لراحة العين وبدون أي تداخل) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -661,7 +660,7 @@ elif choice == "⭐ لوحة المفضلة (1-20)":
       sel_b_name = st.selectbox("اختر الفرع:", list(b_dict.keys()))
       cur_b_id = b_dict[sel_b_name]
       
-      items_fav = pd.read_sql("SELECT id, item_code AS 'الكود', item_name AS 'اسم الصنف', favorite_rank AS 'الرقم المفضل (1 إلى 20)' FROM items WHERE branch_id = ?", conn, params=(cur_b_id,))
+      items_fav = pd.read_sql("SELECT id, item_code AS 'كود الصنف', item_name AS 'اسم الصنف', favorite_rank AS 'الرقم المفضل (1 إلى 20)' FROM items WHERE branch_id = ?", conn, params=(cur_b_id,))
       if not items_fav.empty:
           edited_fav = st.data_editor(items_fav, hide_index=True, key="fav_editor")
           if st.button("💾 حفظ الترتيب"):
@@ -1045,7 +1044,12 @@ elif choice == "📥 المشتريات والموردين":
                       old_qty = cur_p.execute("SELECT quantity FROM items WHERE id = ?", (p_item['id'],)).fetchone()["quantity"]
                       old_avg = cur_p.execute("SELECT avg_cost FROM items WHERE id = ?", (p_item['id'],)).fetchone()["avg_cost"] or cur_p.execute("SELECT buy_price FROM items WHERE id = ?", (p_item['id'],)).fetchone()["buy_price"]
                       new_total_qty = old_qty + p_item['qty']
-                      new_avg_cost = ((old_qty * old_avg) + (p_item['qty'] * p_item['price'])) / new_total_qty if new_total_qty > 0 else p_item['price']
+                      
+                      # --- حساب دقيق لمتوسط التكلفة المرجح ---
+                      if new_total_qty > 0:
+                          new_avg_cost = ((old_qty * old_avg) + (p_item['qty'] * p_item['price'])) / new_total_qty
+                      else:
+                          new_avg_cost = p_item['price']
                       
                       cur_p.execute("UPDATE items SET quantity = quantity + ?, buy_price = ?, avg_cost = ? WHERE id = ?", (p_item['qty'], p_item['price'], new_avg_cost, p_item['id']))
                       details_list.append(f"{p_item['name']} ({p_item['qty']} كجم بسعر {p_item['price']})")
@@ -1107,7 +1111,7 @@ elif choice == "🥜 التحميص والخلط والمكسرات":
   with mix_tab:
       st.info("💡 الخلط: دمج عدة خامات (لوز، فستق..) بسعر تكلفتها، وخصمها من المخزن، وإضافة الوزن والمجموع إلى صنف 'مكسرات مشكلة' الموجود مسبقاً بنفس كوده مع حساب متوسط التكلفة الجديد.")
       if store_items:
-          item_choices = {f"[{i['item_code']}] {i['item_name']} (متاح: {i['quantity']} كجم - التكلفة: {i['avg_cost'] or i['buy_price']} د.ل)": i for i in store_items}
+          item_choices = {f"[{i['item_code']}] {i['item_name']} (متاح: {i['quantity']} كجم - متوسط التكلفة: {i['avg_cost'] or i['buy_price']} د.ل)": i for i in store_items}
           if "mix_list" not in st.session_state: st.session_state["mix_list"] = []
           
           with st.form("mix_f", clear_on_submit=True):
@@ -1120,8 +1124,8 @@ elif choice == "🥜 التحميص والخلط والمكسرات":
                       st.session_state["success_alert_msg"] = "تمت إضافة الخام لقائمة الخلط!"
                       st.rerun()
           if st.session_state["mix_list"]:
-              df_mx_show = pd.DataFrame(st.session_state["mix_list"]).rename(columns={"code": "كود الخام", "name": "اسم الخام", "qty": "الكمية المستخدمة", "cost": "التكلفة"})
-              st.dataframe(df_mx_show[["كود الخام", "اسم الخام", "الكمية المستخدمة", "التكلفة"]], use_container_width=True)
+              df_mx_show = pd.DataFrame(st.session_state["mix_list"]).rename(columns={"code": "كود الخام", "name": "اسم الخام", "qty": "الكمية المستخدمة", "cost": "متوسط التكلفة"})
+              st.dataframe(df_mx_show[["كود الخام", "اسم الخام", "الكمية المستخدمة", "متوسط التكلفة"]], use_container_width=True)
               with st.form("fin_mix"):
                   res_name = st.selectbox("اختر الصنف الناتج النهائي بعد الخلط (مثل: مكسرات مشكلة مسجلة):", [i['item_name'] for i in store_items])
                   if st.form_submit_button("⚙️ اعتماد الخلطة وخصم الخامات وتحديث صنف المكسرات المشكلة"):
