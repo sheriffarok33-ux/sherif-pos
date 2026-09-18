@@ -1118,20 +1118,21 @@ elif choice == "🛒 نقطة البيع (POS)":
       branch_name_str = b_row["branch_name"] if b_row else "فرعي"
       st.info(f"الفرع: {branch_name_str}")
       b_id = user_branch_id
-      fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank BETWEEN 1 AND 20 ORDER BY favorite_rank ASC", (b_id,)).fetchall()
+      # جلب كافة أصناف الفرع لضمان عدم ظهور الشاشة فارغة
+      pos_items = conn.execute("SELECT * FROM items WHERE branch_id = ?", (b_id,)).fetchall()
   else:
       b_dict = {b["branch_name"]: b["id"] for b in conn.execute("SELECT id, branch_name FROM branches").fetchall()}
       sel_pos = st.selectbox("الفرع:", ["كل الفروع"] + list(b_dict.keys()))
       b_id = "ALL" if sel_pos == "كل الفروع" else b_dict[sel_pos]
-      fav_items = conn.execute("SELECT * FROM items WHERE favorite_rank BETWEEN 1 AND 20 ORDER BY favorite_rank ASC" if b_id=="ALL" else "SELECT * FROM items WHERE branch_id = ? AND favorite_rank BETWEEN 1 AND 20 ORDER BY favorite_rank ASC", (() if b_id=="ALL" else (b_id,))).fetchall()
+      pos_items = conn.execute("SELECT * FROM items" if b_id=="ALL" else "SELECT * FROM items WHERE branch_id = ?", (() if b_id=="ALL" else (b_id,))).fetchall()
   
   st.text_input("مسح الباركود:", key="unified_barcode", on_change=process_unified_barcode, placeholder="امسح الباركود هنا...")
 
   col_g, col_c = st.columns([2, 1])
   with col_g:
-      st.markdown("### الأصناف المفضلة")
-      if fav_items:
-          for item in fav_items:
+      st.markdown("### أصناف البيع المتاحة")
+      if pos_items:
+          for item in pos_items:
               c1, c2, c3 = st.columns([2, 1, 1])
               with c1: st.markdown(f"<div style='background:#f1f5f9; padding:6px; border-radius:4px;'><b>{item['item_name']}</b><br><small>المتاح: {item['quantity']} كجم</small></div>", unsafe_allow_html=True)
               with c2: st.markdown(f"<div style='padding:6px; text-align:center;'><b>{item['sale_price']} د.ل</b></div>", unsafe_allow_html=True)
@@ -1142,6 +1143,9 @@ elif choice == "🛒 نقطة البيع (POS)":
                           if q_in > 0:
                               st.session_state["cart"].append({"id": item["id"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(q_in), "total": float(item["sale_price"]) * float(q_in)})
                               st.rerun()
+      else:
+          st.info("لا توجد أصناف مسجلة في هذا الفرع حالياً.")
+          
   with col_c:
       st.markdown("### سلة المبيعات")
       if st.session_state["cart"]:
