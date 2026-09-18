@@ -148,6 +148,17 @@ def initialize_database():
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           )
       """)
+      
+      # التحديث التلقائي للجدول القديم لمنع أي أخطاء مفقودة في الأعمدة
+      try:
+          existing_cols = [col["name"] for col in cursor.execute("PRAGMA table_info(invoices)").fetchall()]
+          if "shift_id" not in existing_cols:
+              cursor.execute("ALTER TABLE invoices ADD COLUMN shift_id TEXT DEFAULT 'SHIFT-01'")
+          if "shift_status" not in existing_cols:
+              cursor.execute("ALTER TABLE invoices ADD COLUMN shift_status TEXT DEFAULT 'open'")
+      except:
+          pass
+
       cursor.execute("CREATE TABLE IF NOT EXISTS negative_sales_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
       cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role TEXT PRIMARY KEY, allowed_menus TEXT)")
       cursor.execute("CREATE TABLE IF NOT EXISTS custom_labels (original_name TEXT PRIMARY KEY, custom_name TEXT NOT NULL)")
@@ -1159,12 +1170,11 @@ elif choice == "🛒 نقطة البيع (POS)":
   b_row = conn.execute("SELECT branch_name FROM branches WHERE id = ?", (user_branch_id,)).fetchone() if user_branch_id else None
   branch_name_str = b_row["branch_name"] if b_row else "الفرع الرئيسي"
   
-  # شريط معلومات الكاشير والشفت والتاريخ والوقت أمام الكاشير على الشاشة
   current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
   current_cashier = st.session_state.get("username", "كاشير")
   
   st.markdown(f"""
-  <div style="background:#e2e8f0; color:white; padding:12px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+  <div style="background:#0284c7; color:white; padding:12px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; font-weight:700; font-size:16px;">
       <div><b>الفرع:</b> {branch_name_str}</div>
       <div><b>الكاشير:</b> {current_cashier}</div>
       <div><b>الشفت:</b> SHIFT-01</div>
