@@ -215,7 +215,7 @@ if "page" not in st.session_state: st.session_state["page"] = "🛒 نقطة ا�
 if "unified_barcode" not in st.session_state: st.session_state["unified_barcode"] = ""
 if "show_welcome_dialog" not in st.session_state: st.session_state["show_welcome_dialog"] = False
 if "success_alert_msg" not in st.session_state: st.session_state["success_alert_msg"] = ""
-if "last_invoice_data" not in st.session_state: st.session_state["last_invoice_data"] = None
+if "show_receipt_flag" not in st.session_state: st.session_state["show_receipt_flag"] = False
 
 def set_page(page_name): 
     st.session_state["page"] = page_name
@@ -268,7 +268,15 @@ def admin_confirm_dialog(action_type, target_id=None):
             st.rerun()
 
 @st.dialog("🖨️ طباعة الفاتورة")
-def thermal_receipt_dialog(inv_data):
+def thermal_receipt_dialog():
+    inv_data = st.session_state.get("last_invoice_data")
+    if not inv_data:
+        st.info("لا توجد بيانات فاتورة حالية للطباعة.")
+        if st.button("إغلاق"):
+            st.session_state["show_receipt_flag"] = False
+            st.rerun()
+        return
+
     st.markdown(f"""
     <div class="thermal-receipt">
         <h3 style="text-align: center; margin:0; color:#0f172a;">مجموعة محامص أبو زيد التجارية</h3>
@@ -332,6 +340,7 @@ def thermal_receipt_dialog(inv_data):
     with col1:
         if st.button("طباعة", use_container_width=True, type="primary"):
             st.success("تم إرسال الفاتورة للطابعة!")
+            st.session_state["show_receipt_flag"] = False
             st.session_state["last_invoice_data"] = None
             st.rerun()
     with col2:
@@ -417,7 +426,7 @@ def checkout_payment_dialog(b_id, g_tot):
                 }
                 
                 st.session_state["cart"] = []
-                st.session_state["success_alert_msg"] = "تم إصدار الفاتورة بنجاح!"
+                st.session_state["show_receipt_flag"] = True
                 conn.close()
                 st.rerun()
             else:
@@ -473,7 +482,7 @@ def reprint_invoice_dialog():
                     "paid": inv['total_amount'],
                     "change": 0.0
                 }
-                st.success(f"تم تجهيز الفاتورة رقم #{chosen_inv_id} للطباعة!")
+                st.session_state["show_receipt_flag"] = True
                 st.rerun()
     else:
         st.info("لا توجد فواتير سابقة مسجلة.")
@@ -561,7 +570,7 @@ if not st.session_state["logged_in"]:
 
 if st.session_state.get("show_welcome_dialog", False): welcome_user_dialog()
 if st.session_state.get("success_alert_msg", ""): success_action_dialog()
-if st.session_state.get("last_invoice_data") is not None: thermal_receipt_dialog(st.session_state["last_invoice_data"])
+if st.session_state.get("show_receipt_flag", False): thermal_receipt_dialog()
 
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
