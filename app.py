@@ -52,7 +52,6 @@ if not os.path.exists("saved_receipts"): os.makedirs("saved_receipts")
 
 DEFAULT_MENUS = [
     "🛒 نقطة البيع (POS)",
-    "⭐ لوحة المفضلة (1-20)",
     "🔄 تزويد الفروع والأرشيف",
     "🏠 الرئيسية واللوحة",
     "📦 إدارة المخزن والفروع",
@@ -104,7 +103,7 @@ def initialize_database():
               FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
           )
       """)
-      cursor.execute("CREATE TABLE IF NOT EXISTS suppliers (id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_name TEXT UNIQUE NOT NULL, phone TEXT, balance REAL DEFAULT 0.0)")
+      cursor.execute("CREATE TABLE IF NOT EXISTS suppliers (id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_name TEXT NOT NULL, phone TEXT, balance REAL DEFAULT 0.0)")
       cursor.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT UNIQUE NOT NULL, total_purchases REAL DEFAULT 0.0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
       
       cursor.execute("""
@@ -189,7 +188,7 @@ def verify_admin_password(pass_input):
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     if role in ["Admin", "General_Supervisor", "Viewer"]: return True
-    if role == "Cashier" and menu_name in ["🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)", "🔄 تزويد الفروع والأرشيف"]: return True
+    if role == "Cashier" and menu_name in ["🛒 نقطة البيع (POS)", "🔄 تزويد الفروع والأرشيف"]: return True
     user_id = st.session_state.get("user_id")
     if not user_id: return False
     conn = get_db_connection()
@@ -386,13 +385,12 @@ def checkout_payment_dialog(b_id, g_tot):
     conn = get_db_connection()
     applied_discount = 0.0
     
-    # التحقق مما إذا كان الزبون هو نفسه أحد الموردين المسجلين لديناه
     matching_supplier = None
     if cust_name.strip() and cust_name.strip() != "زبون نقدي":
         matching_supplier = conn.execute("SELECT * FROM suppliers WHERE supplier_name = ? OR phone = ?", (cust_name.strip(), cust_phone.strip())).fetchone()
 
     if matching_supplier:
-        st.info(f"💡 هذا الزبون مسجل كمورد أيضاً! (رصيد مستحقاته لدينا: {matching_supplier['balance']:,.2f} د.ل)")
+        st.info(f"💡 هذا الزبون مسجل كمورد أيضاً! (رقم المورد: {matching_supplier['id']} - رصيد مستحقاته لدينا: {matching_supplier['balance']:,.2f} د.ل)")
         pay_from_supplier_balance = st.checkbox("خصم المبلغ من حساب المورد (تسوية مقاصة)")
     else:
         pay_from_supplier_balance = False
@@ -443,7 +441,6 @@ def checkout_payment_dialog(b_id, g_tot):
                     if c_item["id"] != 99999 and c_item["id"] != 88888:
                         conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
                 
-                # إذا كانت العملية مقاصة، يتم خصم القيمة من رصيد المورد مباشرة
                 if pay_from_supplier_balance and matching_supplier:
                     cur_in.execute("UPDATE suppliers SET balance = balance - ? WHERE id = ?", (final_tot, matching_supplier['id']))
                 
@@ -633,7 +630,6 @@ choice = st.session_state["page"]
 
 dashboard_cards = {
     "🛒 نقطة البيع (POS)": {"icon": "🛒", "color": "linear-gradient(135deg, #f59e0b, #ea580c)", "desc": "شاشة الكاشير"},
-    "⭐ لوحة المفضلة (1-20)": {"icon": "⭐", "color": "linear-gradient(135deg, #e11d48, #be123c)", "desc": "الأصناف المفضلة"},
     "🔄 تزويد الفروع والأرشيف": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تزويد الفروع"},
     "📦 إدارة المخزن والفروع": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "إدارة الأصناف"},
     "➕ الفائض والتوالف والمرتجعات وتعديل السعر": {"icon": "➕", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "التوالف والمرتجعات"},
@@ -649,22 +645,6 @@ if choice == "🏠 الرئيسية واللوحة":
               st.markdown(f'''<div style="background: {data['color']}; padding: 15px 10px; border-radius: 8px; color: white; text-align: center; margin-bottom: 8px; min-height: 110px;"><h1 style="margin:0; font-size: 30px; color: white !important;">{data['icon']}</h1><h3 style="margin: 6px 0 2px 0; color: white !important; font-size: 15px;">{item}</h3><p style="margin:0; font-size: 12px; opacity: 0.9; color: white !important;">{data['desc']}</p></div>''', unsafe_allow_html=True)
               if st.button("دخول", key=f"btn_card_{i}", on_click=set_page, args=(item,)): pass
               st.markdown("<br>", unsafe_allow_html=True)
-
-elif choice == "⭐ لوحة المفضلة (1-20)":
-  st.header("الأصناف المفضلة (1 إلى 20)")
-  conn = get_db_connection()
-  b_dict = {b["branch_name"]: b["id"] for b in conn.execute("SELECT id, branch_name FROM branches").fetchall()}
-  sel_b = st.selectbox("الفرع:", list(b_dict.keys()))
-  items_fav = pd.read_sql("SELECT id, item_code AS 'كود', item_name AS 'اسم الصنف', favorite_rank AS 'الرقم المفضل' FROM items WHERE branch_id = ?", conn, params=(b_dict[sel_b],))
-  if not items_fav.empty:
-      edited_fav = st.data_editor(items_fav, hide_index=True)
-      if st.button("حفظ الترتيب"):
-          for idx, row in edited_fav.iterrows():
-              conn.execute("UPDATE items SET favorite_rank = ? WHERE id = ?", (row['الرقم المفضل'], row['id']))
-          conn.commit()
-          st.session_state["success_alert_msg"] = "تم حفظ الترتيب بنجاح!"
-          st.rerun()
-  conn.close()
 
 elif choice == "⚙️ الجرد والتصفير السنوي":
   st.header("التصفير والجرد السنوي")
@@ -921,9 +901,20 @@ elif choice == "📥 المشتريات والموردين":
   
   with tab_p1:
       b_dict = {b["branch_name"]: b["id"] for b in conn.execute("SELECT id, branch_name FROM branches").fetchall()}
-      s_dict = {s["supplier_name"]: s["id"] for s in conn.execute("SELECT id, supplier_name FROM suppliers").fetchall()}
+      suppliers_list = conn.execute("SELECT id, supplier_name, phone FROM suppliers").fetchall()
+      
       pb = st.selectbox("الفرع:", list(b_dict.keys()))
-      ps = st.selectbox("المورد:", list(s_dict.keys()) if s_dict else ["لا توجد موردين"])
+      
+      if suppliers_list:
+          sup_opts = {f"رقم [{s['id']}] - {s['supplier_name']} (هاتف: {s['phone']})": s["id"] for s in suppliers_list}
+          sel_sup_label = st.selectbox("اختر المورد من القائمة:", list(sup_opts.keys()))
+          sup_id = sup_opts[sel_sup_label]
+          selected_sup_row = conn.execute("SELECT supplier_name FROM suppliers WHERE id = ?", (sup_id,)).fetchone()
+          ps = selected_sup_row["supplier_name"] if selected_sup_row else ""
+      else:
+          ps = ""
+          st.warning("لا توجد موردين مسجلين. يرجى إضافتهم من تبويب (الموردين والديون) أولاً.")
+
       inv_num = st.text_input("رقم الفاتورة:")
       ptype = st.radio("نوع الشراء:", ["كاش", "آجل"])
       
@@ -947,8 +938,7 @@ elif choice == "📥 المشتريات والموردين":
           st.markdown(f"**الإجمالي: {g_tot:,.2f} د.ل**")
           
           if st.button("حفظ فاتورة المشتريات", type="primary"):
-              if ps != "لا توجد موردين" and inv_num.strip():
-                  sup_id = s_dict[ps]
+              if ps and inv_num.strip():
                   cur_p = conn.cursor()
                   det = []
                   for pi in st.session_state["purch_cart"]:
@@ -977,16 +967,16 @@ elif choice == "📥 المشتريات والموردين":
                   conn.commit()
                   st.session_state["success_alert_msg"] = "تم حفظ المورد بنجاح!"
                   st.rerun()
-              except: st.error("المورد موجود مسبقاً.")
+              except: st.error("خطأ في حفظ المورد.")
       
-      supp_df = pd.read_sql("SELECT id, supplier_name AS 'المورد', phone AS 'الهاتف', balance AS 'الديون والمستحقات (د.ل)' FROM suppliers", conn)
+      supp_df = pd.read_sql("SELECT id AS 'رقم المورد', supplier_name AS 'المورد', phone AS 'الهاتف', balance AS 'الديون والمستحقات (د.ل)' FROM suppliers", conn)
       if not supp_df.empty: 
           st.dataframe(supp_df, use_container_width=True)
           st.download_button("تصدير الديون لـ Excel", data=to_excel(supp_df), file_name="suppliers_debts.xlsx")
           total_debts = supp_df['الديون والمستحقات (د.ل)'].sum()
           st.metric("إجمالي الديون للموردين", f"{total_debts:,.2f} د.ل")
           
-          del_s = st.selectbox("المورد للحذف:", supp_df["id"].tolist(), format_func=lambda x: f"رقم: {x} - {supp_df[supp_df['id']==x]['المورد'].values[0]}")
+          del_s = st.selectbox("المورد للحذف:", supp_df["رقم المورد"].tolist(), format_func=lambda x: f"رقم: {x} - {supp_df[supp_df['رقم المورد']==x]['المورد'].values[0]}")
           if st.button("حذف المورد", type="primary"): admin_confirm_dialog("حذف مورد", del_s)
 
   with tab_p3:
@@ -1213,27 +1203,32 @@ elif choice == "🛒 نقطة البيع (POS)":
 
   st.markdown("---")
   b_id = user_branch_id if user_branch_id else 1
-  pos_items = conn.execute("SELECT * FROM items WHERE branch_id = ?", (b_id,)).fetchall()
   
   st.text_input("مسح الباركود السريع:", key="unified_barcode", on_change=process_unified_barcode, placeholder="امسح الباركود هنا واضغط Enter...")
 
   col_g, col_c = st.columns([2, 1])
   with col_g:
-      st.markdown("### الأصناف السريعة")
-      if pos_items:
-          for item in pos_items:
-              c1, c2, c3 = st.columns([2, 1, 1])
-              with c1: st.markdown(f"<div style='background:#f1f5f9; padding:6px; border-radius:4px;'><b>{item['item_name']}</b><br><small>المتاح: {item['quantity']} كجم</small></div>", unsafe_allow_html=True)
-              with c2: st.markdown(f"<div style='padding:6px; text-align:center;'><b>{item['sale_price']} د.ل</b></div>", unsafe_allow_html=True)
-              with c3:
-                  with st.form(key=f"pos_q_{item['id']}", clear_on_submit=True):
-                      q_in = st.number_input("كمية", min_value=0.0, value=0.0, step=0.1, format="%.2f", key=f"q_{item['id']}")
-                      if st.form_submit_button("إضافة"):
-                          if q_in > 0:
-                              st.session_state["cart"].append({"id": item["id"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(q_in), "total": float(item["sale_price"]) * float(q_in)})
-                              st.rerun()
+      st.markdown("### 🔍 البحث السريع عن الأصناف (بدون باركود)")
+      all_branch_items = conn.execute("SELECT * FROM items WHERE branch_id = ?", (b_id,)).fetchall()
+      
+      if all_branch_items:
+          item_names_dict = {f"[{i['item_code']}] {i['item_name']} (متاح: {i['quantity']} كجم - السعر: {i['sale_price']} د.ل)": i for i in all_branch_items}
+          selected_item_label = st.selectbox("ابحث عن اسم الصنف أو اختره من القائمة:", ["-- اختر الصنف --"] + list(item_names_dict.keys()))
+          
+          if selected_item_label != "-- اختر الصنف --":
+              chosen_item = item_names_dict[selected_item_label]
+              with st.form(key=f"search_add_form_{chosen_item['id']}", clear_on_submit=True):
+                  qty_search = st.number_input("الكمية المطلوبة (كجم):", min_value=0.1, value=1.0, step=0.1, format="%.2f")
+                  if st.form_submit_button("➕ إضافة للسلة", use_container_width=True):
+                      if qty_search > 0:
+                          st.session_state["cart"].append({
+                              "id": chosen_item["id"], "name": chosen_item["item_name"], 
+                              "price": float(chosen_item["sale_price"]), "qty": float(qty_search), 
+                              "total": float(chosen_item["sale_price"]) * float(qty_search)
+                          })
+                          st.rerun()
       else:
-          st.info("لا توجد أصناف مسجلة بالفرع حالياً. استخدم زر (بيع صنف يدوي) لإتمام المبيعات فوراً.")
+          st.info("لا توجد أصناف مسجلة بالفرع حالياً.")
           
   with col_c:
       st.markdown("### سلة المبيعات")
