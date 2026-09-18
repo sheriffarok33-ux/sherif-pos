@@ -143,6 +143,7 @@ def initialize_database():
               total_amount REAL,
               payment_method TEXT DEFAULT 'كاش',
               notes TEXT,
+              shift_id TEXT DEFAULT 'SHIFT-01',
               shift_status TEXT DEFAULT 'open',
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           )
@@ -212,7 +213,6 @@ if "cart" not in st.session_state: st.session_state["cart"] = []
 if "page" not in st.session_state: st.session_state["page"] = "🛒 نقطة البيع (POS)"
 if "unified_barcode" not in st.session_state: st.session_state["unified_barcode"] = ""
 if "show_welcome_dialog" not in st.session_state: st.session_state["show_welcome_dialog"] = False
-if "missing_barcode_alert" not in st.session_state: st.session_state["missing_barcode_alert"] = ""
 if "success_alert_msg" not in st.session_state: st.session_state["success_alert_msg"] = ""
 if "last_invoice_data" not in st.session_state: st.session_state["last_invoice_data"] = None
 
@@ -246,7 +246,6 @@ def admin_confirm_dialog(action_type, target_id=None):
             if verify_admin_password(admin_pass):
                 conn = get_db_connection()
                 if action_type == "تقرير Z (تصفير مبيعات اليوم)":
-                    # عملية تصفير مبيعات اليوم وإبقاء التراكمي
                     today_str = datetime.now().strftime('%Y-%m-%d')
                     conn.execute("DELETE FROM invoices WHERE DATE(created_at) = ?", (today_str,))
                     conn.commit()
@@ -275,7 +274,8 @@ def thermal_receipt_dialog(inv_data):
         <p style="text-align: center; margin:5px 0;">فرع: {inv_data['branch_name']}</p>
         <hr style="border: 1px dashed #000;">
         <p style="margin:2px 0;"><b>رقم الفاتورة:</b> #{inv_data['invoice_id']}</p>
-        <p style="margin:2px 0;"><b>التاريخ:</b> {inv_data['date']}</p>
+        <p style="margin:2px 0;"><b>التاريخ والوقت:</b> {inv_data['date']}</p>
+        <p style="margin:2px 0;"><b>الكاشير:</b> {inv_data['cashier']}</p>
         <p style="margin:2px 0;"><b>الزبون:</b> {inv_data['customer']}</p>
         <hr style="border: 1px dashed #000;">
         <table style="width:100%; font-size:14px;">
@@ -286,13 +286,14 @@ def thermal_receipt_dialog(inv_data):
             </tr>
     """, unsafe_allow_html=True)
     
-    receipt_text_lines = [
-        "مجموعة محامص أبو زيد التجارية",
-        f"فرع: {inv_data['branch_name']}",
-        f"رقم الفاتورة: #{inv_data['invoice_id']}",
-        f"التاريخ: {inv_data['date']}",
-        f"الزبون: {inv_data['customer']}",
-        "-" * 30
+    receipt_html_lines = [
+        "<html><body style='font-family:Tajawal,sans-serif; direction:rtl; padding:15px;'>",
+        "<h2 style='text-align:center;'>مجموعة محامص أبو زيد التجارية</h2>",
+        f"<p><b>فرع:</b> {inv_data['branch_name']} | <b>الكاشير:</b> {inv_data['cashier']}</p>",
+        f"<p><b>رقم الفاتورة:</b> #{inv_data['invoice_id']} | <b>التاريخ:</b> {inv_data['date']}</p>",
+        "<hr>",
+        "<table width='100%' border='1' cellspacing='0' cellpadding='5'>",
+        "<tr><th>الصنف</th><th>الكمية</th><th>الإجمالي</th></tr>"
     ]
     
     for itm in inv_data['items']:
@@ -303,7 +304,7 @@ def thermal_receipt_dialog(inv_data):
                 <td style="text-align:left;">{itm['total']:,.2f}</td>
             </tr>
         """, unsafe_allow_html=True)
-        receipt_text_lines.append(f"{itm['name']} | {itm['qty']} كجم | {itm['total']:,.2f} د.ل")
+        receipt_html_lines.append(f"<tr><td>{itm['name']}</td><td align='center'>{itm['qty']}</td><td align='left'>{itm['total']:,.2f}</td></tr>")
         
     st.markdown(f"""
         </table>
@@ -317,13 +318,14 @@ def thermal_receipt_dialog(inv_data):
     </div>
     """, unsafe_allow_html=True)
     
-    receipt_text_lines.extend([
-        "-" * 30,
-        f"الإجمالي: {inv_data['total']:,.2f} د.ل",
-        f"طريقة الدفع: {inv_data['pay_method']}",
-        "شكراً لزيارتكم مجموعة أبو زيد التجارية"
+    receipt_html_lines.extend([
+        "</table>",
+        f"<hr><p><b>الإجمالي:</b> {inv_data['total']:,.2f} د.ل</p>",
+        f"<p><b>طريقة الدفع:</b> {inv_data['pay_method']}</p>",
+        "<p style='text-align:center;'>شكراً لزيارتكم مجموعة أبو زيد التجارية</p>",
+        "</body></html>"
     ])
-    full_receipt_text = "\n".join(receipt_text_lines)
+    full_receipt_html = "\n".join(receipt_html_lines)
     
     col1, col2 = st.columns(2)
     with col1:
@@ -333,10 +335,10 @@ def thermal_receipt_dialog(inv_data):
             st.rerun()
     with col2:
         st.download_button(
-            label="حفظ (للواتساب)",
-            data=full_receipt_text,
-            file_name=f"receipt_{inv_data['invoice_id']}.txt",
-            mime="text/plain",
+            label="حفظ كملف HTML (للإرسال بالواتساب)",
+            data=full_receipt_html,
+            file_name=f"invoice_{inv_data['invoice_id']}.html",
+            mime="text/html",
             use_container_width=True
         )
 
@@ -381,8 +383,8 @@ def checkout_payment_dialog(b_id, g_tot):
 
             if can_proceed:
                 cur_in = conn.cursor()
-                cur_in.execute("INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method) VALUES (?, ?, ?, ?, ?, ?)", 
-                               (target_inv_branch, st.session_state["user_id"], cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method))
+                cur_in.execute("INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?)", 
+                               (target_inv_branch, st.session_state["user_id"], cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method, "SHIFT-01"))
                 inv_id = cur_in.lastrowid
                 
                 for c_item in st.session_state["cart"]:
@@ -404,6 +406,7 @@ def checkout_payment_dialog(b_id, g_tot):
                     "invoice_id": inv_id,
                     "branch_name": b_name_str,
                     "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    "cashier": st.session_state.get("username", "كاشير"),
                     "customer": cust_name.strip() if cust_name else "زبون نقدي",
                     "items": st.session_state["cart"],
                     "total": final_tot,
@@ -442,19 +445,37 @@ def manual_item_dialog():
 
 @st.dialog("🔄 إعادة طباعة فاتورة سابقة")
 def reprint_invoice_dialog():
-    st.subheader("بحث وإعادة طباعة فاتورة")
-    inv_num = st.text_input("أدخل رقم الفاتورة المطلوب طباعتها:")
-    if st.button("بحث الفاتورة", type="primary"):
-        if inv_num.strip():
+    st.subheader("قائمة الفواتير السابقة للاختيار والطباعة")
+    conn = get_db_connection()
+    invoices_list = conn.execute("SELECT id, customer_name, total_amount, created_at FROM invoices ORDER BY id DESC LIMIT 50").fetchall()
+    conn.close()
+    
+    if invoices_list:
+        inv_opts = {f"فاتورة #{i['id']} - الزبون: {i['customer_name']} - الإجمالي: {i['total_amount']} د.ل ({i['created_at']})": i['id'] for i in invoices_list}
+        selected_inv_label = st.selectbox("اختر الفاتورة المطلوبة:", list(inv_opts.keys()))
+        chosen_inv_id = inv_opts[selected_inv_label]
+        
+        if st.button("طباعة هذه الفاتورة الآن", type="primary", use_container_width=True):
             conn = get_db_connection()
-            inv = conn.execute("SELECT invoices.*, branches.branch_name FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id WHERE invoices.id = ?", (inv_num.strip(),)).fetchone()
+            inv = conn.execute("SELECT invoices.*, branches.branch_name FROM invoices LEFT JOIN branches ON invoices.branch_id = branches.id WHERE invoices.id = ?", (chosen_inv_id,)).fetchone()
             conn.close()
             if inv:
-                st.success(f"تم العثور على الفاتورة رقم #{inv['id']} للزبون: {inv['customer_name']} - الإجمالي: {inv['total_amount']} د.ل")
-                if st.button("طباعة الفاتورة الآن"):
-                    st.success("تم إرسال الفاتورة للطابعة الحرارية بنجاح!")
-            else:
-                st.error("رقم الفاتورة غير موجود.")
+                st.session_state["last_invoice_data"] = {
+                    "invoice_id": inv['id'],
+                    "branch_name": inv['branch_name'] if inv['branch_name'] else "الفرع",
+                    "date": inv['created_at'],
+                    "cashier": st.session_state.get("username", "كاشير"),
+                    "customer": inv['customer_name'],
+                    "items": [{"name": "أصناف الفاتورة المسجلة", "qty": 1, "total": inv['total_amount']}],
+                    "total": inv['total_amount'],
+                    "pay_method": inv['payment_method'],
+                    "paid": inv['total_amount'],
+                    "change": 0.0
+                }
+                st.success(f"تم تجهيز الفاتورة رقم #{chosen_inv_id} للطباعة!")
+                st.rerun()
+    else:
+        st.info("لا توجد فواتير سابقة مسجلة.")
 
 @st.dialog("📊 تقرير القراءة بين الشفتات (X)")
 def shift_report_x_dialog():
@@ -849,7 +870,6 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
                       details = []
                       for t in st.session_state["transfer_cart"]:
                           cur_tr.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (t['qty'], t['id']))
-                          # تحديث أو إضافة الأصناف للفرع المستهدف تلقائياً عند الاعتماد
                           dest = cur_tr.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (target_id, t['code'])).fetchone()
                           if dest:
                               cur_tr.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (t['qty'], dest['id']))
@@ -1115,10 +1135,10 @@ elif choice == "👥 إدارة المستخدمين":
                     st.rerun()
                 except Exception as e: st.error(f"خطأ: {e}")
     
-    udf = pd.read_sql("SELECT users.id AS 'مسلسل', users.username AS 'المستخدم', users.role AS 'الرتبة', branches.branch_name AS 'الفرع' FROM users LEFT JOIN branches ON users.branch_id = branches.id", conn)
+    udf = pd.read_sql("SELECT users.id AS 'المسلسل', users.username AS 'المستخدم', users.role AS 'الرتبة', branches.branch_name AS 'الفرع' FROM users LEFT JOIN branches ON users.branch_id = branches.id", conn)
     if not udf.empty:
         st.dataframe(udf, use_container_width=True)
-        del_u = st.selectbox("المستخدم للحذف:", udf["مسلسل"].tolist(), format_func=lambda x: f"مسلسل: {x} - الاسم: {udf[udf['مسلسل']==x]['المستخدم'].values[0]}")
+        del_u = st.selectbox("المستخدم للحذف:", udf["المسلسل"].tolist(), format_func=lambda x: f"مسلسل: {x} - الاسم: {udf[udf['المسلسل']==x]['المستخدم'].values[0]}")
         
         selected_row_user = conn.execute("SELECT username, role FROM users WHERE id = ?", (del_u,)).fetchone()
         is_admin_target = selected_row_user and (selected_row_user["role"] == "Admin" or selected_row_user["username"].strip().lower() == "admin")
@@ -1139,15 +1159,25 @@ elif choice == "🛒 نقطة البيع (POS)":
   b_row = conn.execute("SELECT branch_name FROM branches WHERE id = ?", (user_branch_id,)).fetchone() if user_branch_id else None
   branch_name_str = b_row["branch_name"] if b_row else "الفرع الرئيسي"
   
-  # شريط التحكم والأزرار العلوية للشاشة (مطابق للواقع العملي)
-  st.markdown(f"### 🛒 نقطة البيع (POS) - فرع: {branch_name_str}")
+  # شريط معلومات الكاشير والشفت والتاريخ والوقت أمام الكاشير على الشاشة
+  current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+  current_cashier = st.session_state.get("username", "كاشير")
+  
+  st.markdown(f"""
+  <div style="background:#0f172a; color:white; padding:12px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+      <div><b>الفرع:</b> {branch_name_str}</div>
+      <div><b>الكاشير:</b> {current_cashier}</div>
+      <div><b>الشفت:</b> SHIFT-01</div>
+      <div><b>التاريخ والوقت:</b> {current_time_str}</div>
+  </div>
+  """, unsafe_allow_html=True)
   
   col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
   with col_btn1:
       if st.button("➕ بيع صنف يدوي / بدون باركود", use_container_width=True):
           manual_item_dialog()
   with col_btn2:
-      if st.button("🖨️ إعادة طباعة فاتورة", use_container_width=True):
+      if st.button("🔄 إعادة طباعة فاتورة", use_container_width=True):
           reprint_invoice_dialog()
   with col_btn3:
       if st.button("📊 تقرير الشفت (X)", use_container_width=True):
