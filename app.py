@@ -15,27 +15,29 @@ st.set_page_config(
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
+    
     html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table, th, td { 
         font-family: 'Tajawal', sans-serif !important; 
-        color: #000000 !important; 
-        font-weight: 700 !important;
+        color: #000000 !important;
+        line-height: 1.5 !important;
     }
+    
     .main { background-color: #f8fafc; }
     h1 { font-size: 24px !important; color: #0f172a !important; font-weight: 900 !important; margin-bottom: 10px; }
     h2 { font-size: 20px !important; color: #1e293b !important; font-weight: 900 !important; margin-bottom: 8px; }
     h3 { font-size: 16px !important; color: #334155 !important; font-weight: 900 !important; margin-bottom: 6px; }
     
     div.stButton > button { 
-        border-radius: 6px; font-weight: 900 !important; height: 40px; 
+        border-radius: 6px; font-weight: 700 !important; height: 40px; 
         background: #0284c7; color: white !important; border: none; font-size: 15px !important;
     }
     div.stButton > button:hover { background: #0369a1; }
     
     [data-testid="stSidebar"] { background-color: #0f172a; }
-    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 15px !important; font-weight: 700 !important; }
+    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 15px !important; }
     [data-testid="stSidebar"] .stButton>button {
         background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
-        border-radius: 6px; padding: 8px 10px; text-align: right; font-weight: 900 !important;
+        border-radius: 6px; padding: 8px 10px; text-align: right; font-weight: 700 !important;
         margin-bottom: 4px; font-size: 15px !important; height: auto;
     }
     [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; }
@@ -447,7 +449,7 @@ def checkout_payment_dialog(b_id, g_tot):
                 if cust_phone.strip() and cust_name.strip() != "زبون نقدي":
                     existing_cust = cur_in.execute("SELECT id, total_purchases FROM customers WHERE phone = ?", (cust_phone.strip(),)).fetchone()
                     if existing_cust:
-                        cur_in.execute("UPDATE customers SET total_purchases = total_purchases + ?, customer_name = ? WHERE id = ?", 
+                        cur_in.execute("UPDATE customers SET total_purchases = total_purchases + ?, customer_name = ? WHERE id =", 
                                        (final_tot, cust_name.strip(), existing_cust['id']))
                     else:
                         cur_in.execute("INSERT INTO customers (customer_name, phone, total_purchases) VALUES (?, ?, ?)", 
