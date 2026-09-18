@@ -144,21 +144,10 @@ def initialize_database():
               total_amount REAL,
               payment_method TEXT DEFAULT 'كاش',
               notes TEXT,
-              shift_id TEXT DEFAULT 'SHIFT-01',
               shift_status TEXT DEFAULT 'open',
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           )
       """)
-      
-      # فحص وإضافة الأعمدة الجديدة تلقائياً لمنع أي أخطاء تشغيلية
-      try:
-          existing_cols = [col["name"] for col in cursor.execute("PRAGMA table_info(invoices)").fetchall()]
-          if "shift_id" not in existing_cols:
-              cursor.execute("ALTER TABLE invoices ADD COLUMN shift_id TEXT DEFAULT 'SHIFT-01'")
-          if "shift_status" not in existing_cols:
-              cursor.execute("ALTER TABLE invoices ADD COLUMN shift_status TEXT DEFAULT 'open'")
-      except:
-          pass
 
       cursor.execute("CREATE TABLE IF NOT EXISTS negative_sales_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
       cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role TEXT PRIMARY KEY, allowed_menus TEXT)")
@@ -395,8 +384,8 @@ def checkout_payment_dialog(b_id, g_tot):
 
             if can_proceed:
                 cur_in = conn.cursor()
-                cur_in.execute("INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?)", 
-                               (target_inv_branch, st.session_state["user_id"], cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method, "SHIFT-01"))
+                cur_in.execute("INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method) VALUES (?, ?, ?, ?, ?, ?)", 
+                               (target_inv_branch, st.session_state["user_id"], cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method))
                 inv_id = cur_in.lastrowid
                 
                 for c_item in st.session_state["cart"]:
