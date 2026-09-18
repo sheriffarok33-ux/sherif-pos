@@ -19,6 +19,8 @@ st.markdown("""
         font-family: 'Tajawal', sans-serif !important; 
         color: #000000 !important; 
         font-weight: 700 !important;
+        direction: rtl !important;
+        text-align: right !important;
     }
     .main { background-color: #f8fafc; }
     h1 { font-size: 24px !important; color: #0f172a !important; font-weight: 900 !important; margin-bottom: 10px; }
@@ -32,7 +34,7 @@ st.markdown("""
     div.stButton > button:hover { background: #0369a1; }
     
     [data-testid="stSidebar"] { background-color: #0f172a; }
-    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 15px !important; font-weight: 700 !important; }
+    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 15px !important; font-weight: 700 !important; direction: rtl !important; text-align: right !important; }
     [data-testid="stSidebar"] .stButton>button {
         background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
         border-radius: 6px; padding: 8px 10px; text-align: right; font-weight: 900 !important;
@@ -52,6 +54,7 @@ if not os.path.exists("saved_receipts"): os.makedirs("saved_receipts")
 
 DEFAULT_MENUS = [
     "🛒 نقطة البيع (POS)",
+    "💼 إدارة الخزينة والسيولة",
     "🔄 تزويد الفروع والأرشيف",
     "🏠 الرئيسية واللوحة",
     "📦 إدارة المخزن والفروع",
@@ -147,6 +150,17 @@ def initialize_database():
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           )
       """)
+      
+      # جدول الخزينة والحركات اليدوية
+      cursor.execute("""
+          CREATE TABLE IF NOT EXISTS treasury_logs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              trans_type TEXT,
+              amount REAL,
+              description TEXT,
+              trans_date TEXT
+          )
+      """)
 
       cursor.execute("CREATE TABLE IF NOT EXISTS negative_sales_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
       cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role TEXT PRIMARY KEY, allowed_menus TEXT)")
@@ -188,7 +202,7 @@ def verify_admin_password(pass_input):
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     if role in ["Admin", "General_Supervisor", "Viewer"]: return True
-    if role == "Cashier" and menu_name in ["🛒 نقطة البيع (POS)", "🔄 تزويد الفروع والأرشيف"]: return True
+    if role == "Cashier" and menu_name in ["🛒 نقطة البيع (POS)", "🔄 تزويد الفروع والأرشيف", "💼 إدارة الخزينة والسيولة"]: return True
     user_id = st.session_state.get("user_id")
     if not user_id: return False
     conn = get_db_connection()
@@ -630,9 +644,10 @@ choice = st.session_state["page"]
 
 dashboard_cards = {
     "🛒 نقطة البيع (POS)": {"icon": "🛒", "color": "linear-gradient(135deg, #f59e0b, #ea580c)", "desc": "شاشة الكاشير"},
+    "💼 إدارة الخزينة والسيولة": {"icon": "💼", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "حركة الخزينة والنقدية"},
     "🔄 تزويد الفروع والأرشيف": {"icon": "🔄", "color": "linear-gradient(135deg, #8b5cf6, #6d28d9)", "desc": "تزويد الفروع"},
     "📦 إدارة المخزن والفروع": {"icon": "📦", "color": "linear-gradient(135deg, #3b82f6, #1d4ed8)", "desc": "إدارة الأصناف"},
-    "➕ الفائض والتوالف والمرتجعات وتعديل السعر": {"icon": "➕", "color": "linear-gradient(135deg, #10b981, #047857)", "desc": "التوالف والمرتجعات"},
+    "➕ الفائض والتوالف والمرتجعات وتعديل السعر": {"icon": "➕", "color": "linear-gradient(135deg, #e11d48, #be123c)", "desc": "التوالف والمرتجعات"},
     "🥜 التحميص والخلط": {"icon": "🥜", "color": "linear-gradient(135deg, #d946ef, #a21caf)", "desc": "التحميص"}
 }
 
@@ -645,6 +660,52 @@ if choice == "🏠 الرئيسية واللوحة":
               st.markdown(f'''<div style="background: {data['color']}; padding: 15px 10px; border-radius: 8px; color: white; text-align: center; margin-bottom: 8px; min-height: 110px;"><h1 style="margin:0; font-size: 30px; color: white !important;">{data['icon']}</h1><h3 style="margin: 6px 0 2px 0; color: white !important; font-size: 15px;">{item}</h3><p style="margin:0; font-size: 12px; opacity: 0.9; color: white !important;">{data['desc']}</p></div>''', unsafe_allow_html=True)
               if st.button("دخول", key=f"btn_card_{i}", on_click=set_page, args=(item,)): pass
               st.markdown("<br>", unsafe_allow_html=True)
+
+elif choice == "💼 إدارة الخزينة والسيولة":
+    st.header("💼 إدارة الخزينة وحركة النقدية")
+    conn = get_db_connection()
+    
+    # حساب إيرادات المبيعات النقدية الكاش
+    total_cash_sales = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE payment_method LIKE '%كاش%'").fetchone()[0] or 0.0
+    # حساب المصروفات النقدية
+    total_expenses = conn.execute("SELECT SUM(amount) FROM expenses").fetchone()[0] or 0.0
+    # حساب المشتريات النقدية
+    total_cash_purchases = conn.execute("SELECT SUM(total_cost) FROM purchases WHERE payment_type = 'كاش'").fetchone()[0] or 0.0
+    
+    # الحركات اليدوية للخزينة (إيداع / سحب)
+    manual_trans = conn.execute("SELECT SUM(CASE WHEN trans_type='إيداع' THEN amount ELSE -amount END) FROM treasury_logs").fetchone()[0] or 0.0
+    
+    treasury_balance = total_cash_sales + manual_trans - total_expenses - total_cash_purchases
+    
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric("إجمالي المبيعات النقدية", f"{total_cash_sales:,.2f} د.ل")
+    with c2: st.metric("المصروفات والمشتريات النقدية", f"{(total_expenses + total_cash_purchases):,.2f} د.ل")
+    with c3: st.metric("الحركات اليدوية بالخزينة", f"{manual_trans:,.2f} د.ل")
+    with c4: st.metric("💰 رصيد الخزينة الحالي", f"{treasury_balance:,.2f} د.ل")
+    
+    st.markdown("---")
+    st.subheader("➕ تسجيل حركة نقدية بالخزينة (إيداع أو سحب مصروف طارئ)")
+    with st.form("treasury_action_form", clear_on_submit=True):
+        t_type = st.selectbox("نوع الحركة:", ["إيداع نقدية", "سحب/صرف نقدية"])
+        t_amount = st.number_input("المبلغ (د.ل):", min_value=0.0, value=0.0, step=0.5)
+        t_desc = st.text_input("البيان أو السبب:")
+        if st.form_submit_button("حفظ الحركة وتحديث الخزينة", type="primary"):
+            if t_amount > 0 and t_desc.strip():
+                db_type = "إيداع" if t_type == "إيداع نقدية" else "سحب"
+                conn.execute("INSERT INTO treasury_logs (trans_type, amount, description, trans_date) VALUES (?, ?, ?, ?)",
+                             (db_type, t_amount, t_desc.strip(), datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                conn.commit()
+                st.session_state["success_alert_msg"] = "تم تسجيل الحركة وتحديث الخزينة بنجاح!"
+                st.rerun()
+            else:
+                st.error("يرجى إدخال مبلغ صحيح وبيان واضح.")
+                
+    st.markdown("### 📋 سجل حركات الخزينة اليدوية")
+    t_df = pd.read_sql("SELECT id AS 'مسلسل', trans_type AS 'نوع الحركة', amount AS 'المبلغ', description AS 'البيان', trans_date AS 'التاريخ' FROM treasury_logs ORDER BY id DESC", conn)
+    if not t_df.empty:
+        st.dataframe(t_df, use_container_width=True)
+        st.download_button("تصدير سجل الخزينة لـ Excel", data=to_excel(t_df), file_name="treasury_report.xlsx")
+    conn.close()
 
 elif choice == "⚙️ الجرد والتصفير السنوي":
   st.header("التصفير والجرد السنوي")
