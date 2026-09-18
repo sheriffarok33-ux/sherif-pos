@@ -14,27 +14,28 @@ st.set_page_config(
 
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap');
-    html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6 { 
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
+    html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table, th, td { 
         font-family: 'Tajawal', sans-serif !important; 
         color: #000000 !important; 
+        font-weight: 700 !important;
     }
     .main { background-color: #f8fafc; }
-    h1 { font-size: 24px !important; color: #0f172a !important; font-weight: 700 !important; margin-bottom: 10px; }
-    h2 { font-size: 20px !important; color: #1e293b !important; font-weight: 700 !important; margin-bottom: 8px; }
-    h3 { font-size: 16px !important; color: #334155 !important; font-weight: 700 !important; margin-bottom: 6px; }
+    h1 { font-size: 24px !important; color: #0f172a !important; font-weight: 900 !important; margin-bottom: 10px; }
+    h2 { font-size: 20px !important; color: #1e293b !important; font-weight: 900 !important; margin-bottom: 8px; }
+    h3 { font-size: 16px !important; color: #334155 !important; font-weight: 900 !important; margin-bottom: 6px; }
     
     div.stButton > button { 
-        border-radius: 6px; font-weight: 700 !important; height: 40px; 
+        border-radius: 6px; font-weight: 900 !important; height: 40px; 
         background: #0284c7; color: white !important; border: none; font-size: 15px !important;
     }
     div.stButton > button:hover { background: #0369a1; }
     
     [data-testid="stSidebar"] { background-color: #0f172a; }
-    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 15px !important; }
+    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 15px !important; font-weight: 700 !important; }
     [data-testid="stSidebar"] .stButton>button {
         background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
-        border-radius: 6px; padding: 8px 10px; text-align: right; font-weight: 700 !important;
+        border-radius: 6px; padding: 8px 10px; text-align: right; font-weight: 900 !important;
         margin-bottom: 4px; font-size: 15px !important; height: auto;
     }
     [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; }
@@ -149,7 +150,7 @@ def initialize_database():
           )
       """)
       
-      # التحديث التلقائي للجدول القديم لمنع أي أخطاء مفقودة في الأعمدة
+      # فحص وإضافة الأعمدة الجديدة تلقائياً لمنع أي أخطاء تشغيلية
       try:
           existing_cols = [col["name"] for col in cursor.execute("PRAGMA table_info(invoices)").fetchall()]
           if "shift_id" not in existing_cols:
@@ -1174,7 +1175,7 @@ elif choice == "🛒 نقطة البيع (POS)":
   current_cashier = st.session_state.get("username", "كاشير")
   
   st.markdown(f"""
-  <div style="background:#0284c7; color:white; padding:12px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; font-weight:700; font-size:16px;">
+  <div style="background:#0284c7; color:white; padding:12px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; font-weight:900; font-size:16px;">
       <div><b>الفرع:</b> {branch_name_str}</div>
       <div><b>الكاشير:</b> {current_cashier}</div>
       <div><b>الشفت:</b> SHIFT-01</div>
