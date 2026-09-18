@@ -385,7 +385,19 @@ def checkout_payment_dialog(b_id, g_tot):
     
     conn = get_db_connection()
     applied_discount = 0.0
-    if cust_phone.strip():
+    
+    # التحقق مما إذا كان الزبون هو نفسه أحد الموردين المسجلين لديناه
+    matching_supplier = None
+    if cust_name.strip() and cust_name.strip() != "زبون نقدي":
+        matching_supplier = conn.execute("SELECT * FROM suppliers WHERE supplier_name = ? OR phone = ?", (cust_name.strip(), cust_phone.strip())).fetchone()
+
+    if matching_supplier:
+        st.info(f"💡 هذا الزبون مسجل كمورد أيضاً! (رصيد مستحقاته لدينا: {matching_supplier['balance']:,.2f} د.ل)")
+        pay_from_supplier_balance = st.checkbox("خصم المبلغ من حساب المورد (تسوية مقاصة)")
+    else:
+        pay_from_supplier_balance = False
+
+    if cust_phone.strip() and not matching_supplier:
         cust_db = conn.execute("SELECT * FROM customers WHERE phone = ?", (cust_phone.strip(),)).fetchone()
         if cust_db and float(cust_db["total_purchases"]) >= 1000.0:
             st.success("خصم الولاء: 50.00 د.ل")
@@ -393,8 +405,13 @@ def checkout_payment_dialog(b_id, g_tot):
                 applied_discount = 50.0
                 
     final_tot = max(0.0, g_tot - applied_discount)
-    pay_method = st.selectbox("نوع الدفع:", ["كاش", "شبكة", "تحويل بنكي", "آجل"])
-    paid_amount = st.number_input("المبلغ المدفوع (د.ل):", min_value=0.0, value=float(final_tot), step=0.5, format="%.2f")
+    
+    if pay_from_supplier_balance:
+        pay_method = "مقاصة من حساب المورد"
+        paid_amount = final_tot
+    else:
+        pay_method = st.selectbox("نوع الدفع:", ["كاش", "شبكة", "تحويل بنكي", "آجل"])
+        paid_amount = st.number_input("المبلغ المدفوع (د.ل):", min_value=0.0, value=float(final_tot), step=0.5, format="%.2f")
     
     change_due = paid_amount - final_tot
     if change_due >= 0:
@@ -403,7 +420,7 @@ def checkout_payment_dialog(b_id, g_tot):
         st.error(f"المبلغ غير كافٍ! العجز: {abs(change_due):,.2f} د.ل")
     
     if st.button("تأكيد الفاتورة", type="primary", use_container_width=True):
-        if paid_amount >= final_tot or pay_method == "آجل":
+        if paid_amount >= final_tot or pay_method == "آجل" or pay_method == "مقاصة من حساب المورد":
             target_inv_branch = b_id if b_id != "ALL" else conn.execute("SELECT id FROM branches LIMIT 1").fetchone()["id"]
             branch_row = conn.execute("SELECT branch_name FROM branches WHERE id = ?", (target_inv_branch,)).fetchone()
             b_name_str = branch_row["branch_name"] if branch_row else "الفرع"
@@ -425,6 +442,10 @@ def checkout_payment_dialog(b_id, g_tot):
                 for c_item in st.session_state["cart"]:
                     if c_item["id"] != 99999 and c_item["id"] != 88888:
                         conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
+                
+                # إذا كانت العملية مقاصة، يتم خصم القيمة من رصيد المورد مباشرة
+                if pay_from_supplier_balance and matching_supplier:
+                    cur_in.execute("UPDATE suppliers SET balance = balance - ? WHERE id = ?", (final_tot, matching_supplier['id']))
                 
                 if cust_phone.strip() and cust_name.strip() != "زبون نقدي":
                     existing_cust = cur_in.execute("SELECT id, total_purchases FROM customers WHERE phone = ?", (cust_phone.strip(),)).fetchone()
@@ -881,7 +902,6 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
                   details = []
                   for t in st.session_state["transfer_cart"]:
                       cur_tr.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (t['qty'], t['id']))
-                      # ترحيل كطلب معلق لكي يظهر في تنبيهات الكاشير
                       details.append(f"{t['name']} ({t['qty']} كجم)")
                   cur_tr.execute("INSERT INTO transfer_logs (from_branch_id, to_branch_id, transfer_type, items_details, status) VALUES (?, ?, 'تزويد بضاعة', ?, 'معلقة')", (main_id, target_id, " - ".join(details)))
                   conn.commit()
@@ -895,7 +915,7 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
   conn.close()
 
 elif choice == "📥 المشتريات والموردين":
-  st.header("المشتريات وديون الموردين")
+  st.header("المشتريات وديون الموردين والزبائن المشتركين")
   conn = get_db_connection()
   tab_p1, tab_p2, tab_p3 = st.tabs(["فاتورة مشتريات", "الموردين والديون", "سجل المشتريات"])
   
@@ -950,12 +970,12 @@ elif choice == "📥 المشتريات والموردين":
 
   with tab_p2:
       with st.form("new_sup", clear_on_submit=True):
-          sname, sphone = st.text_input("اسم المورد:"), st.text_input("الهاتف:")
-          if st.form_submit_button("حفظ مورد") and sname:
+          sname, sphone = st.text_input("اسم المورد (أو التاجر الزبون):"), st.text_input("الهاتف:")
+          if st.form_submit_button("حفظ المورد") and sname:
               try:
                   conn.execute("INSERT INTO suppliers (supplier_name, phone) VALUES (?, ?)", (sname.strip(), sphone.strip()))
                   conn.commit()
-                  st.session_state["success_alert_msg"] = "تم حفظ المورد!"
+                  st.session_state["success_alert_msg"] = "تم حفظ المورد بنجاح!"
                   st.rerun()
               except: st.error("المورد موجود مسبقاً.")
       
