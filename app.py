@@ -50,8 +50,8 @@ if not os.path.exists("item_images"): os.makedirs("item_images")
 if not os.path.exists("saved_receipts"): os.makedirs("saved_receipts")
 
 DEFAULT_MENUS = [
-    "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
+    "🏠 الرئيسية واللوحة",
     "⭐ لوحة المفضلة (1-20)",
     "📦 إدارة المخزن والفروع",
     "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
@@ -187,6 +187,7 @@ def verify_admin_password(pass_input):
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     if role in ["Admin", "General_Supervisor", "Viewer"]: return True
+    if role == "Cashier" and menu_name in ["🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)", "🔄 تزويد الفروع والأرشيف"]: return True
     user_id = st.session_state.get("user_id")
     if not user_id: return False
     conn = get_db_connection()
@@ -208,7 +209,7 @@ if "role" not in st.session_state: st.session_state["role"] = ""
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
 if "cart" not in st.session_state: st.session_state["cart"] = []
-if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
+if "page" not in st.session_state: st.session_state["page"] = "🛒 نقطة البيع (POS)"
 if "unified_barcode" not in st.session_state: st.session_state["unified_barcode"] = ""
 if "show_welcome_dialog" not in st.session_state: st.session_state["show_welcome_dialog"] = False
 if "missing_barcode_alert" not in st.session_state: st.session_state["missing_barcode_alert"] = ""
@@ -471,7 +472,11 @@ def process_unified_barcode():
                     "price": float(item["sale_price"]), "qty": 1.0, "total": float(item["sale_price"]) * 1.0
                 })
             else:
-                st.session_state["missing_barcode_alert"] = code
+                # تفعيل البيع المانيوال (إضافة مؤقتة للسلة حتى لو الصنف غير مسجل)
+                st.session_state["cart"].append({
+                    "id": 99999, "code": code, "name": f"صنف يدوي ({code})",
+                    "price": 0.0, "qty": 1.0, "total": 0.0
+                })
         conn.close()
     st.session_state.unified_barcode = ""
 
@@ -500,6 +505,9 @@ if not st.session_state["logged_in"]:
               st.session_state["user_id"] = user["id"]
               st.session_state["branch_id"] = user["branch_id"]
               st.session_state["show_welcome_dialog"] = True
+              # إذا كان المستخدم كاشير، نجعل صفحته الافتراضية نقطة البيع مباشرة
+              if user["role"] == "Cashier":
+                  st.session_state["page"] = "🛒 نقطة البيع (POS)"
               conn.close(); st.rerun()
           else: 
               conn.close(); st.error("اسم المستخدم أو كلمة المرور غير صحيحة!")
@@ -1118,7 +1126,6 @@ elif choice == "🛒 نقطة البيع (POS)":
       branch_name_str = b_row["branch_name"] if b_row else "فرعي"
       st.info(f"الفرع: {branch_name_str}")
       b_id = user_branch_id
-      # جلب كافة أصناف الفرع لضمان عدم ظهور الشاشة فارغة
       pos_items = conn.execute("SELECT * FROM items WHERE branch_id = ?", (b_id,)).fetchall()
   else:
       b_dict = {b["branch_name"]: b["id"] for b in conn.execute("SELECT id, branch_name FROM branches").fetchall()}
@@ -1126,7 +1133,7 @@ elif choice == "🛒 نقطة البيع (POS)":
       b_id = "ALL" if sel_pos == "كل الفروع" else b_dict[sel_pos]
       pos_items = conn.execute("SELECT * FROM items" if b_id=="ALL" else "SELECT * FROM items WHERE branch_id = ?", (() if b_id=="ALL" else (b_id,))).fetchall()
   
-  st.text_input("مسح الباركود:", key="unified_barcode", on_change=process_unified_barcode, placeholder="امسح الباركود هنا...")
+  st.text_input("مسح الباركود أو إدخال كود الصنف:", key="unified_barcode", on_change=process_unified_barcode, placeholder="امسح الباركود أو اكتب الكود هنا واضغط Enter...")
 
   col_g, col_c = st.columns([2, 1])
   with col_g:
@@ -1144,7 +1151,7 @@ elif choice == "🛒 نقطة البيع (POS)":
                               st.session_state["cart"].append({"id": item["id"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(q_in), "total": float(item["sale_price"]) * float(q_in)})
                               st.rerun()
       else:
-          st.info("لا توجد أصناف مسجلة في هذا الفرع حالياً.")
+          st.info("لا توجد أصناف مسجلة حالياً. يمكنك استخدام حقل الباركود بالاعلى لإضافة أصناف يدوية مباشرة للسلة وطباعة فاتورتها.")
           
   with col_c:
       st.markdown("### سلة المبيعات")
