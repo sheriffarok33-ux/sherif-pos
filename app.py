@@ -20,29 +20,28 @@ st.markdown("""
         color: #000000 !important; 
     }
     .main { background-color: #f8fafc; }
-    h1 { font-size: 26px !important; color: #0f172a !important; font-weight: 700 !important; }
-    h2 { font-size: 22px !important; color: #1e293b !important; font-weight: 700 !important; }
-    h3 { font-size: 18px !important; color: #334155 !important; font-weight: 700 !important; }
+    h1 { font-size: 24px !important; color: #0f172a !important; font-weight: 700 !important; margin-bottom: 10px; }
+    h2 { font-size: 20px !important; color: #1e293b !important; font-weight: 700 !important; margin-bottom: 8px; }
+    h3 { font-size: 16px !important; color: #334155 !important; font-weight: 700 !important; margin-bottom: 6px; }
     
     div.stButton > button { 
-        border-radius: 8px; font-weight: 700 !important; transition: all 0.3s ease; height: 45px; 
-        background: linear-gradient(135deg, #0284c7, #0369a1); color: white !important; border: none;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1); font-size: 16px !important;
+        border-radius: 6px; font-weight: 700 !important; height: 40px; 
+        background: #0284c7; color: white !important; border: none; font-size: 15px !important;
     }
-    div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-1px); }
+    div.stButton > button:hover { background: #0369a1; }
     
     [data-testid="stSidebar"] { background-color: #0f172a; }
-    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 16px !important; }
+    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 15px !important; }
     [data-testid="stSidebar"] .stButton>button {
         background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
-        border-radius: 8px; padding: 10px 12px; text-align: right; font-weight: 700 !important;
-        transition: all 0.3s ease; margin-bottom: 6px; font-size: 16px !important; height: auto;
+        border-radius: 6px; padding: 8px 10px; text-align: right; font-weight: 700 !important;
+        margin-bottom: 4px; font-size: 15px !important; height: auto;
     }
-    [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; }
+    [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; }
     
     .thermal-receipt {
-        background: #ffffff; padding: 20px; border-radius: 10px; border: 1px dashed #cbd5e1;
-        max-width: 400px; margin: auto; font-family: 'Tajawal', monospace !important;
+        background: #ffffff; padding: 15px; border-radius: 8px; border: 1px dashed #cbd5e1;
+        max-width: 380px; margin: auto; font-family: 'Tajawal', monospace !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -71,7 +70,6 @@ def initialize_database():
   try:
       conn = sqlite3.connect("abu_zaid_new_system.db", timeout=10)
       conn.execute("PRAGMA foreign_keys = ON")
-      conn.row_factory = sqlite3.Row
       cursor = conn.cursor()
 
       cursor.execute("CREATE TABLE IF NOT EXISTS branches (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_name TEXT UNIQUE NOT NULL, branch_type TEXT DEFAULT 'فرع')")
@@ -154,13 +152,6 @@ def initialize_database():
       cursor.execute("CREATE TABLE IF NOT EXISTS custom_labels (original_name TEXT PRIMARY KEY, custom_name TEXT NOT NULL)")
       cursor.execute("CREATE TABLE IF NOT EXISTS activity_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
-      try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(DEFAULT_MENUS),))
-      except: pass
-      try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
-      except: pass
-      try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة المفضلة (1-20),🔄 تزويد الفروع والأرشيف')")
-      except: pass
-
       branch_count = cursor.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
       if branch_count == 0:
           default_branches = [("المخزن الرئيسي", "مخزن"), ("فرع الجزيرة", "فرع"), ("فرع 2", "فرع")]
@@ -174,7 +165,7 @@ def initialize_database():
       conn.commit()
       conn.close()
   except Exception as e:
-      st.error(f"خطأ في تهيئة قاعدة البيانات: {e}")
+      st.error(f"خطأ في قاعدة البيانات: {e}")
 
 initialize_database()
 
@@ -216,7 +207,6 @@ if "username" not in st.session_state: st.session_state["username"] = ""
 if "role" not in st.session_state: st.session_state["role"] = ""
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
-if "allowed_branches" not in st.session_state: st.session_state["allowed_branches"] = "ALL"
 if "cart" not in st.session_state: st.session_state["cart"] = []
 if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
 if "unified_barcode" not in st.session_state: st.session_state["unified_barcode"] = ""
@@ -241,14 +231,14 @@ def success_action_dialog():
 def missing_barcode_dialog():
     code_text = st.session_state.get("missing_barcode_alert", "")
     st.error(f"❌ عذراً، الباركود ({code_text}) غير مسجل!")
-    st.info("☕ هنى روحك صنف غير موجود يا صاحبي!")
+    st.info("☕ هنى روحك وبلغ المدير عن الصنف الغير موجود يا صاحبي!")
     if st.button("موافق", use_container_width=True, type="primary"):
         st.session_state["missing_barcode_alert"] = ""
         st.rerun()
 
 @st.dialog("🌟 ترحيب")
 def welcome_user_dialog():
-    st.success("أهلاً بك فى عائلة أبوزيد التجارية! نتمنى لك يوماً مباركاً ☕")
+    st.success("أهلاً بك في عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕")
     if st.button("موافق", use_container_width=True, type="primary"):
         st.session_state["show_welcome_dialog"] = False
         st.rerun()
@@ -489,7 +479,7 @@ def process_unified_barcode():
 if not st.session_state["logged_in"]:
   col1, col2, col3 = st.columns([1, 2, 1])
   with col2:
-    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
     st.title("🔐 تسجيل الدخول")
     st.subheader("مجموعة أبو زيد التجارية")
     
@@ -548,8 +538,8 @@ if choice == "🏠 الرئيسية واللوحة":
   for i, (item, data) in enumerate(dashboard_cards.items()):
       if check_user_permission(item):
           with cols[i % 3]:
-              st.markdown(f'''<div style="background: {data['color']}; padding: 20px 10px; border-radius: 12px; color: white; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px; min-height: 130px;"><h1 style="margin:0; font-size: 35px; color: white !important;">{data['icon']}</h1><h3 style="margin: 8px 0 4px 0; color: white !important; font-size: 16px;">{item}</h3><p style="margin:0; font-size: 13px; opacity: 0.9; color: white !important;">{data['desc']}</p></div>''', unsafe_allow_html=True)
-              if st.button(f"دخول", key=f"btn_card_{i}", on_click=set_page, args=(item,)): pass
+              st.markdown(f'''<div style="background: {data['color']}; padding: 15px 10px; border-radius: 8px; color: white; text-align: center; margin-bottom: 8px; min-height: 110px;"><h1 style="margin:0; font-size: 30px; color: white !important;">{data['icon']}</h1><h3 style="margin: 6px 0 2px 0; color: white !important; font-size: 15px;">{item}</h3><p style="margin:0; font-size: 12px; opacity: 0.9; color: white !important;">{data['desc']}</p></div>''', unsafe_allow_html=True)
+              if st.button("دخول", key=f"btn_card_{i}", on_click=set_page, args=(item,)): pass
               st.markdown("<br>", unsafe_allow_html=True)
 
 elif choice == "⭐ لوحة المفضلة (1-20)":
@@ -729,7 +719,7 @@ elif choice == "💰 المصروفات":
               st.session_state["success_alert_msg"] = "تم حفظ المصروف بنجاح!"
               st.rerun()
 
-  exp_df = pd.read_sql("SELECT expenses.id AS 'مسلسل', IFNULL(branches.branch_name, 'مصروف عام (موزع)') AS 'الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ', expenses.rent_paid_until AS 'مدفوع حتى' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
+  exp_df = pd.read_sql("SELECT expenses.id AS 'مسلسل', IFNULL(branches.branch_name, 'عام (موزع)') AS 'الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ', expenses.rent_paid_until AS 'مدفوع حتى' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id ORDER BY expenses.id DESC", conn)
   if not exp_df.empty:
       st.dataframe(exp_df, use_container_width=True)
       st.download_button("تصدير المصروفات لـ Excel", data=to_excel(exp_df), file_name="expenses.xlsx")
@@ -825,7 +815,7 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
               to_b = conn.execute("SELECT branch_name FROM branches WHERE id = ?", (plog["to_branch_id"],)).fetchone()["branch_name"]
               
               st.markdown(f"""
-              <div style="background:#e0f2fe; padding:12px; border-radius:8px; margin-bottom:8px;">
+              <div style="background:#e0f2fe; padding:10px; border-radius:6px; margin-bottom:6px;">
                   <b>فاتورة رقم #{plog['id']} من ({from_b}) إلى ({to_b})</b><br>
                   التفاصيل: {plog['items_details']}
               </div>
@@ -1044,13 +1034,13 @@ elif choice == "📊 التقارير الشاملة والأرباح":
           q_p += " AND purchases.supplier_name = ?"
           params.append(sel_sup)
           
-      df_p = pd.read_sql(q_p, conn, params=params)
+      df_p = pd.read_sql(q_p, conn, params=tuple(params))
       st.dataframe(df_p, use_container_width=True)
       if not df_p.empty:
           st.download_button("تصدير المشتريات لـ Excel", data=to_excel(df_p), file_name="purchases_filtered.xlsx")
 
   elif rep_type == "تقرير المصروفات والإيجارات الشهرية":
-      st.markdown("### المصروفات موزعة ومتابعة الإيجارات المدفوعة")
+      st.markdown("### المصروفات ومتابعة الإيجارات")
       df_exp = pd.read_sql("SELECT expenses.id AS 'مسلسل', IFNULL(branches.branch_name, 'عام (موزع)') AS 'الفرع', expenses.amount AS 'المبلغ', expenses.description AS 'البيان', expenses.expense_date AS 'التاريخ', expenses.rent_paid_until AS 'مدفوع حتى تاريخ' FROM expenses LEFT JOIN branches ON expenses.branch_id = branches.id", conn)
       if not df_exp.empty:
           st.dataframe(df_exp, use_container_width=True)
@@ -1077,9 +1067,8 @@ elif choice == "👥 إدارة المستخدمين":
             
         urole = st.selectbox("الرتبة:", available_roles)
         
-        # إذا كان الأدمن أو المدير العام، يكون الفرع افتراضياً لكل الفروع
         if urole in ["Admin", "General_Supervisor"]:
-            st.info("ملاحظة: الأدمن والمدير العام لهما صلاحية على كافة الفروع تلقائياً.")
+            st.info("الأدمن والمدير العام لهما صلاحية على كافة الفروع تلقائياً.")
             assigned_b_id = None
         else:
             sel_user_branch = st.selectbox("الفرع المخصص:", list(b_opts_dict.keys()))
@@ -1144,8 +1133,8 @@ elif choice == "🛒 نقطة البيع (POS)":
       if fav_items:
           for item in fav_items:
               c1, c2, c3 = st.columns([2, 1, 1])
-              with c1: st.markdown(f"<div style='background:#f1f5f9; padding:8px; border-radius:6px;'><b>{item['item_name']}</b><br><small>المتاح: {item['quantity']} كجم</small></div>", unsafe_allow_html=True)
-              with c2: st.markdown(f"<div style='padding:8px; text-align:center;'><b>{item['sale_price']} د.ل</b></div>", unsafe_allow_html=True)
+              with c1: st.markdown(f"<div style='background:#f1f5f9; padding:6px; border-radius:4px;'><b>{item['item_name']}</b><br><small>المتاح: {item['quantity']} كجم</small></div>", unsafe_allow_html=True)
+              with c2: st.markdown(f"<div style='padding:6px; text-align:center;'><b>{item['sale_price']} د.ل</b></div>", unsafe_allow_html=True)
               with c3:
                   with st.form(key=f"pos_q_{item['id']}", clear_on_submit=True):
                       q_in = st.number_input("كمية", min_value=0.0, value=0.0, step=0.1, format="%.2f", key=f"q_{item['id']}")
