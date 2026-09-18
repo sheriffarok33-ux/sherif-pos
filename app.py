@@ -19,13 +19,19 @@ st.markdown("""
         font-family: 'Tajawal', sans-serif !important; 
         color: #000000 !important; 
         font-weight: 700 !important;
-        direction: rtl !important;
-        text-align: right !important;
     }
     .main { background-color: #f8fafc; }
     h1 { font-size: 24px !important; color: #0f172a !important; font-weight: 900 !important; margin-bottom: 10px; }
     h2 { font-size: 20px !important; color: #1e293b !important; font-weight: 900 !important; margin-bottom: 8px; }
     h3 { font-size: 16px !important; color: #334155 !important; font-weight: 900 !important; margin-bottom: 6px; }
+    
+    /* ضبط اتجاه العناوين ومحتوى الـ Expander فقط لمنع تداخل الحروف */
+    [data-testid="stExpander"] details summary p, 
+    [data-testid="stExpander"] details summary span,
+    .stExpander div {
+        direction: rtl !important;
+        text-align: right !important;
+    }
     
     div.stButton > button { 
         border-radius: 6px; font-weight: 900 !important; height: 40px; 
@@ -34,7 +40,7 @@ st.markdown("""
     div.stButton > button:hover { background: #0369a1; }
     
     [data-testid="stSidebar"] { background-color: #0f172a; }
-    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 15px !important; font-weight: 700 !important; direction: rtl !important; text-align: right !important; }
+    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 15px !important; font-weight: 700 !important; }
     [data-testid="stSidebar"] .stButton>button {
         background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
         border-radius: 6px; padding: 8px 10px; text-align: right; font-weight: 900 !important;
@@ -150,8 +156,6 @@ def initialize_database():
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           )
       """)
-      
-      # جدول الخزينة والحركات اليدوية
       cursor.execute("""
           CREATE TABLE IF NOT EXISTS treasury_logs (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -161,6 +165,13 @@ def initialize_database():
               trans_date TEXT
           )
       """)
+
+      # التحقق من الأعمدة وإضافتها تلقائياً إن لم تكن موجودة (لتفادي أي أخطاء تشغيلية)
+      try:
+          exp_cols = [col["name"] for col in cursor.execute("PRAGMA table_info(expenses)").fetchall()]
+          if "rent_months" not in exp_cols: cursor.execute("ALTER TABLE expenses ADD COLUMN rent_months INTEGER DEFAULT 1")
+          if "rent_paid_until" not in exp_cols: cursor.execute("ALTER TABLE expenses ADD COLUMN rent_paid_until TEXT DEFAULT ''")
+      except: pass
 
       cursor.execute("CREATE TABLE IF NOT EXISTS negative_sales_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
       cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role TEXT PRIMARY KEY, allowed_menus TEXT)")
@@ -665,14 +676,9 @@ elif choice == "💼 إدارة الخزينة والسيولة":
     st.header("💼 إدارة الخزينة وحركة النقدية")
     conn = get_db_connection()
     
-    # حساب إيرادات المبيعات النقدية الكاش
     total_cash_sales = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE payment_method LIKE '%كاش%'").fetchone()[0] or 0.0
-    # حساب المصروفات النقدية
     total_expenses = conn.execute("SELECT SUM(amount) FROM expenses").fetchone()[0] or 0.0
-    # حساب المشتريات النقدية
     total_cash_purchases = conn.execute("SELECT SUM(total_cost) FROM purchases WHERE payment_type = 'كاش'").fetchone()[0] or 0.0
-    
-    # الحركات اليدوية للخزينة (إيداع / سحب)
     manual_trans = conn.execute("SELECT SUM(CASE WHEN trans_type='إيداع' THEN amount ELSE -amount END) FROM treasury_logs").fetchone()[0] or 0.0
     
     treasury_balance = total_cash_sales + manual_trans - total_expenses - total_cash_purchases
