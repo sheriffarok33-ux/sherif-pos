@@ -241,14 +241,14 @@ def success_action_dialog():
 def missing_barcode_dialog():
     code_text = st.session_state.get("missing_barcode_alert", "")
     st.error(f"❌ عذراً، الباركود ({code_text}) غير مسجل!")
-    st.info("☕ هنى روحك وبلغ المدير عن الصنف الغير موجود يا صاحبي!")
+    st.info("☕ هنى روحك صنف غير موجود يا صاحبي!")
     if st.button("موافق", use_container_width=True, type="primary"):
         st.session_state["missing_barcode_alert"] = ""
         st.rerun()
 
 @st.dialog("🌟 ترحيب")
 def welcome_user_dialog():
-    st.success("أهلاً بك يا عائلة أبو زيد التجارية! نتمنى لك يوماً مباركاً ☕")
+    st.success("أهلاً بك فى عائلة أبوزيد التجارية! نتمنى لك يوماً مباركاً ☕")
     if st.button("موافق", use_container_width=True, type="primary"):
         st.session_state["show_welcome_dialog"] = False
         st.rerun()
