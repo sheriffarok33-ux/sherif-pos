@@ -449,7 +449,7 @@ def checkout_payment_dialog(b_id, g_tot):
                 if cust_phone.strip() and cust_name.strip() != "زبون نقدي":
                     existing_cust = cur_in.execute("SELECT id, total_purchases FROM customers WHERE phone = ?", (cust_phone.strip(),)).fetchone()
                     if existing_cust:
-                        cur_in.execute("UPDATE customers SET total_purchases = total_purchases + ?, customer_name = ? WHERE id =", 
+                        cur_in.execute("UPDATE customers SET total_purchases = total_purchases + ?, customer_name = ? WHERE id = ?", 
                                        (final_tot, cust_name.strip(), existing_cust['id']))
                     else:
                         cur_in.execute("INSERT INTO customers (customer_name, phone, total_purchases) VALUES (?, ?, ?)", 
