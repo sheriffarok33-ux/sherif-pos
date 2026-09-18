@@ -1164,7 +1164,7 @@ elif choice == "🛒 نقطة البيع (POS)":
   current_cashier = st.session_state.get("username", "كاشير")
   
   st.markdown(f"""
-  <div style="background:#0f172a; color:white; padding:12px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+  <div style="background:#e2e8f0; color:white; padding:12px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
       <div><b>الفرع:</b> {branch_name_str}</div>
       <div><b>الكاشير:</b> {current_cashier}</div>
       <div><b>الشفت:</b> SHIFT-01</div>
