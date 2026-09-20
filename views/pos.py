@@ -13,52 +13,6 @@ def get_current_shift_number():
     else:
         return 2  # وردية 2 (مسائي)
 
-# --- دالة التحقق من فواتير التزويد الواردة للفرع وتأكيد استلامها ---
-def check_and_accept_incoming_transfers(b_id, branch_name):
-    conn = get_db_connection()
-    pending_transfers = conn.execute("""
-        SELECT * FROM transfer_logs 
-        WHERE to_branch_id = ? AND (status = 'معلقة' OR status IS NULL OR status = 'قيد الانتظار')
-    """, (b_id,)).fetchall()
-    
-    if pending_transfers:
-        st.warning(f"🚨 تنبيه هام للكاشير: يوجد ({len(pending_transfers)}) عملية تزويد بضائع واردة إلى ({branch_name}) بانتظار المراجعة والقبول!")
-        
-        for tr in pending_transfers:
-            with st.expander(f"📦 تفاصيل بضاعة واردة برقم مرجعي #{tr['id']} بتاريخ ({tr['transfer_date']})"):
-                st.write(f"**تفاصيل الأصناف:** {tr['items_details']}")
-                if st.button(f"✅ قبول وتأكيد استلام التزويد #{tr['id']} وتحديث رصيد الفرع", key=f"accept_tr_{tr['id']}", type="primary"):
-                    try:
-                        conn.execute("UPDATE transfer_logs SET status = 'مكتملة' WHERE id = ?", (tr['id'],))
-                        try:
-                            items_list = json.loads(tr['items_details'])
-                            for itm in items_list:
-                                itm_name = itm.get("name")
-                                itm_qty = float(itm.get("qty", 0))
-                                
-                                existing_item = conn.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (b_id, itm_name)).fetchone()
-                                if existing_item:
-                                    conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (itm_qty, existing_item["id"]))
-                                else:
-                                    src_item = conn.execute("SELECT * FROM items WHERE item_name = ? LIMIT 1", (itm_name,)).fetchone()
-                                    buy_p = float(src_item["buy_price"]) if src_item else 0.0
-                                    sale_p = float(src_item["sale_price"]) if src_item else 0.0
-                                    code = src_item["item_code"] if src_item else "TR-CODE"
-                                    
-                                    conn.execute("""
-                                        INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price)
-                                        VALUES (?, ?, ?, ?, ?, ?)
-                                    """, (b_id, code, itm_name, itm_qty, buy_p, sale_p))
-                        except Exception:
-                            pass
-
-                        conn.commit()
-                        st.success("✅ تم قبول بضائع التزويد بنجاح وتحديث أرصدة المخزون للفرع!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"⚠️ حدث خطأ أثناء قبول البضاعة: {e}")
-    conn.close()
-
 # --- دالة شاشة إتمام الدفع وإصدار الفاتورة ---
 @st.dialog("💳 إتمام الدفع وإصدار الفاتورة")
 def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shift_num, daily_inv_num):
@@ -201,9 +155,6 @@ def show_page():
         branch_name_display = b_row["branch_name"] if b_row else "الفرع الحالي"
         
     st.session_state["branch_id"] = b_id
-
-    # فحص وتأكيد تزويد البضائع الواردة للفرع
-    check_and_accept_incoming_transfers(b_id, branch_name_display)
 
     today_date = datetime.now().strftime("%Y-%m-%d")
     branch_inv_count = conn.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date)).fetchone()[0]
@@ -356,7 +307,7 @@ def show_page():
             else: st.warning("يرجى إدخال سعر صحيح للصنف الحر.")
 
     # ==========================================
-    # 3. الأرشيف وإعادة الطباعة (بدون X أو Z تماماً)
+    # 3. الأرشيف وإعادة الطباعة
     # ==========================================
     elif st.session_state["pos_active_view"] == "الأرشيف":
         st.subheader("📋 أرشيف وإعادة الطباعة")
