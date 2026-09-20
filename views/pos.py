@@ -5,17 +5,17 @@ import os
 from datetime import datetime
 from database import get_db_connection
 
-# --- تحديد الوردية (الشفت) تلقائياً ---
-def get_current_shift():
+# --- تحديد رقم الوردية (الشفت) تلقائياً (1 للصَباحي، 2 للمسائي) ---
+def get_current_shift_number():
     current_hour = datetime.now().hour
     if 6 <= current_hour < 16:
-        return "صباحي (Morning)"
+        return 1  # وردية 1 (صباحي)
     else:
-        return "مسائي (Evening)"
+        return 2  # وردية 2 (مسائي)
 
 # --- دالة شاشة إتمام الدفع وإصدار الفاتورة ---
 @st.dialog("💳 إتمام الدفع وإصدار الفاتورة")
-def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shift_str, daily_inv_num):
+def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shift_num, daily_inv_num):
     st.subheader(f"إجمالي الفاتورة المطلوب: {g_tot:,.2f} د.ل")
     cust_name = st.text_input("اسم الزبون (اختياري للعملاء العاديين):", value="زبون نقدي")
     cust_phone = st.text_input("رقم الهاتف (اختياري):", value="")
@@ -57,7 +57,7 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
             cursor_res = cur_in.execute("""
                 INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method, notes, shift_status) 
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (b_id, st.session_state.get("user_id", 1), cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method, cart_json, shift_str))
+            """, (b_id, st.session_state.get("user_id", 1), cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method, cart_json, str(shift_num)))
             inv_id = cursor_res.lastrowid
 
             for c_item in st.session_state["cart"]:
@@ -75,7 +75,7 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
                 "daily_inv_num": daily_inv_num,
                 "branch": branch_name_str,
                 "cashier": cashier_name_str,
-                "shift": shift_str,
+                "shift": shift_num,
                 "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "customer": cust_name,
                 "items": st.session_state["cart"].copy(),
@@ -123,20 +123,20 @@ def process_barcode_scan():
 def show_page():
     st.markdown("""
         <style>
-        .top-panel { background-color: #e2e8f0; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 15px; }
-        .totals-panel { background-color: #0f172a; color: #ffffff !important; padding: 15px; border-radius: 8px; text-align: center; font-size: 20px; border: 2px solid #334155; margin-top: 10px; direction: ltr; }
+        .top-panel { background-color: #e2e8f0; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 10px; }
+        .totals-panel { background-color: #0f172a; color: #ffffff !important; padding: 12px; border-radius: 8px; text-align: center; font-size: 19px; border: 2px solid #334155; margin-top: 8px; direction: ltr; }
         .btn-green > button { background-color: #16a34a !important; }
         .btn-red > button { background-color: #dc2626 !important; }
         </style>
     """, unsafe_allow_html=True)
 
-    st.header("🛒 نقطة البيع (POS) - شاشة الكاشير العصرية")
+    st.header("🛒 نقطة البيع (POS)")
     
     conn = get_db_connection()
     role = st.session_state.get("role", "")
     username = st.session_state.get("username", "")
     user_branch_id = st.session_state.get("branch_id")
-    current_shift = get_current_shift()
+    current_shift_num = get_current_shift_number()
 
     if role in ["Admin", "General_Supervisor"]:
         branches_data = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
@@ -173,7 +173,7 @@ def show_page():
             <p style="text-align: right;">
             <b>رقم فاتورة اليوم:</b> #{inv['daily_inv_num']}<br>
             <b>التاريخ:</b> {inv['date_time']}<br>
-            <b>الكاشير:</b> {inv['cashier']} | <b>الوردية:</b> {inv['shift']}<br>
+            <b>الكاشير:</b> {inv['cashier']} | <b>وردية رقم:</b> {inv['shift']}<br>
             <b>الزبون:</b> {inv['customer']} <br><b>طريقة الدفع:</b> {inv['method']}</p><hr>
             <table style="width: 100%; text-align: right; border-collapse: collapse;">
                 <tr style="border-bottom: 1px solid #000;"><th>الصنف</th><th>الكمية</th><th>السعر</th><th>المجموع</th></tr>
@@ -212,28 +212,28 @@ def show_page():
         col_qty, col_bar, col_info = st.columns([1, 2, 2])
         
         with col_qty:
-            st.number_input("الكمية المطلوبة (كجم/وحدة):", min_value=0.01, value=1.00, step=0.5, key="barcode_qty_input")
+            st.number_input("الكمية (كجم/وحدة):", min_value=0.01, value=1.00, step=0.5, key="barcode_qty_input")
         with col_bar:
-            st.text_input("🔍 مسح الباركود الفوري (اضغط Enter):", key="barcode_scan_input", on_change=process_barcode_scan)
+            st.text_input("🔍 مسح الباركود الفوري (Enter):", key="barcode_scan_input", on_change=process_barcode_scan)
         with col_info:
             st.markdown(f"""
-                <div style="font-size: 15px; text-align: left; line-height: 1.6;">
-                    <b>رقم فاتورة اليوم للفرع:</b> <span style="color:red; font-size: 18px;">#{daily_inv_num}</span><br>
-                    <b>الفرع:</b> {branch_name_display} <br>
-                    <b>الكاشير:</b> {username} | <b>الوردية:</b> <span style="color:blue;">{current_shift}</span>
+                <div style="font-size: 14px; text-align: left; line-height: 1.5;">
+                    <b>رقم فاتورة اليوم:</b> <span style="color:red; font-size: 16px;">#{daily_inv_num}</span> | <b>الوردية:</b> <span style="color:blue;">رقم {current_shift_num}</span><br>
+                    <b>الفرع:</b> {branch_name_display} | <b>الكاشير:</b> {username}
                 </div>
             """, unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
+        # 🌟 جعل الجدول وشبكة الصور في الأعلى تماماً وبجانب بعضهما مباشرة
         col_grid, col_fav = st.columns([3, 1])
+        
         with col_grid:
             if not st.session_state["cart"]:
-                st.dataframe(pd.DataFrame(columns=["الكود", "اسم الصنف", "الكمية", "السعر", "الإجمالي"]), use_container_width=True, height=250)
+                st.dataframe(pd.DataFrame(columns=["الكود", "اسم الصنف", "الكمية", "السعر", "الإجمالي"]), use_container_width=True, height=260)
             else:
-                st.dataframe(pd.DataFrame([{"الكود": i.get("code", "-"), "اسم الصنف": i["name"], "الكمية": i["qty"], "السعر": i["price"], "الإجمالي": i["total"]} for i in st.session_state["cart"]]), use_container_width=True, height=250, hide_index=True)
+                st.dataframe(pd.DataFrame([{"الكود": i.get("code", "-"), "اسم الصنف": i["name"], "الكمية": i["qty"], "السعر": i["price"], "الإجمالي": i["total"]} for i in st.session_state["cart"]]), use_container_width=True, height=260, hide_index=True)
 
             g_tot = sum(item["total"] for item in st.session_state.get("cart", []))
-            # 🌟 إصلاح تداخل الحروف والأرقام في شريط الإجمالي
             st.markdown(f'<div class="totals-panel">الإجمالي: <b>{g_tot:,.2f} د.ل</b> &nbsp;|&nbsp; الصافي المطلوب: <span style="color:#22c55e;">{g_tot:,.2f} د.ل</span></div>', unsafe_allow_html=True)
             
             st.write("")
@@ -241,7 +241,7 @@ def show_page():
             with c_btn1:
                 st.markdown('<div class="pos-btn btn-green">', unsafe_allow_html=True)
                 if st.button("💰 دفع واعتماد الفاتورة (F12)", use_container_width=True) and st.session_state["cart"]: 
-                    checkout_payment_dialog(b_id, g_tot, branch_name_display, username, current_shift, daily_inv_num)
+                    checkout_payment_dialog(b_id, g_tot, branch_name_display, username, current_shift_num, daily_inv_num)
                 st.markdown('</div>', unsafe_allow_html=True)
             with c_btn3:
                 st.markdown('<div class="pos-btn btn-red">', unsafe_allow_html=True)
@@ -250,15 +250,15 @@ def show_page():
                     st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
 
-        # 🌟 قسم المفضلة والصور مرتب ومنظم في الأعلى بدون هبوط للأسفل
+        # 🌟 قسم المفضلة والصور في الأعلى بجانب الجدول تماماً وبدون نزول للأسفل
         with col_fav:
-            st.markdown("### ⭐ الأصناف المفضلة")
-            fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 15", (b_id,)).fetchall()
+            st.markdown("### ⭐ المفضلة")
+            fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 12", (b_id,)).fetchall()
             
-            st.markdown("<div style='background-color:#f1f5f9; padding:8px; border-radius:8px; height:380px; overflow-y:auto; border:1px solid #cbd5e1;'>", unsafe_allow_html=True)
+            st.markdown("<div style='background-color:#f1f5f9; padding:6px; border-radius:8px; height:360px; overflow-y:auto; border:1px solid #cbd5e1;'>", unsafe_allow_html=True)
             if fav_items:
                 for item in fav_items:
-                    st.markdown("<div style='background:white; padding:6px; border-radius:6px; margin-bottom:8px; border:1px solid #e2e8f0; text-align:center;'>", unsafe_allow_html=True)
+                    st.markdown("<div style='background:white; padding:4px; border-radius:6px; margin-bottom:6px; border:1px solid #e2e8f0; text-align:center;'>", unsafe_allow_html=True)
                     img_path = os.path.join("item_images", f"{item['item_code']}.jpg")
                     if os.path.exists(img_path):
                         try:
@@ -268,15 +268,15 @@ def show_page():
                         except:
                             st.markdown("🥜")
                     else:
-                        st.markdown("<div style='font-size:22px;'>🥜</div>", unsafe_allow_html=True)
+                        st.markdown("<div style='font-size:20px;'>🥜</div>", unsafe_allow_html=True)
                         
-                    if st.button(f"{item['item_name']} ({item['sale_price']} د.ل)", key=f"fav_{item['id']}", use_container_width=True):
+                    if st.button(f"{item['item_name']} ({item['sale_price']})", key=f"fav_{item['id']}", use_container_width=True):
                         qty = st.session_state.get("barcode_qty_input", 1.0)
                         st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(qty), "total": float(item["sale_price"]) * float(qty)})
                         st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
             else:
-                st.info("لم تحدد أصناف مفضلة (اضبطها من لوحة المفضلة).")
+                st.info("لم تحدد أصناف مفضلة.")
             st.markdown("</div>", unsafe_allow_html=True)
 
     # ==========================================
@@ -336,7 +336,7 @@ def show_page():
                     <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
                         <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {b_info['branch_name'] if b_info else 'غير محدد'} <br><small>(نسخة مسترجعة)</small></p><hr>
                         <p style="text-align: right;"><b>رقم الفاتورة المرجعية:</b> #{inv_data['id']}<br><b>التاريخ:</b> {inv_data['created_at']}<br>
-                        <b>الكاشير:</b> {u_info['username'] if u_info else 'غير محدد'}<br><b>الوردية:</b> {inv_data['shift_status']}<br><b>طريقة الدفع:</b> {inv_data['payment_method']}</p><hr>
+                        <b>الكاشير:</b> {u_info['username'] if u_info else 'غير محدد'}<br><b>الوردية:</b> رقم {inv_data['shift_status']}<br><b>طريقة الدفع:</b> {inv_data['payment_method']}</p><hr>
                         <table style="width: 100%; text-align: right; border-collapse: collapse;">
                             <tr style="border-bottom: 1px solid #000;"><th>الصنف</th><th>الكمية</th><th>السعر</th><th>المجموع</th></tr>
                             {items_html_reprint}
