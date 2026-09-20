@@ -1,6 +1,58 @@
 import streamlit as st
 import pandas as pd
-from database import get_db_connection
+from database import get_db_connection, reindex_table
+
+@st.dialog("🔒 تأكيد أمني لحذف الكيان")
+def confirm_delete_branch_dialog(branch_id, branch_name):
+    st.warning(f"⚠️ تنبيه خطير: أنت على وشك حذف الفرع أو المخزن (**{branch_name}**).\n\nلا يمكن التراجع عن هذه الخطوة بعد تنفيذها!")
+    
+    admin_pass = st.text_input("أدخل كلمة المرور الخاصة بك للتأكيد:", type="password", key="del_branch_pass_input")
+    
+    col_yes, col_no = st.columns(2)
+    with col_yes:
+        if st.button("✅ تأكيد الحذف", type="primary", use_container_width=True):
+            conn = get_db_connection()
+            user_id = st.session_state.get("user_id")
+            
+            # التحقق من صحة كلمة المرور للمستخدم الحالي
+            user_check = conn.execute("SELECT * FROM users WHERE id = ? AND password = ?", (user_id, admin_pass)).fetchone()
+            
+            if user_check:
+                conn.execute("DELETE FROM branches WHERE id = ?", (branch_id,))
+                conn.commit()
+                reindex_table(conn, 'branches')
+                conn.close()
+                st.success("✅ تم حذف الكيان وإعادة تنظيم الترقيم بنجاح!")
+                st.rerun()
+            else:
+                conn.close()
+                st.error("❌ كلمة المرور غير صحيحة!")
+                
+    with col_no:
+        if st.button("❌ إلغاء", use_container_width=True):
+            st.rerun()
+
+@st.dialog("💾 تأكيد حفظ التعديلات")
+def confirm_edit_branch_dialog(branch_id, old_name, new_name, new_type):
+    st.info(f"💡 هل أنت متأكد من رغبتك في تعديل بيانات الكيان من (**{old_name}**) إلى (**{new_name} - {new_type}**)؟")
+    
+    col_yes, col_no = st.columns(2)
+    with col_yes:
+        if st.button("✅ موافق وحفظ", type="primary", use_container_width=True):
+            conn = get_db_connection()
+            try:
+                conn.execute("UPDATE branches SET branch_name = ?, branch_type = ? WHERE id = ?", 
+                             (new_name.strip(), new_type, branch_id))
+                conn.commit()
+                conn.close()
+                st.success("✅ تم تحديث بيانات الكيان بنجاح!")
+                st.rerun()
+            except Exception as e:
+                conn.close()
+                st.error("⚠️ خطأ في التعديل، قد يكون الاسم مستخدماً لفرع آخر.")
+    with col_no:
+        if st.button("❌ إلغاء", use_container_width=True):
+            st.rerun()
 
 def show_page():
     st.header("🏢 إدارة وتعديل وحذف الفروع والمخازن")
@@ -16,7 +68,6 @@ def show_page():
         with col1:
             nb_name = st.text_input("اسم الفرع أو المخزن الجديد:")
         with col2:
-            # الفرع للبيع اليومي، والمخزن للتخزين
             nb_type = st.selectbox("نوع الكيان:", ["فرع", "مخزن"])
             
         if st.form_submit_button("💾 حفظ الكيان الجديد", type="primary"):
@@ -26,6 +77,7 @@ def show_page():
                                  (nb_name.strip(), nb_type))
                     conn.commit()
                     st.success(f"✅ تم إضافة ({nb_name.strip()}) بنجاح كـ ({nb_type})!")
+                    st.rerun()
                 except Exception as e:
                     st.error("⚠️ عذراً، اسم هذا الفرع أو المخزن موجود مسبقاً.")
             else:
@@ -35,25 +87,29 @@ def show_page():
     st.markdown("---")
     st.markdown("### 📋 الفروع والمخازن المسجلة حالياً")
     
-    branches_df = pd.read_sql("""
-        SELECT id AS 'المسلسل', 
-               branch_name AS 'اسم الفرع أو المخزن', 
-               branch_type AS 'النوع' 
-        FROM branches
-    """, conn)
+    raw_branches = conn.execute("SELECT id, branch_name, branch_type FROM branches ORDER BY id ASC").fetchall()
     
-    if not branches_df.empty:
+    if raw_branches:
+        branch_rows = []
+        branch_options = {}
+        
+        for idx, row in enumerate(raw_branches, start=1):
+            branch_rows.append({
+                "المسلسل": idx,
+                "اسم الفرع أو المخزن": row["branch_name"],
+                "النوع": row["branch_type"]
+            })
+            branch_options[f"رقم {idx} - {row['branch_name']} ({row['branch_type']})"] = row["id"]
+
+        branches_df = pd.DataFrame(branch_rows)
         st.dataframe(branches_df, use_container_width=True, hide_index=True)
         
         st.markdown("---")
         st.markdown("### ⚙️ تعديل أو حذف فرع / مخزن")
         
-        # اختيار الفرع المراد تعديله أو حذفه
-        branch_options = {f"رقم {row['المسلسل']} - {row['اسم الفرع أو المخزن']} ({row['النوع']})": row['المسلسل'] for index, row in branches_df.iterrows()}
         selected_branch_label = st.selectbox("اختر الفرع أو المخزن للتحكم به:", list(branch_options.keys()))
         selected_b_id = branch_options[selected_branch_label]
         
-        # جلب بيانات الفرع المختار لتعبئتها في نموذج التعديل
         b_data = conn.execute("SELECT branch_name, branch_type FROM branches WHERE id = ?", (selected_b_id,)).fetchone()
         
         if b_data:
@@ -69,27 +125,17 @@ def show_page():
                     
                 if save_clicked:
                     if e_name.strip():
-                        try:
-                            conn.execute("UPDATE branches SET branch_name = ?, branch_type = ? WHERE id = ?", 
-                                         (e_name.strip(), e_type, selected_b_id))
-                            conn.commit()
-                            st.success("✅ تمت تحديث بيانات الكيان بنجاح!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error("⚠️ خطأ في التعديل، قد يكون الاسم مستخدماً لفرع آخر.")
+                        # استدعاء نافذة التأكيد للتعديل
+                        confirm_edit_branch_dialog(selected_b_id, b_data["branch_name"], e_name.strip(), e_type)
                     else:
                         st.warning("⚠️ لا يمكن ترك الاسم فارغاً.")
                         
                 if del_clicked:
-                    # حماية أمنية: التأكد من صلاحيات الأدمن للحذف
                     if current_user_role != "Admin":
                         st.error("❌ عذراً، عملية حذف الفروع مقتصرة على الأدمن (Admin) فقط لأسباب أمنية!")
                     else:
-                        # التحقق مما إذا كان هذا هو المخزن الرئيسي أو يحتوي على أصناف
-                        conn.execute("DELETE FROM branches WHERE id = ?", (selected_b_id,))
-                        conn.commit()
-                        st.success("✅ تم حذف الكيان بنجاح!")
-                        st.rerun()
+                        # استدعاء نافذة تأكيد الحذف وطلب الرقم السري
+                        confirm_delete_branch_dialog(selected_b_id, b_data["branch_name"])
     else:
         st.info("لا توجد فروع أو مخازن مسجلة حالياً.")
         
