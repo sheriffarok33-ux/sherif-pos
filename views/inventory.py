@@ -1,9 +1,17 @@
 import streamlit as st
 import pandas as pd
+import io
 from database import get_db_connection
 
+def to_excel(df):
+    """دالة تحويل أي جدول إلى ملف Excel جاهز للتنزيل"""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Inventory_Report')
+    return output.getvalue()
+
 def show_page():
-    st.header("📦 إدارة المخزن والفروع والتزويد والاستيراد الذكي")
+    st.header("📦 إدارة المخزن والفروع والجرد وتصدير التقارير")
     st.markdown("---")
 
     conn = get_db_connection()
@@ -27,20 +35,19 @@ def show_page():
 
     st.markdown("---")
 
-    # تقسيم شاشة المخزن إلى تبويبات شاملة
+    # تقسيم شاشة المخزن إلى تبويبات شاملة مع دعم التصدير
     tab_manage, tab_add, tab_excel, tab_transfer, tab_all = st.tabs([
         f"📋 عرض وتعديل أرصدة ({selected_branch})",
         "➕ إضافة صنف جديد (بالبار كود والسكانر)",
         "📁 استيراد وتحديث عبر Excel",
         "🔄 تحويل البضاعة بين الفروع",
-        "🌐 متابعة كافة الفروع والمخازن"
+        "🌐 كشوف جرد ومتابعة كافة الفروع"
     ])
 
-    # 1. التبويب الأول: التعديل المباشر مع تحديد نطاق الحفظ (للفرع المحدد أو لكافة الفروع)
+    # 1. التبويب الأول: التعديل المباشر مع تصدير إكسيل
     with tab_manage:
         st.subheader(f"📋 أصناف وأسعار فرع: ({selected_branch})")
         
-        # اختيار نطاق تطبيق التعديلات عند الضغط على حفظ
         edit_scope = st.radio(
             "🎯 نطاق تطبيق وحفظ التعديلات على الجدول:", 
             [f"تحديث فرع ({selected_branch}) فقط", "🌐 تعميم وتحديث نفس التعديلات على كافة الفروع والمخازن (بالكود)"], 
@@ -58,44 +65,54 @@ def show_page():
         if not items_df.empty:
             edited_df = st.data_editor(items_df, hide_index=True, use_container_width=True, key=f"edit_grid_{current_branch_id}")
             
-            if st.button("💾 حفظ وتطبيق التعديلات الحالية", type="primary", key="btn_save_edits"):
-                cur_up = conn.cursor()
-                is_global_scope = "كافة الفروع والمخازن" in edit_scope
-                
-                for _, row in edited_df.iterrows():
-                    c_code = str(row['كود الصنف']).strip()
-                    c_name = str(row['اسم الصنف']).strip()
-                    qty_val = float(row['الكمية'])
-                    buy_val = float(row['سعر الشراء'])
-                    sale_val = float(row['سعر البيع'])
-                    item_id = int(row['id'])
+            c_save1, c_save2 = st.columns(2)
+            with c_save1:
+                if st.button("💾 حفظ وتطبيق التعديلات الحالية", type="primary", key="btn_save_edits", use_container_width=True):
+                    cur_up = conn.cursor()
+                    is_global_scope = "كافة الفروع والمخازن" in edit_scope
+                    
+                    for _, row in edited_df.iterrows():
+                        c_code = str(row['كود الصنف']).strip()
+                        c_name = str(row['اسم الصنف']).strip()
+                        qty_val = float(row['الكمية'])
+                        buy_val = float(row['سعر الشراء'])
+                        sale_val = float(row['سعر البيع'])
+                        item_id = int(row['id'])
 
-                    if is_global_scope:
-                        # تحديث كافة الأصناف التي تحمل نفس الكود في جميع الفروع
-                        cur_up.execute("""
-                            UPDATE items 
-                            SET item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, avg_cost = ? 
-                            WHERE item_code = ?
-                        """, (c_name, qty_val, buy_val, sale_val, buy_val, c_code))
-                    else:
-                        # تحديث الفرع المحدد فقط بناءً على الـ ID
-                        cur_up.execute("""
-                            UPDATE items 
-                            SET item_code = ?, item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, avg_cost = ? 
-                            WHERE id = ?
-                        """, (c_code, c_name, qty_val, buy_val, sale_val, buy_val, item_id))
-                        
-                conn.commit()
-                st.success("✅ تم حفظ التعديلات وتحديث الأرصدة والأسعار بنجاح تام!")
-                st.rerun()
+                        if is_global_scope:
+                            cur_up.execute("""
+                                UPDATE items 
+                                SET item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, avg_cost = ? 
+                                WHERE item_code = ?
+                            """, (c_name, qty_val, buy_val, sale_val, buy_val, c_code))
+                        else:
+                            cur_up.execute("""
+                                UPDATE items 
+                                SET item_code = ?, item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, avg_cost = ? 
+                                WHERE id = ?
+                            """, (c_code, c_name, qty_val, buy_val, sale_val, buy_val, item_id))
+                            
+                    conn.commit()
+                    st.success("✅ تم حفظ التعديلات وتحديث الأرصدة والأسعار بنجاح تام!")
+                    st.rerun()
+            
+            with c_save2:
+                excel_data = to_excel(items_df)
+                st.download_button(
+                    label=f"📥 تصدير أرصدة ({selected_branch}) إلى Excel",
+                    data=excel_data,
+                    file_name=f"Inventory_{selected_branch}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
         else:
             st.info("لا توجد أصناف مسجلة في هذا الفرع.")
 
-    # 2. التبويب الثاني: إضافة صنف جديد (مع دعم السكانر والباركود الثابت)
+    # 2. التبويب الثاني: إضافة صنف جديد
     with tab_add:
         st.subheader("➕ إضافة صنف جديد عبر قارئ الباركود (السكانر)")
         
-        scope = st.radio("نطاق الإضافة:", [f"فرع {selected_branch} فقط", "تعميم لكافة الفروع والمخازن"], horizontal=True, key="add_scope_radio")
+        scope = st.radio("النطاق:", [f"فرع {selected_branch} فقط", "تعميم لكافة الفروع والمخازن"], horizontal=True, key="add_scope_radio")
 
         if "scanner_code" not in st.session_state:
             st.session_state["scanner_code"] = ""
@@ -157,7 +174,7 @@ def show_page():
             st.session_state["scanner_code"] = ""
             st.rerun()
 
-    # 3. التبويب الثالث: استيراد إكسيل الذكي
+    # 3. التبويب الثالث: استيراد إكسيل
     with tab_excel:
         st.subheader(f"📁 استيراد ملف الأصناف (Excel / CSV) لـ ({selected_branch})")
         st.markdown("> الأعمدة المطلوبة بالملف: `كود الصنف` | `اسم الصنف` | `سعر البيع` | `سعر الشراء` | `الكمية`")
@@ -250,10 +267,69 @@ def show_page():
             else:
                 st.info("لا توجد أصناف في الفرع المصدر.")
 
-    # 5. التبويب الخامس: المتابعة الشاملة
+    # 5. التبويب الخامس: كشوف الجرد ومتابعة الفروع الفردية والشاملة مع تصدير Excel
     with tab_all:
-        st.subheader("🌐 أرصدة الفروع والمخازن ككل")
-        all_df = pd.read_sql("SELECT b.branch_name AS 'الفرع', i.item_code AS 'الكود', i.item_name AS 'الصنف', i.quantity AS 'الكمية' FROM items i JOIN branches b ON i.branch_id = b.id", conn)
-        if not all_df.empty: st.dataframe(all_df, use_container_width=True, hide_index=True)
+        st.subheader("🌐 كشوف الجرد ومتابعة أرصدة الفروع والمخازن")
+        
+        report_mode = st.radio(
+            "اختر طريقة العرض للجرد:",
+            ["📊 عرض إجمالي الأرصدة لكل فرع على حدة", "🌍 عرض جدول كافة الفروع والمخازن مجتمعة"],
+            horizontal=True
+        )
+
+        if "فرع على حدة" in report_mode:
+            sel_report_branch = st.selectbox("اختر الفرع لإصدار كشف الجرد الخاص به:", branch_names, key="rep_branch_sel")
+            rep_b_id = branch_dict[sel_report_branch]
+            
+            branch_report_df = pd.read_sql("""
+                SELECT item_code AS 'كود الصنف', item_name AS 'اسم الصنف', 
+                       quantity AS 'الكمية المتاحة', buy_price AS 'سعر الشراء', 
+                       sale_price AS 'سعر البيع', (quantity * buy_price) AS 'إجمالي قيمة المخزون (شراء)'
+                FROM items WHERE branch_id = ?
+            """, conn, params=(rep_b_id,))
+
+            if not branch_report_df.empty:
+                total_qty = branch_report_df['الكمية المتاحة'].sum()
+                total_val = branch_report_df['إجمالي قيمة المخزون (شراء)'].sum()
+                
+                col_m1, col_m2 = st.columns(2)
+                col_m1.metric(f"إجمالي كميات الأصناف بفرع ({sel_report_branch})", f"{total_qty:,.2f}")
+                col_m2.metric(f"إجمالي القيمة الإجمالية للمخزون", f"{total_val:,.2f} د.ل")
+
+                st.dataframe(branch_report_df, use_container_width=True, hide_index=True)
+
+                # زر تصدير إكسيل لكشف الجرد الخاص بالفرع
+                excel_rep = to_excel(branch_report_df)
+                st.download_button(
+                    label=f"📥 تصدير كشف جرد ({sel_report_branch}) إلى Excel",
+                    data=excel_rep,
+                    file_name=f"Inventory_Audit_{sel_report_branch}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            else:
+                st.info(f"لا توجد أصناف مسجلة في فرع ({sel_report_branch}).")
+        else:
+            all_df = pd.read_sql("""
+                SELECT b.branch_name AS 'الفرع', i.item_code AS 'الكود', 
+                       i.item_name AS 'الصنف', i.quantity AS 'الكمية', 
+                       i.sale_price AS 'سعر البيع', (i.quantity * i.buy_price) AS 'القيمة'
+                FROM items i JOIN branches b ON i.branch_id = b.id
+            """, conn)
+
+            if not all_df.empty:
+                st.dataframe(all_df, use_container_width=True, hide_index=True)
+                
+                # زر تصدير إكسيل لكافة الفروع
+                excel_all = to_excel(all_df)
+                st.download_button(
+                    label="📥 تصدير كشف جرد كافة الفروع والمخازن إلى Excel",
+                    data=excel_all,
+                    file_name="Inventory_Audit_All_Branches.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            else:
+                st.info("لا توجد بيانات متاحة.")
 
     conn.close()
