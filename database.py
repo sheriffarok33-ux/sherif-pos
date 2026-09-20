@@ -27,6 +27,28 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+def reindex_table(conn, table_name):
+    """إعادة ترقيم الـ ID تلقائياً ليكون متسلسلاً 1، 2، 3... بدون فجوات بعد الحذف"""
+    cursor = conn.cursor()
+    try:
+        if table_name == "branches":
+            rows = cursor.execute("SELECT branch_name, branch_type FROM branches ORDER BY id ASC").fetchall()
+            cursor.execute("DELETE FROM branches")
+            cursor.execute("DELETE FROM sqlite_sequence WHERE name='branches'")
+            for row in rows:
+                cursor.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", (row[0], row[1]))
+                
+        elif table_name == "users":
+            rows = cursor.execute("SELECT username, phone, password, role, branch_id, allowed_branches, custom_permissions, is_active FROM users ORDER BY id ASC").fetchall()
+            cursor.execute("DELETE FROM users")
+            cursor.execute("DELETE FROM sqlite_sequence WHERE name='users'")
+            for row in rows:
+                cursor.execute("INSERT INTO users (username, phone, password, role, branch_id, allowed_branches, custom_permissions, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", row)
+                
+        conn.commit()
+    except Exception as e:
+        print(f"Error re-indexing {table_name}: {e}")
+
 def initialize_database():
     """دالة لإنشاء الجداول الأساسية للنظام إذا لم تكن موجودة"""
     conn = get_db_connection()
@@ -141,7 +163,6 @@ def initialize_database():
     conn.commit()
     conn.close()
 
-# السطرين دول بيشغلوا إنشاء القاعدة أول ما نعمل Run للملف ده لوحده للتجربة
 if __name__ == "__main__":
     initialize_database()
     print("✅ تم إنشاء قاعدة البيانات والجداول بنجاح!")
