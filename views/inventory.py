@@ -17,8 +17,8 @@ def show_page():
 
     branch_dict = {b["branch_name"]: b["id"] for b in branches}
     
-    # اختيار الفرع الحالي للعرض والإدارة
-    sel_branch_name = st.selectbox("اختر الفرع أو المخزن الحالي للإدارة:", list(branch_dict.keys()))
+    # اختيار الفرع الحالي للعرض والإدارة العامة
+    sel_branch_name = st.selectbox("اختر الفرع أو المخزن الأساسي للعرض:", list(branch_dict.keys()))
     current_b_id = branch_dict[sel_branch_name]
 
     st.markdown("---")
@@ -85,7 +85,7 @@ def show_page():
         with st.form("manual_barcode_item_form", clear_on_submit=True):
             col_b1, col_b2 = st.columns(2)
             with col_b1:
-                m_code = st.text_input("كود الصنف / الباركود (امسح بالكاميرا أو القارئ):")
+                m_code = st.text_input("كود الصنف / الباركود:")
                 m_name = st.text_input("اسم الصنف *:")
                 m_qty = st.number_input("الكمية الابتدائية:", min_value=0.0, value=0.0, step=0.5)
             with col_b2:
@@ -93,7 +93,15 @@ def show_page():
                 m_sale = st.number_input("سعر البيع (د.ل):", min_value=0.0, value=0.0, step=0.5)
                 m_expiry = st.text_input("تاريخ الصلاحية (اختياري):", value="")
 
-            apply_scope = st.radio("نطاق الإضافة:", ["📍 للفرع الحالي فقط", "🌐 تعميم لكافة الفروع والمخازن"], horizontal=True)
+            apply_scope = st.radio("نطاق تطبيق الأصناف:", ["📍 فرع محدد", "🌐 ترحيل لكافة الفروع والمخازن تلقائياً"], horizontal=True, key="manual_scope_radio")
+            
+            target_b_ids = []
+            if "فرع محدد" in apply_scope:
+                chosen_target_name = st.selectbox("اختر الفرع المستهدف:", list(branch_dict.keys()), key="manual_target_branch_select")
+                target_b_ids = [branch_dict[chosen_target_name]]
+            else:
+                target_b_ids = [b["id"] for b in branches]
+
             submitted_barcode_form = st.form_submit_button("💾 حفظ وإضافة الصنف", type="primary", use_container_width=True)
 
             if submitted_barcode_form:
@@ -101,7 +109,6 @@ def show_page():
                     st.warning("⚠️ اسم الصنف حقل إلزامي!")
                 else:
                     cur_m = conn.cursor()
-                    target_b_ids = [b["id"] for b in branches] if "كافة الفروع" in apply_scope else [current_b_id]
                     for b_id in target_b_ids:
                         exists = cur_m.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (b_id, m_code.strip())).fetchone()
                         if exists:
@@ -120,13 +127,22 @@ def show_page():
 
     # --- التبويب الثالث: الاستيراد الذكي عبر Excel (تحديث الموجود بدون دوبلكيت) ---
     with tab3:
-        st.subheader("📁 الاستيراد الذكي عبر ملف Excel / CSV")
+        st.subheader("📁 استيراد ملف أصناف (Excel / CSV)")
         st.markdown("""
-        > 📌 **ملاحظة ذكية:** النظام سيقوم بمطابقة الكود؛ فإذا كان الصنف موجوداً سيقوم **بتحديثه فقط**، وإذا كان جديداً سيقوم **بإضافته** بدون أي تكرار (Duplicate).
+        > 📌 **تنبيه:** يجب أن يحتوي الملف على الأعمدة التالية تماماً: `كود الصنف` | `اسم الصنف` | `سعر البيع` | `سعر الشراء` | `الكمية` | `تاريخ الصلاحية`  
+        > *ملاحظة ذكية:* النظام يبحث بالكود؛ فإذا وجد الصنف سيقوم **بتحديثه فقط**، وإذا كان جديداً سيقوم **بإضافته** بدون أي تكرار.
         """)
 
-        import_scope = st.radio("نطاق الاستيراد:", ["📍 للفرع المختار حالياً", "🌐 تعميم لكافة الفروع"], horizontal=True, key="imp_scope_radio")
-        uploaded_excel = st.file_uploader("اختر ملف الإكسيل (.xlsx أو .csv)", type=["xlsx", "csv"])
+        import_scope = st.radio("نطاق ترحيل الأصناف:", ["📍 فرع محدد", "🌐 ترحيل لكافة الفروع والمخازن تلقائياً"], horizontal=True, key="imp_scope_radio")
+        
+        import_target_ids = []
+        if "فرع محدد" in import_scope:
+            chosen_imp_name = st.selectbox("اختر الفرع المستهدف للاستيراد:", list(branch_dict.keys()), key="imp_target_branch_select")
+            import_target_ids = [branch_dict[chosen_imp_name]]
+        else:
+            import_target_ids = [b["id"] for b in branches]
+
+        uploaded_excel = st.file_uploader("اختر ملف Excel أو CSV", type=["xlsx", "csv"])
 
         if uploaded_excel is not None:
             try:
@@ -137,7 +153,6 @@ def show_page():
                 if st.button("🚀 تنفيذ الاستيراد الذكي وتحديث البيانات", type="primary"):
                     cur_imp = conn.cursor()
                     updated_count, inserted_count = 0, 0
-                    target_b_list = [b["id"] for b in branches] if "كافة الفروع" in import_scope else [current_b_id]
 
                     for _, row in df_imp.iterrows():
                         if row.isna().all(): continue
@@ -150,7 +165,7 @@ def show_page():
                         sale_val = float(row.get("سعر البيع", 0.0))
                         exp_val = str(row.get("تاريخ الصلاحية", "")).strip()
 
-                        for b_id in target_b_list:
+                        for b_id in import_target_ids:
                             chk_item = cur_imp.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (b_id, code_val)).fetchone()
                             if chk_item:
                                 cur_imp.execute("""
@@ -192,7 +207,7 @@ def show_page():
 
             source_items = conn.execute("SELECT id, item_code, item_name, quantity, buy_price, sale_price FROM items WHERE branch_id = ?", (from_b_id,)).fetchall()
             if source_items:
-                item_options = {f"[{it['item_code']}] {it['item_name']} (المتاح: {it['quantity']})": it for it in source_items}
+                item_options = {f"[{it['item_code']}] {it['item_name']} (المتاح بالمخزن: {it['quantity']})": it for it in source_items}
                 
                 col_add1, col_add2 = st.columns([2, 1])
                 with col_add1: sel_item_str = st.selectbox("اختر الصنف للتحويل:", list(item_options.keys()))
