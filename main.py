@@ -209,7 +209,11 @@ elif choice == "📥 المشتريات":
         purchases.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
+elif choice == "⭐ لوحة المفضلة (1-20)":
+    try:
+        from views import favorites
+        favorites.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة المفضلة (views/favorites.py) غير موجود.")
 else:
     st.info(f"شاشة {choice} قيد التجهيز.")
-elif choice == "⭐ لوحة المفضلة (1-20)":
-    st.info("⭐ شاشة المفضلة قيد التجهيز.")
