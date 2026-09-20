@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import json
 from datetime import datetime
 from database import get_db_connection
 
@@ -21,7 +22,6 @@ def checkout_payment_dialog(b_id, g_tot):
                 
     final_tot = max(0.0, g_tot - applied_discount)
     
-    # 🌟 إضافة طرق الدفع الجديدة المطلوبة
     pay_method = st.selectbox("نوع الدفع:", [
         "كاش (نقدي)", 
         "شبكة / بطاقة", 
@@ -41,16 +41,21 @@ def checkout_payment_dialog(b_id, g_tot):
         if paid_amount >= final_tot or pay_method in ["آجل", "خصم من رصيد مدين (لمورد أو زبون جملة)"]:
             target_inv_branch = b_id if b_id != "ALL" else conn.execute("SELECT id FROM branches LIMIT 1").fetchone()["id"]
             
+            # حفظ تفاصيل السلة كـ JSON في حقل الملاحظات لإعادة الطباعة لاحقاً
+            cart_json = json.dumps(st.session_state["cart"], ensure_ascii=False)
+            
             cur_in = conn.cursor()
             cursor_res = cur_in.execute("""
-                INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method) 
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (target_inv_branch, st.session_state.get("user_id", 1), cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method))
+                INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method, notes) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (target_inv_branch, st.session_state.get("user_id", 1), cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method, cart_json))
             
             inv_id = cursor_res.lastrowid
 
             for c_item in st.session_state["cart"]:
-                conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
+                # تجنب خصم الصنف الحر (بدون كود) من المخزن لأنه ليس له رصيد
+                if c_item.get("id") != 99999:
+                    conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
 
             conn.commit()
             
@@ -89,18 +94,16 @@ def process_barcode_scan():
         conn = get_db_connection()
         item = None
         
-        # معالجة باركود الميزان (يبدأ بـ 20 وطوله 13 رقم غالباً)
         if code.startswith("20") and len(code) >= 12:
-            item_code = code[2:7] # كود الصنف في الميزان
-            weight_value = float(code[7:12]) / 1000.0 # استخراج الوزن بالكيلوجرام
+            item_code = code[2:7]
+            weight_value = float(code[7:12]) / 1000.0
             
             if b_id == "ALL": item = conn.execute("SELECT * FROM items WHERE item_code = ? LIMIT 1", (item_code,)).fetchone()
             else: item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (item_code, b_id)).fetchone()
             
             if item:
-                qty_to_add = weight_value # إجبار الكمية لتكون هي وزن الميزان المستخرج
+                qty_to_add = weight_value 
                 
-        # إذا لم يكن باركود ميزان، نبحث عنه كباركود عادي
         if not item:
             if b_id == "ALL": item = conn.execute("SELECT * FROM items WHERE item_code = ? LIMIT 1", (code,)).fetchone()
             else: item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
@@ -116,33 +119,15 @@ def process_barcode_scan():
             st.toast(f"❌ الباركود غير مسجل: {code}")
             
         conn.close()
-    st.session_state.barcode_scan_input = "" # تفريغ حقل الباركود للاستعداد للصنف التالي
+    st.session_state.barcode_scan_input = "" 
 
 # --- واجهة شاشة نقطة البيع الأساسية ---
 def show_page():
-    # 🎨 1. إصلاح CSS (توضيح الألوان وإصلاح تداخل النصوص)
     st.markdown("""
         <style>
-        .top-panel {
-            background-color: #e2e8f0;
-            padding: 12px;
-            border-radius: 8px;
-            border: 1px solid #cbd5e1;
-            margin-bottom: 15px;
-        }
-        /* إصلاح مشكلة اللون الغامق */
-        .totals-panel {
-            background-color: #0f172a;
-            color: #ffffff !important; 
-            padding: 15px;
-            border-radius: 8px;
-            text-align: left;
-            font-size: 22px;
-            border: 2px solid #334155;
-            margin-top: 10px;
-        }
-        .totals-panel span { color: #22c55e !important; font-weight: bold; } /* لون الصافي أخضر فاتح */
-        
+        .top-panel { background-color: #e2e8f0; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 15px; }
+        .totals-panel { background-color: #0f172a; color: #ffffff !important; padding: 15px; border-radius: 8px; text-align: left; font-size: 22px; border: 2px solid #334155; margin-top: 10px; }
+        .totals-panel span { color: #22c55e !important; font-weight: bold; } 
         .pos-btn > button { height: 60px; font-size: 18px !important; font-weight: bold; }
         .btn-green > button { background-color: #16a34a !important; color: white !important; }
         .btn-red > button { background-color: #dc2626 !important; color: white !important; }
@@ -156,7 +141,6 @@ def show_page():
     username = st.session_state.get("username", "")
     user_branch_id = st.session_state.get("branch_id")
 
-    # 🔒 حماية الفروع
     if role in ["Admin", "General_Supervisor"]:
         b_dict = {b["branch_name"]: b["id"] for b in conn.execute("SELECT id, branch_name FROM branches").fetchall()}
         sel_pos = st.selectbox("اختر الفرع الحالي (صلاحية إدارة):", ["🌐 إجمالي كل الفروع"] + list(b_dict.keys()))
@@ -173,7 +157,6 @@ def show_page():
     if "last_invoice" in st.session_state and st.session_state["last_invoice"]:
         inv = st.session_state["last_invoice"]
         
-        # تجهيز كود HTML للفاتورة للتحميل
         items_html = "".join([f"<tr><td>{i['name']}</td><td>{i['qty']}</td><td>{i['price']}</td><td>{i['total']}</td></tr>" for i in inv["items"]])
         html_file_content = f"""
         <html dir="rtl">
@@ -199,28 +182,19 @@ def show_page():
         </html>
         """
 
-        # تم حل مشكلة تداخل النصوص في الـ expander
         with st.expander("🧾 تم حفظ الفاتورة بنجاح - تفاصيل الروشتة الحالية", expanded=True):
             st.components.v1.html(html_file_content, height=400, scrolling=True)
             
             c_inv1, c_inv2 = st.columns(2)
             with c_inv1:
-                st.download_button(
-                    label="📥 تحميل الفاتورة (HTML)",
-                    data=html_file_content.encode('utf-8'),
-                    file_name=f"Invoice_{inv['inv_id']}.html",
-                    mime="text/html",
-                    use_container_width=True
-                )
+                st.download_button(label="📥 تحميل الفاتورة (HTML)", data=html_file_content.encode('utf-8'), file_name=f"Invoice_{inv['inv_id']}.html", mime="text/html", use_container_width=True)
             with c_inv2:
-                # زر لإخفاء الفاتورة والعودة للعمل النظيف
                 if st.button("✖️ إخفاء الفاتورة ومتابعة البيع", type="primary", use_container_width=True):
                     st.session_state["last_invoice"] = None
                     st.rerun()
-                    
         st.markdown("---")
 
-    pos_tab1, pos_tab2, pos_tab3 = st.tabs(["🛒 كاشير البيع السريع (Desktop UI)", "🔍 البحث اليدوي", "📋 أرشيف وتقارير الوردية"])
+    pos_tab1, pos_tab2, pos_tab3 = st.tabs(["🛒 كاشير البيع السريع (Desktop UI)", "🔍 البحث اليدوي والصنف الحر", "📋 أرشيف وإعادة الطباعة وتقارير الوردية"])
 
     # ==========================================
     # التبويب الأول: شاشة الكاشير
@@ -230,7 +204,6 @@ def show_page():
         col_qty, col_bar, col_info = st.columns([1, 2, 2])
         
         with col_qty:
-            # 🌟 الكمية المفتوحة قبل ضرب الباركود
             st.number_input("الكمية المطلوبة (كجم/وحدة):", min_value=0.01, value=1.00, step=0.5, key="barcode_qty_input")
             
         with col_bar:
@@ -241,7 +214,7 @@ def show_page():
             inv_num = next_inv + 1
             st.markdown(f"""
                 <div style="font-size: 15px; text-align: left; line-height: 1.6;">
-                    <b>رقم الفاتورة:</b> <span style="color:red; font-size: 18px;">#{inv_num}</span><br>
+                    <b>رقم الفاتورة القادمة:</b> <span style="color:red; font-size: 18px;">#{inv_num}</span><br>
                     <b>الفرع:</b> {branch_name_display} | <b>الكاشير:</b> {username}
                 </div>
             """, unsafe_allow_html=True)
@@ -259,7 +232,7 @@ def show_page():
                 for idx, item in enumerate(st.session_state["cart"]):
                     cart_data.append({
                         "مسلسل": idx + 1,
-                        "الكود": item["code"],
+                        "الكود": item.get("code", "-"),
                         "اسم الصنف": item["name"],
                         "الكمية": item["qty"],
                         "السعر": item["price"],
@@ -270,7 +243,6 @@ def show_page():
 
             g_tot = sum(item["total"] for item in st.session_state.get("cart", []))
             
-            # 🌟 تم إصلاح الألوان ليكون النص أبيض مقروء على الخلفية الكحلية
             st.markdown(f"""
                 <div class="totals-panel">
                     إجمالي الفاتورة: <span style="color:white !important;">{g_tot:,.2f} د.ل</span> &nbsp; | &nbsp;
@@ -299,7 +271,6 @@ def show_page():
             
             if fav_items:
                 for item in fav_items:
-                    # إضافة الصنف المفضل بناءً على الكمية المفتوحة المحددة بالأعلى
                     if st.button(f"{item['item_name']}\n{item['sale_price']} د.ل", key=f"fav_{item['id']}", use_container_width=True):
                         qty = st.session_state.get("barcode_qty_input", 1.0)
                         st.session_state["cart"].append({
@@ -312,7 +283,7 @@ def show_page():
             st.markdown("</div>", unsafe_allow_html=True)
 
     # ==========================================
-    # التبويب الثاني والثالث ...
+    # التبويب الثاني: البحث اليدوي + الصنف الحر
     # ==========================================
     with pos_tab2:
         st.subheader("⚡ البحث اليدوي عن الأصناف")
@@ -330,9 +301,67 @@ def show_page():
                 })
                 st.success(f"تمت إضافة ({selected_item_obj['item_name']}) بنجاح!")
                 st.rerun()
+                
+        st.markdown("---")
+        # 🌟 إضافة ميزة الصنف الحر (بدون كود)
+        st.subheader("🛒 بيع صنف حر (بدون كود أو تسجيل مسبق)")
+        col_f1, col_f2, col_f3 = st.columns(3)
+        free_name = col_f1.text_input("اسم الصنف (اختياري):", value="صنف عام / خدمة")
+        free_price = col_f2.number_input("السعر (د.ل):", min_value=0.0, step=1.0)
+        free_qty = col_f3.number_input("الكمية (للصنف الحر):", min_value=0.01, value=1.0, step=1.0)
+        
+        if st.button("➕ إضافة الصنف الحر للفاتورة"):
+            if free_price > 0:
+                st.session_state["cart"].append({
+                    "id": 99999, "name": free_name, "code": "FREE",
+                    "price": float(free_price), "qty": float(free_qty), "total": float(free_price) * float(free_qty)
+                })
+                st.success("تم إضافة الصنف الحر بنجاح!")
+                st.rerun()
+            else:
+                st.warning("يرجى إدخال سعر صحيح للصنف الحر.")
 
+    # ==========================================
+    # التبويب الثالث: التقارير وإعادة الطباعة
+    # ==========================================
     with pos_tab3:
-        st.subheader("📋 أرشيف وتقارير الوردية")
+        st.subheader("📋 أرشيف وتقارير الوردية وإعادة الطباعة")
+        
+        # 🌟 ميزة إعادة طباعة فاتورة سابقة
+        st.markdown("### 🖨️ البحث عن فاتورة وإعادة طباعتها")
+        search_inv_id = st.number_input("أدخل رقم الفاتورة للبحث:", min_value=1, step=1)
+        if st.button("البحث وعرض الفاتورة 🔍"):
+            inv_data = conn.execute("SELECT * FROM invoices WHERE id = ?", (search_inv_id,)).fetchone()
+            if inv_data:
+                # محاولة استخراج الأصناف من الـ JSON المخزن في notes
+                try:
+                    saved_items = json.loads(inv_data["notes"]) if inv_data["notes"] else []
+                except:
+                    saved_items = [{"name": "أصناف الفاتورة (نسخة قديمة)", "qty": "-", "price": "-", "total": inv_data["total_amount"]}]
+                
+                # جلب أسماء الفرع والكاشير
+                b_info = conn.execute("SELECT branch_name FROM branches WHERE id = ?", (inv_data["branch_id"],)).fetchone()
+                b_name = b_info["branch_name"] if b_info else "غير محدد"
+                u_info = conn.execute("SELECT username FROM users WHERE id = ?", (inv_data["user_id"],)).fetchone()
+                c_name = u_info["username"] if u_info else "غير محدد"
+                
+                # تعبئة الـ session_state لعرضها في المربع العلوي للطباعة
+                st.session_state["last_invoice"] = {
+                    "inv_id": inv_data["id"],
+                    "branch": b_name,
+                    "cashier": c_name,
+                    "date_time": inv_data["created_at"],
+                    "customer": inv_data["customer_name"],
+                    "items": saved_items,
+                    "total": inv_data["total_amount"],
+                    "method": inv_data["payment_method"]
+                }
+                st.success("تم العثور على الفاتورة. ارفع الشاشة للأعلى لعرضها وتحميلها.")
+                st.rerun()
+            else:
+                st.error("❌ الفاتورة غير موجودة.")
+                
+        st.markdown("---")
         col_xz1, col_xz2 = st.columns(2)
         with col_xz1:
             if st.button("📊 تقرير X-Report (مبيعات الشفت الحالي)", use_container_width=True):
