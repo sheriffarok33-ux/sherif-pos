@@ -19,7 +19,7 @@ def show_page():
 
     # القائمة المنسدلة الأساسية لاختيار الفرع
     selected_branch = st.selectbox(
-        "📍 اختر الفرع أو المخزن المطلوب إدارته:", 
+        "📍 اختر الفرع أو المخزن المطلوب إدارته وعرضه:", 
         branch_names, 
         key="main_inv_branch_select"
     )
@@ -36,9 +36,18 @@ def show_page():
         "🌐 متابعة كافة الفروع والمخازن"
     ])
 
-    # 1. التبويب الأول: التعديل المباشر
+    # 1. التبويب الأول: التعديل المباشر مع تحديد نطاق الحفظ (للفرع المحدد أو لكافة الفروع)
     with tab_manage:
         st.subheader(f"📋 أصناف وأسعار فرع: ({selected_branch})")
+        
+        # اختيار نطاق تطبيق التعديلات عند الضغط على حفظ
+        edit_scope = st.radio(
+            "🎯 نطاق تطبيق وحفظ التعديلات على الجدول:", 
+            [f"تحديث فرع ({selected_branch}) فقط", "🌐 تعميم وتحديث نفس التعديلات على كافة الفروع والمخازن (بالكود)"], 
+            horizontal=True,
+            key="edit_scope_radio"
+        )
+
         items_df = pd.read_sql("""
             SELECT id, item_code AS 'كود الصنف', item_name AS 'اسم الصنف', 
                    quantity AS 'الكمية', buy_price AS 'سعر الشراء', 
@@ -48,16 +57,36 @@ def show_page():
 
         if not items_df.empty:
             edited_df = st.data_editor(items_df, hide_index=True, use_container_width=True, key=f"edit_grid_{current_branch_id}")
-            if st.button("💾 حفظ التعديلات", type="primary"):
+            
+            if st.button("💾 حفظ وتطبيق التعديلات الحالية", type="primary", key="btn_save_edits"):
                 cur_up = conn.cursor()
+                is_global_scope = "كافة الفروع والمخازن" in edit_scope
+                
                 for _, row in edited_df.iterrows():
-                    b_val = float(row['سعر الشراء'])
-                    cur_up.execute("""
-                        UPDATE items SET item_code = ?, item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, avg_cost = ? 
-                        WHERE id = ?
-                    """, (str(row['كود الصنف']), str(row['اسم الصنف']), float(row['الكمية']), b_val, float(row['سعر البيع']), b_val, int(row['id'])))
+                    c_code = str(row['كود الصنف']).strip()
+                    c_name = str(row['اسم الصنف']).strip()
+                    qty_val = float(row['الكمية'])
+                    buy_val = float(row['سعر الشراء'])
+                    sale_val = float(row['سعر البيع'])
+                    item_id = int(row['id'])
+
+                    if is_global_scope:
+                        # تحديث كافة الأصناف التي تحمل نفس الكود في جميع الفروع
+                        cur_up.execute("""
+                            UPDATE items 
+                            SET item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, avg_cost = ? 
+                            WHERE item_code = ?
+                        """, (c_name, qty_val, buy_val, sale_val, buy_val, c_code))
+                    else:
+                        # تحديث الفرع المحدد فقط بناءً على الـ ID
+                        cur_up.execute("""
+                            UPDATE items 
+                            SET item_code = ?, item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, avg_cost = ? 
+                            WHERE id = ?
+                        """, (c_code, c_name, qty_val, buy_val, sale_val, buy_val, item_id))
+                        
                 conn.commit()
-                st.success("✅ تم الحفظ بنجاح!")
+                st.success("✅ تم حفظ التعديلات وتحديث الأرصدة والأسعار بنجاح تام!")
                 st.rerun()
         else:
             st.info("لا توجد أصناف مسجلة في هذا الفرع.")
@@ -66,7 +95,7 @@ def show_page():
     with tab_add:
         st.subheader("➕ إضافة صنف جديد عبر قارئ الباركود (السكانر)")
         
-        scope = st.radio("النطاق:", [f"فرع {selected_branch} فقط", "تعميم لكافة الفروع والمخازن"], horizontal=True, key="add_scope_radio")
+        scope = st.radio("نطاق الإضافة:", [f"فرع {selected_branch} فقط", "تعميم لكافة الفروع والمخازن"], horizontal=True, key="add_scope_radio")
 
         if "scanner_code" not in st.session_state:
             st.session_state["scanner_code"] = ""
