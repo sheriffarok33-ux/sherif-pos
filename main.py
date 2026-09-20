@@ -68,6 +68,48 @@ def set_page(page_name):
     st.session_state["page"] = page_name
     st.rerun()
 
+# -------------------------------------------------------------
+# 🛡️ دالة فحص الصلاحيات (التي تمنع الكاشير من رؤية باقي الشاشات)
+# -------------------------------------------------------------
+def check_user_permission(menu_name):
+    role = st.session_state.get("role", "")
+    
+    # الأدمن والمشرف العام مسموح لهم بكل الشاشات
+    if role in ["Admin", "General_Supervisor"]: 
+        return True
+        
+    # الكاشير مسموح له بشاشات البيع فقط
+    if role == "Cashier":
+        allowed_for_cashier = [
+            "🏠 الرئيسية واللوحة", 
+            "🛒 نقطة البيع (POS)", 
+            "⭐ لوحة المفضلة (1-20)", 
+            "🔄 تزويد الفروع والأرشيف"
+        ]
+        return menu_name in allowed_for_cashier
+
+    # العارض مسموح له بالتقارير فقط
+    if role == "Viewer":
+        allowed_for_viewer = [
+            "🏠 الرئيسية واللوحة",
+            "📊 التقارير والأرباح"
+        ]
+        return menu_name in allowed_for_viewer
+        
+    # مشرف الفرع مسموح له بإدارة فرعه فقط
+    if role == "Branch_Supervisor":
+         allowed_for_bs = [
+            "🏠 الرئيسية واللوحة",
+            "🛒 نقطة البيع (POS)",
+            "📦 إدارة المخزن والفروع",
+            "🔄 تزويد الفروع والأرشيف"
+         ]
+         return menu_name in allowed_for_bs
+
+    return False
+# -------------------------------------------------------------
+
+
 # --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -121,10 +163,11 @@ DEFAULT_MENUS = [
     "📊 التقارير والأرباح"
 ]
 
-# عرض أزرار القائمة الجانبية بشكل ديناميكي وآمن
+# 🛡️ تطبيق فلتر الصلاحيات على القائمة الجانبية
 for menu_name in DEFAULT_MENUS:
-    if st.sidebar.button(menu_name, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
-        set_page(menu_name)
+    if check_user_permission(menu_name): # هذا السطر هو الذي يحمي النظام
+        if st.sidebar.button(menu_name, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
+            set_page(menu_name)
 
 st.sidebar.markdown("---")
 if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
@@ -136,6 +179,11 @@ st.sidebar.text("ENG: SHERIF M. FAROK")
 
 # --- منطقة توجيه الشاشات (Router) الآمنة ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
+
+# 🛡️ طبقة حماية إضافية لمنع المستخدم من كتابة اسم الشاشة برمجياً
+if not check_user_permission(choice):
+    st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
+    st.stop()
 
 if choice == "🏠 الرئيسية واللوحة":
     try:
@@ -179,6 +227,7 @@ elif choice == "📁 استيراد Excel":
         items_import.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة الاستيراد (views/items_import.py) غير موجود.")
+
 elif choice == "💰 المصروفات":
     try:
         from views import expenses
