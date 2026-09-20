@@ -8,28 +8,39 @@ def to_excel(df):
     """دالة تحويل أي جدول إلى ملف Excel جاهز للتنزيل"""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Expenses_Report')
+        df.to_excel(writer, index=False, sheet_name='Financial_Report')
     return output.getvalue()
 
 def show_page():
-    st.header("💰 إدارة وتوزيع المصروفات الذكية")
+    st.header("💰 إدارة وتوزيع المصروفات والإيرادات الذكية")
     st.info("💡 توزيع مصروفات المخزن الرئيسي حصرياً على الفروع التشغيلية بالتساوي مع ظهور الحصة لكل فرع بدقة، والمخزن الرئيسي بصفر.")
 
     conn = get_db_connection()
     branches = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
     
     if not branches:
-        st.warning("⚠️ يرجى إضافة فروع أولاً قبل تسكين المصروفات.")
+        st.warning("⚠️ يرجى إضافة فروع أولاً قبل تسكين المصروفات أو الإيرادات.")
         conn.close()
         return
 
     branch_dict = {b["branch_name"]: b["id"] for b in branches}
     operational_branches = [b for b in branches if b["branch_type"] != "مخزن"]
 
-    tab1, tab2 = st.tabs(["➕ تسجيل مصروف جديد", "📋 أرشيف المصروفات وتقارير الفروع (تصدير Excel)"])
+    # 🎛️ تحويل التبويبات إلى أزرار أفقية ونظيفة (Radio)
+    selected_mode = st.radio(
+        "🎯 اختر القسم المطلوب:",
+        [
+            "➕ تسجيل مصروف جديد",
+            "💵 تسجيل إيراد جديد",
+            "📋 أرشيف المصروفات وتقارير الفروع (تصدير Excel)"
+        ],
+        horizontal=True
+    )
 
-    # --- التبويب الأول: تسجيل مصروف جديد مع التوزيع الصحيح ---
-    with tab1:
+    st.markdown("---")
+
+    # 1. القسم الأول: تسجيل مصروف جديد مع التوزيع الصحيح
+    if selected_mode.startswith("➕"):
         st.subheader("✍️ إدخال مصروف جديد وتوزيع الحصص")
         
         with st.form("expense_advanced_form", clear_on_submit=True):
@@ -88,7 +99,6 @@ def show_page():
                         
                         share_per_branch = amount / op_count
                         
-                        # توزيع حصة متساوية لكل فرع تشغيلي وتسكينها باسم الفرع مباشرة ليظهر المبلغ بدقة
                         for op_b in operational_branches:
                             branch_desc = f"[{target_month}] [مصروف عام صادر من المخزن الرئيسي - إجمالي البند: {amount} د.ل] {description.strip()}"
                             cur_ex.execute("""
@@ -101,8 +111,42 @@ def show_page():
                     st.success("✅ تمت عملية تسجيل المصروف وتوزيعه الفعلي على الفروع التشغيلية بنجاح!")
                     st.rerun()
 
-    # --- التبويب الثاني: التقارير والعرض ---
-    with tab2:
+    # 2. القسم الثاني: تسجيل إيراد جديد
+    elif selected_mode.startswith("💵"):
+        st.subheader("💵 تسجيل إيراد جديد (خارجي أو خدمي)")
+        
+        with st.form("revenue_form_new", clear_on_submit=True):
+            rev_branch = st.selectbox("الفرع أو المخزن المستفيد من الإيراد:", list(branch_dict.keys()))
+            b_id = branch_dict[rev_branch]
+            
+            rev_source = st.text_input("مصدر الإيراد (مثال: بيع خردة، إيراد خدمات، أرباح رأسمالية...):")
+            rev_amount = st.number_input("مبلغ الإيراد (د.ل):", min_value=0.0, step=0.5, format="%.2f")
+            rev_notes = st.text_area("ملاحظات إضافية:")
+            
+            submit_rev = st.form_submit_button("💾 حفظ وتسجيل الإيراد", type="primary", use_container_width=True)
+            if submit_rev:
+                if rev_amount <= 0 or not rev_source.strip():
+                    st.warning("⚠️ يرجى إدخال مصدر الإيراد ومبلغ صحيح!")
+                else:
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS revenues (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            branch_id INTEGER,
+                            revenue_source TEXT,
+                            amount REAL,
+                            notes TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                    conn.execute("""
+                        INSERT INTO revenues (branch_id, revenue_source, amount, notes)
+                        VALUES (?, ?, ?, ?)
+                    """, (b_id, rev_source.strip(), rev_amount, rev_notes.strip()))
+                    conn.commit()
+                    st.success("✅ تم تسجيل الإيراد بنجاح في خزينة الفرع/المخزن!")
+
+    # 3. القسم الثالث: تقارير وأرشيف المصروفات
+    elif selected_mode.startswith("📋"):
         st.subheader("📋 تقارير ومتابعة مصروفات الفروع")
         
         report_filter = st.selectbox(
