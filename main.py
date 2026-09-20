@@ -110,4 +110,5 @@ if st.session_state["page"] == "🏠 الرئيسية واللوحة":
     dashboard.show_page()
     
 elif st.session_state["page"] == "🛒 نقطة البيع (POS)":
-    st.info("🚀 جاري العمل على برمجة شاشة نقطة البيع قريباً...")
+    from views import pos
+    pos.show_page()
