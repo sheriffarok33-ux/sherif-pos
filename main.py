@@ -104,6 +104,10 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# منطقة عرض الشاشات مؤقتاً للتأكد من الموجه
-st.title("مرحباً بك في النظام!")
-st.success(f"أنت قمت بتسجيل الدخول بنجاح! وسنقوم ببرمجة شاشة ( {st.session_state['page']} ) في الخطوة القادمة.")
+# --- منطقة توجيه الشاشات (Router) ---
+if st.session_state["page"] == "🏠 الرئيسية واللوحة":
+    from views import dashboard
+    dashboard.show_page()
+    
+elif st.session_state["page"] == "🛒 نقطة البيع (POS)":
+    st.info("🚀 جاري العمل على برمجة شاشة نقطة البيع قريباً...")
