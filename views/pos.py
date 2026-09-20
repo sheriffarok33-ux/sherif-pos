@@ -8,7 +8,7 @@ from database import get_db_connection
 @st.dialog("💳 إتمام الدفع وإصدار الفاتورة")
 def checkout_payment_dialog(b_id, g_tot):
     st.subheader(f"إجمالي الفاتورة المطلوب: {g_tot:,.2f} د.ل")
-    cust_name = st.text_input("اسم الزبون:", value="زبون نقدي")
+    cust_name = st.text_input("اسم الزبون (اختياري للعملاء العاديين):", value="زبون نقدي")
     cust_phone = st.text_input("رقم الهاتف (اختياري):", value="")
     
     conn = get_db_connection()
@@ -25,9 +25,21 @@ def checkout_payment_dialog(b_id, g_tot):
     pay_method = st.selectbox("نوع الدفع:", [
         "كاش (نقدي)", 
         "شبكة / بطاقة", 
-        "آجل", 
-        "خصم من رصيد مدين (لمورد أو زبون جملة)"
+        "آجل (على الحساب)", 
+        "خصم من حساب (مورد / زبون جملة)"
     ])
+    
+    # 🌟 عرض قائمة الحسابات إذا كان الدفع آجلاً أو خصم من الرصيد
+    selected_account_id = None
+    if pay_method in ["آجل (على الحساب)", "خصم من حساب (مورد / زبون جملة)"]:
+        accounts = conn.execute("SELECT id, supplier_name, balance FROM suppliers").fetchall()
+        if accounts:
+            acc_opts = {f"{a['supplier_name']} (الرصيد الحالي: {a['balance']} د.ل)": a["id"] for a in accounts}
+            sel_acc_str = st.selectbox("📌 اختر الحساب لترحيل/خصم المبلغ:", list(acc_opts.keys()))
+            selected_account_id = acc_opts[sel_acc_str]
+        else:
+            st.error("⚠️ لا توجد جهات تعامل (موردين/زبائن) مسجلة! يرجى إضافتهم من شاشة جهات التعامل أولاً.")
+            st.stop() # إيقاف التنفيذ حتى لا تحدث أخطاء
     
     paid_amount = st.number_input("المبلغ المدفوع (د.ل):", min_value=0.0, value=float(final_tot), step=0.5, format="%.2f")
     
@@ -38,10 +50,9 @@ def checkout_payment_dialog(b_id, g_tot):
         st.error(f"⚠️ المبلغ غير كافٍ! العجز: **{abs(change_due):,.2f} د.ل**")
     
     if st.button("🖨️ تأكيد وإصدار الفاتورة", type="primary", use_container_width=True):
-        if paid_amount >= final_tot or pay_method in ["آجل", "خصم من رصيد مدين (لمورد أو زبون جملة)"]:
+        if paid_amount >= final_tot or pay_method in ["آجل (على الحساب)", "خصم من حساب (مورد / زبون جملة)"]:
             target_inv_branch = b_id if b_id != "ALL" else conn.execute("SELECT id FROM branches LIMIT 1").fetchone()["id"]
             
-            # حفظ تفاصيل السلة كـ JSON في حقل الملاحظات لإعادة الطباعة لاحقاً
             cart_json = json.dumps(st.session_state["cart"], ensure_ascii=False)
             
             cur_in = conn.cursor()
@@ -52,10 +63,15 @@ def checkout_payment_dialog(b_id, g_tot):
             
             inv_id = cursor_res.lastrowid
 
+            # خصم الكميات من المخزن
             for c_item in st.session_state["cart"]:
-                # تجنب خصم الصنف الحر (بدون كود) من المخزن لأنه ليس له رصيد
                 if c_item.get("id") != 99999:
                     conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
+
+            # 🌟 تحديث رصيد المورد/الزبون إذا تم اختياره
+            if selected_account_id:
+                # بيع البضاعة لهم يقلل من رصيد دائنيتهم (أي يقلل مما ندين لهم به أو يزيد مما يدينون لنا به)
+                conn.execute("UPDATE suppliers SET balance = balance - ? WHERE id = ?", (final_tot, selected_account_id))
 
             conn.commit()
             
@@ -153,7 +169,7 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
-    # 🌟 عرض الفاتورة وإمكانية تحميلها كـ HTML أو إخفائها
+    # 🌟 عرض الفاتورة الجديدة فقط للتحميل أو الإخفاء
     if "last_invoice" in st.session_state and st.session_state["last_invoice"]:
         inv = st.session_state["last_invoice"]
         
@@ -303,7 +319,6 @@ def show_page():
                 st.rerun()
                 
         st.markdown("---")
-        # 🌟 إضافة ميزة الصنف الحر (بدون كود)
         st.subheader("🛒 بيع صنف حر (بدون كود أو تسجيل مسبق)")
         col_f1, col_f2, col_f3 = st.columns(3)
         free_name = col_f1.text_input("اسم الصنف (اختياري):", value="صنف عام / خدمة")
@@ -327,39 +342,69 @@ def show_page():
     with pos_tab3:
         st.subheader("📋 أرشيف وتقارير الوردية وإعادة الطباعة")
         
-        # 🌟 ميزة إعادة طباعة فاتورة سابقة
+        # 🌟 ميزة إعادة طباعة فاتورة سابقة بنظام القائمة المنسدلة الذكية
         st.markdown("### 🖨️ البحث عن فاتورة وإعادة طباعتها")
-        search_inv_id = st.number_input("أدخل رقم الفاتورة للبحث:", min_value=1, step=1)
-        if st.button("البحث وعرض الفاتورة 🔍"):
-            inv_data = conn.execute("SELECT * FROM invoices WHERE id = ?", (search_inv_id,)).fetchone()
-            if inv_data:
-                # محاولة استخراج الأصناف من الـ JSON المخزن في notes
-                try:
-                    saved_items = json.loads(inv_data["notes"]) if inv_data["notes"] else []
-                except:
-                    saved_items = [{"name": "أصناف الفاتورة (نسخة قديمة)", "qty": "-", "price": "-", "total": inv_data["total_amount"]}]
+        
+        # جلب آخر 100 فاتورة لتخفيف الضغط على النظام وتسهيل البحث
+        recent_invs = conn.execute("SELECT id, customer_name, total_amount, created_at FROM invoices ORDER BY id DESC LIMIT 100").fetchall()
+        
+        if recent_invs:
+            inv_dict = {f"فاتورة #{r['id']} | الزبون: {r['customer_name']} | المبلغ: {r['total_amount']} د.ل | التاريخ: {r['created_at']}": r['id'] for r in recent_invs}
+            sel_inv_str = st.selectbox("🔍 اختر الفاتورة من القائمة (تعرض آخر 100 فاتورة):", ["-- اختر الفاتورة --"] + list(inv_dict.keys()))
+            
+            # 🌟 بمجرد الاختيار، يتم عرض الفاتورة بالأسفل مباشرة
+            if sel_inv_str != "-- اختر الفاتورة --":
+                target_inv_id = inv_dict[sel_inv_str]
+                inv_data = conn.execute("SELECT * FROM invoices WHERE id = ?", (target_inv_id,)).fetchone()
                 
-                # جلب أسماء الفرع والكاشير
-                b_info = conn.execute("SELECT branch_name FROM branches WHERE id = ?", (inv_data["branch_id"],)).fetchone()
-                b_name = b_info["branch_name"] if b_info else "غير محدد"
-                u_info = conn.execute("SELECT username FROM users WHERE id = ?", (inv_data["user_id"],)).fetchone()
-                c_name = u_info["username"] if u_info else "غير محدد"
-                
-                # تعبئة الـ session_state لعرضها في المربع العلوي للطباعة
-                st.session_state["last_invoice"] = {
-                    "inv_id": inv_data["id"],
-                    "branch": b_name,
-                    "cashier": c_name,
-                    "date_time": inv_data["created_at"],
-                    "customer": inv_data["customer_name"],
-                    "items": saved_items,
-                    "total": inv_data["total_amount"],
-                    "method": inv_data["payment_method"]
-                }
-                st.success("تم العثور على الفاتورة. ارفع الشاشة للأعلى لعرضها وتحميلها.")
-                st.rerun()
-            else:
-                st.error("❌ الفاتورة غير موجودة.")
+                if inv_data:
+                    try:
+                        saved_items = json.loads(inv_data["notes"]) if inv_data["notes"] else []
+                    except:
+                        saved_items = [{"name": "أصناف الفاتورة (نسخة قديمة)", "qty": "-", "price": "-", "total": inv_data["total_amount"]}]
+                    
+                    b_info = conn.execute("SELECT branch_name FROM branches WHERE id = ?", (inv_data["branch_id"],)).fetchone()
+                    b_name = b_info["branch_name"] if b_info else "غير محدد"
+                    
+                    u_info = conn.execute("SELECT username FROM users WHERE id = ?", (inv_data["user_id"],)).fetchone()
+                    c_name = u_info["username"] if u_info else "غير محدد"
+                    
+                    items_html_reprint = "".join([f"<tr><td>{i['name']}</td><td>{i['qty']}</td><td>{i['price']}</td><td>{i['total']}</td></tr>" for i in saved_items])
+                    
+                    html_reprint_content = f"""
+                    <html dir="rtl">
+                    <head><meta charset="utf-8"><title>فاتورة مسترجعة #{inv_data['id']}</title></head>
+                    <body style="font-family: Arial, sans-serif; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
+                        <h2 style="margin-bottom: 5px;">مجموعة أبو زيد التجارية</h2>
+                        <p style="margin-top: 0;">فرع: {b_name} <br><small>(نسخة مسترجعة)</small></p>
+                        <hr>
+                        <p style="text-align: right;"><b>رقم الفاتورة:</b> #{inv_data['id']}<br>
+                        <b>التاريخ الأصلي:</b> {inv_data['created_at']}<br>
+                        <b>الكاشير:</b> {c_name}<br>
+                        <b>الزبون:</b> {inv_data['customer_name']} <br>
+                        <b>طريقة الدفع:</b> {inv_data['payment_method']}</p>
+                        <hr>
+                        <table style="width: 100%; text-align: right; border-collapse: collapse;">
+                            <tr style="border-bottom: 1px solid #000;"><th>الصنف</th><th>الكمية</th><th>السعر</th><th>المجموع</th></tr>
+                            {items_html_reprint}
+                        </table>
+                        <hr>
+                        <h3 style="text-align: left;">الإجمالي: {inv_data['total_amount']:,.2f} د.ل</h3>
+                    </body>
+                    </html>
+                    """
+                    
+                    st.markdown("#### 📄 معاينة الفاتورة المسترجعة:")
+                    st.components.v1.html(html_reprint_content, height=350, scrolling=True)
+                    st.download_button(
+                        label="📥 تحميل الفاتورة المسترجعة (HTML)", 
+                        data=html_reprint_content.encode('utf-8'), 
+                        file_name=f"Invoice_Reprint_{target_inv_id}.html", 
+                        mime="text/html", 
+                        use_container_width=True
+                    )
+        else:
+            st.info("لا توجد فواتير مسجلة في النظام بعد.")
                 
         st.markdown("---")
         col_xz1, col_xz2 = st.columns(2)
