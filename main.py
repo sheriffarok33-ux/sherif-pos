@@ -173,8 +173,6 @@ elif choice == "➕ الفائض والتوالف والمرتجعات وتعد�
     except ImportError:
         st.warning("⚠️ ملف شاشة الفائض والتوالف (views/adjustments.py) غير موجود.")
 
-else:
-    st.info(f"🚧 الشاشة ({choice}) يتم العمل على تجهيزها برمجياً ضمن الخطة الجديدة.")
 elif choice == "📁 استيراد Excel":
     try:
         from views import items_import
