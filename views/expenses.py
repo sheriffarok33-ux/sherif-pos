@@ -13,10 +13,10 @@ def to_excel(df):
 
 def show_page():
     st.header("💰 إدارة وتوزيع المصروفات الذكية")
-    st.info("💡 تسجيل المصروفات، توزيع مصروفات المخزن الرئيسي على الفروع، معالجة الفواتير بأثر رجعي، ومتابعة مصروفات كل فرع بشكل مستقل مع تصدير Excel.")
+    st.info("💡 تسجيل المصروفات، وتوزيع مصروفات المخزن الرئيسي تلقائياً على الفروع التشغيلية حصرياً (باستثناء المخازن)، مع تصدير Excel.")
 
     conn = get_db_connection()
-    branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
+    branches = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
     
     if not branches:
         st.warning("⚠️ يرجى إضافة فروع أولاً قبل تسكين المصروفات.")
@@ -24,23 +24,26 @@ def show_page():
         return
 
     branch_dict = {b["branch_name"]: b["id"] for b in branches}
+    
+    # فصل الفروع التشغيلية عن المخازن (المخزن لا يتحمل مصروفات موزعة)
+    operational_branches = [b for b in branches if b["branch_type"] != "مخزن"]
 
     # التبويبات لتنظيم الشاشة
     tab1, tab2 = st.tabs(["➕ تسجيل مصروف جديد", "📋 أرشيف المصروفات وتقارير الفروع (تصدير Excel)"])
 
     # --- التبويب الأول: تسجيل مصروف جديد ---
     with tab1:
-        st.subheader("✍️ إدخال مصروف جديد وفق القواعد المالية")
+        st.subheader("✍️ إدخال مصروف جديد وفق القاعدة المحاسبية الدقيقة")
         
         with st.form("expense_advanced_form", clear_on_submit=True):
             exp_scope = st.radio(
                 "نطاق المصروف:", 
-                ["📍 خاص بفرع أو مخزن معين", "🌍 مصروف عام للمخزن الرئيسي (يُقسَم بالتساوي على كافة الفروع)"]
+                ["📍 خاص بفرع أو مخزن معين", "🌍 مصروف عام للمخزن الرئيسي (يُقسَم حصرياً على الفروع التشغيلية فقط)"]
             )
             
             sel_branch_name = ""
             if "خاص بفرع" in exp_scope:
-                sel_branch_name = st.selectbox("اختر الفرع المستفيد:", list(branch_dict.keys()))
+                sel_branch_name = st.selectbox("اختر الفرع أو المخزن المستفيد:", list(branch_dict.keys()))
 
             col_a, col_b = st.columns(2)
             with col_a:
@@ -51,7 +54,7 @@ def show_page():
                 target_month = st.text_input("شهر الاستحقاق المحاسبي (YYYY-MM):", value=current_year_month, help="يُستخدم لتسجيل الفواتير المنسية لشهور سابقة لتدخل في أرباح ذلك الشهر.")
                 expense_date = st.date_input("تاريخ التسجيل الفعلي:", value=datetime.now())
 
-            description = st.text_input("البيان أو وصف المصروف (مثلاً: صيانة سيارة المخزن، إيجار محل...):")
+            description = st.text_input("البيان أو وصف المصروف (مثلاً: صيانة سيارة المخزن، فاتورة كهرباء...):")
 
             advance_end_date = None
             if "إيجار" in expense_type:
@@ -66,7 +69,6 @@ def show_page():
                     st.error("⚠️ يجب إدخال مبلغ صحيح ووصف واضح للمصروف!")
                 else:
                     cur_ex = conn.cursor()
-                    total_branches_count = len(branches)
 
                     if "خاص بفرع" in exp_scope:
                         b_id = branch_dict[sel_branch_name]
@@ -81,24 +83,32 @@ def show_page():
                         """, (b_id, amount, f"[{target_month}] {desc_final}", expense_date.strftime('%Y-%m-%d')))
                     
                     else:
-                        share_per_branch = amount / total_branches_count if total_branches_count > 0 else amount
-                        desc_final = f"[مصروف عام موزع - نصيب الفرع: {share_per_branch:,.2f} د.ل] {description.strip()}"
+                        # مصروف عام صادر من المخزن الرئيسي ويوزع حصرياً على الفروع التشغيلية
+                        op_count = len(operational_branches)
+                        if op_count == 0:
+                            st.error("❌ عذراً، لا توجد فروع تشغيلية مسجلة لتوزيع المصروف عليها!")
+                            conn.close()
+                            st.stop()
                         
-                        cur_ex.execute("""
-                            INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date)
-                            VALUES (NULL, ?, ?, 1, ?)
-                        """, (amount, f"[{target_month}] {desc_final}", expense_date.strftime('%Y-%m-%d')))
+                        share_per_branch = amount / op_count
+                        
+                        # توزيع ونشر المصروف مباشرة على كل فرع تشغيلي ليدخل فى تقارير مصروفاتهم بدقة
+                        for op_b in operational_branches:
+                            branch_desc = f"[{target_month}] [مصروف عام من المخزن الرئيسي - نصيب الفرع: {share_per_branch:,.2f} د.ل] {description.strip()}"
+                            cur_ex.execute("""
+                                INSERT INTO expenses (branch_id, amount, description, is_general_store, expense_date)
+                                VALUES (?, ?, ?, 1, ?)
+                            """, (op_b["id"], share_per_branch, branch_desc, expense_date.strftime('%Y-%m-%d')))
 
                     conn.commit()
                     conn.close()
-                    st.success("✅ تمت عملية تسجيل المصروف وتوزيع أثره المالي بنجاح تام!")
+                    st.success("✅ تمت عملية تسجيل المصروف وتوزيعه محاسبياً على الفروع التشغيلية بنجاح تام!")
                     st.rerun()
 
     # --- التبويب الثاني: تقارير الفروع وسجل المصروفات مع تصدير Excel ---
     with tab2:
         st.subheader("📋 تقارير ومتابعة مصروفات الفروع")
         
-        # 🔍 إضافة فلتر لاختيار فرع معين أو عرض الكل
         report_filter = st.selectbox(
             "عرض مصروفات حسب الفرع:", 
             ["🌐 عرض كل المصروفات (الإجمالي العام)"] + list(branch_dict.keys())
@@ -108,12 +118,12 @@ def show_page():
             query = """
                 SELECT 
                     expenses.id AS 'مسلسل', 
-                    IFNULL(branches.branch_name, '🌍 مصروف عام للمخزن الرئيسي (موزع)') AS 'الفرع أو الجهة', 
-                    expenses.amount AS 'المبلغ الإجمالي (د.ل)', 
+                    branches.branch_name AS 'الفرع أو الجهة', 
+                    expenses.amount AS 'المبلغ (د.ل)', 
                     expenses.description AS 'البيان وتفاصيل التوزيع', 
                     expenses.expense_date AS 'تاريخ التسجيل'
                 FROM expenses 
-                LEFT JOIN branches ON expenses.branch_id = branches.id 
+                JOIN branches ON expenses.branch_id = branches.id 
                 ORDER BY expenses.id DESC
             """
             exp_df = pd.read_sql(query, conn)
@@ -134,13 +144,11 @@ def show_page():
             exp_df = pd.read_sql(query, conn, params=(selected_b_id,))
 
         if not exp_df.empty:
-            # حساب وإظهار إجمالي المصروفات للفلتر الحالي
-            total_filtered_amount = exp_df['المبلغ الإجمالي (د.ل)' if 'المبلغ الإجمالي (د.ل)' in exp_df.columns else 'المبلغ (د.ل)'].sum()
+            total_filtered_amount = exp_df['المبلغ (د.ل)'].sum()
             st.metric(label=f"إجمالي المصروفات ({report_filter})", value=f"{total_filtered_amount:,.2f} د.ل")
 
             st.dataframe(exp_df, use_container_width=True)
 
-            # 📥 زر تصدير Excel مخصص بحسب الفرع أو الإجمالي
             excel_data = to_excel(exp_df)
             file_suffix = "all_branches" if report_filter.startswith("🌐") else report_filter
             st.download_button(
