@@ -51,7 +51,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # إنشاء مجلد الصور إذا لم يكن موجوداً
-if not os.path.exists("item_images"): os.makedirs("item_images")
+if not os.path.exists("item_images"): 
+    os.makedirs("item_images")
 
 # تهيئة متغيرات الجلسة (Session State)
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
@@ -164,7 +165,8 @@ elif choice == "👥 إدارة المستخدمين":
         users.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة إدارة المستخدمين (views/users.py) غير موجود في المجلد.")
-        elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
+
+elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
     try:
         from views import adjustments
         adjustments.show_page()
