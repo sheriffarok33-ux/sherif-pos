@@ -18,43 +18,43 @@ def show_page():
         
     b_opts_dict = {b["branch_name"]: b["id"] for b in branches_list}
     
-    # --- قسم إضافة مستخدم جديد ---
-    with st.expander("➕ إضافة مستخدم جديد", expanded=True):
-        with st.form("new_user_form", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                uname = st.text_input("اسم المستخدم (للدخول):")
-                uphone = st.text_input("رقم الهاتف:")
-            with col2:
-                upass = st.text_input("كلمة المرور:", type="password")
+    # --- قسم إضافة مستخدم جديد (بدون Expander لحل مشكلة تداخل الحروف) ---
+    st.markdown("### ➕ إضافة مستخدم جديد")
+    with st.form("new_user_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            uname = st.text_input("اسم المستخدم (للدخول):")
+            uphone = st.text_input("رقم الهاتف:")
+        with col2:
+            upass = st.text_input("كلمة المرور:", type="password")
+            
+            if current_user_role == "Admin":
+                available_roles = ["Admin", "General_Supervisor", "Branch_Supervisor", "Cashier", "Viewer"]
+            else:
+                available_roles = ["General_Supervisor", "Branch_Supervisor", "Cashier", "Viewer"]
                 
-                # تحديد الصلاحيات المتاحة بناءً على رتبة من يقوم بالإضافة
-                if current_user_role == "Admin":
-                    available_roles = ["Admin", "General_Supervisor", "Branch_Supervisor", "Cashier", "Viewer"]
+            urole = st.selectbox("الرتبة (الصلاحية):", available_roles)
+        
+        sel_user_branch = st.selectbox("الفرع التابع له:", list(b_opts_dict.keys()))
+        
+        if st.form_submit_button("💾 حفظ المستخدم", type="primary"):
+            if uname and upass:
+                if urole == "Admin" and current_user_role != "Admin":
+                    st.error("❌ عذراً، لا يمكن إضافة مشرف نظام (Admin) إلا بواسطة Admin آخر!")
                 else:
-                    available_roles = ["General_Supervisor", "Branch_Supervisor", "Cashier", "Viewer"]
-                    
-                urole = st.selectbox("الرتبة (الصلاحية):", available_roles)
-            
-            sel_user_branch = st.selectbox("الفرع التابع له:", list(b_opts_dict.keys()))
-            
-            if st.form_submit_button("💾 حفظ المستخدم", type="primary"):
-                if uname and upass:
-                    if urole == "Admin" and current_user_role != "Admin":
-                        st.error("❌ عذراً، لا يمكن إضافة مشرف نظام (Admin) إلا بواسطة Admin آخر!")
-                    else:
-                        try:
-                            assigned_b_id = b_opts_dict[sel_user_branch]
-                            conn.execute("INSERT INTO users (username, phone, password, role, branch_id) VALUES (?, ?, ?, ?, ?)", 
-                                         (uname.strip(), uphone.strip(), upass, urole, assigned_b_id))
-                            conn.commit()
-                            st.success(f"✅ تم إضافة المستخدم ({uname}) بنجاح!")
-                        except Exception as e: 
-                            st.error(f"⚠️ حدث خطأ، ربما اسم المستخدم موجود مسبقاً.")
-                else:
-                    st.warning("⚠️ يرجى إدخال اسم المستخدم وكلمة المرور.")
+                    try:
+                        assigned_b_id = b_opts_dict[sel_user_branch]
+                        conn.execute("INSERT INTO users (username, phone, password, role, branch_id) VALUES (?, ?, ?, ?, ?)", 
+                                     (uname.strip(), uphone.strip(), upass, urole, assigned_b_id))
+                        conn.commit()
+                        st.success(f"✅ تم إضافة المستخدم ({uname}) بنجاح!")
+                    except Exception as e: 
+                        st.error(f"⚠️ حدث خطأ، ربما اسم المستخدم موجود مسبقاً.")
+            else:
+                st.warning("⚠️ يرجى إدخال اسم المستخدم وكلمة المرور.")
 
     # --- قسم عرض المستخدمين الحاليين ---
+    st.markdown("---")
     st.markdown("### 📋 قائمة المستخدمين الحاليين")
     udf = pd.read_sql("""
         SELECT users.id AS 'المسلسل', 
@@ -68,7 +68,6 @@ def show_page():
     if not udf.empty:
         st.dataframe(udf, use_container_width=True, hide_index=True)
         
-        # قسم حذف المستخدمين (مع حماية حساب الأدمن)
         st.markdown("---")
         del_u = st.selectbox("اختر المستخدم للحذف:", udf["المسلسل"].tolist(), 
                              format_func=lambda x: f"رقم {x} - {udf[udf['المسلسل']==x]['اسم المستخدم'].values[0]}")
