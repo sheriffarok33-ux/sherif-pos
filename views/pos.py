@@ -54,7 +54,6 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
             cart_json = json.dumps(st.session_state["cart"], ensure_ascii=False)
             cur_in = conn.cursor()
             
-            # تسجيل حالة الشفت مع الفاتورة
             cursor_res = cur_in.execute("""
                 INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method, notes, shift_status) 
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -125,11 +124,9 @@ def show_page():
     st.markdown("""
         <style>
         .top-panel { background-color: #e2e8f0; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 15px; }
-        .totals-panel { background-color: #0f172a; color: #ffffff !important; padding: 15px; border-radius: 8px; text-align: left; font-size: 22px; border: 2px solid #334155; margin-top: 10px; }
-        .totals-panel span { color: #22c55e !important; font-weight: bold; } 
+        .totals-panel { background-color: #0f172a; color: #ffffff !important; padding: 15px; border-radius: 8px; text-align: center; font-size: 20px; border: 2px solid #334155; margin-top: 10px; direction: ltr; }
         .btn-green > button { background-color: #16a34a !important; }
         .btn-red > button { background-color: #dc2626 !important; }
-        .fav-item-box { text-align: center; background-color: #ffffff; padding: 10px; border-radius: 10px; border: 1px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 10px; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -141,18 +138,14 @@ def show_page():
     user_branch_id = st.session_state.get("branch_id")
     current_shift = get_current_shift()
 
-    # 🌟 جعل المخزن الرئيسي هو الافتراضي للأدمن
     if role in ["Admin", "General_Supervisor"]:
         branches_data = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
         b_dict = {b["branch_name"]: b["id"] for b in branches_data}
-        
-        # البحث عن المخزن الرئيسي ليكون الخيار الافتراضي
         default_index = 0
         for idx, b in enumerate(branches_data):
             if b["branch_type"] == "مخزن":
                 default_index = idx
                 break
-                
         sel_pos = st.selectbox("اختر الفرع الحالي للبيع:", list(b_dict.keys()), index=default_index)
         b_id = b_dict[sel_pos]
         branch_name_display = sel_pos
@@ -163,7 +156,6 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
-    # 🌟 حساب رقم فاتورة اليوم الخاصة بالفرع المحدد فقط
     today_date = datetime.now().strftime("%Y-%m-%d")
     branch_inv_count = conn.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date)).fetchone()[0]
     daily_inv_num = branch_inv_count + 1
@@ -179,8 +171,7 @@ def show_page():
             <h2 style="margin-bottom: 5px;">مجموعة أبو زيد التجارية</h2>
             <p style="margin-top: 0;">فرع: {inv['branch']}</p><hr>
             <p style="text-align: right;">
-            <b>رقم الفاتورة (لليوم):</b> #{inv['daily_inv_num']}<br>
-            <b>الرقم المرجعي العالمي:</b> {inv['inv_id']}<br>
+            <b>رقم فاتورة اليوم:</b> #{inv['daily_inv_num']}<br>
             <b>التاريخ:</b> {inv['date_time']}<br>
             <b>الكاشير:</b> {inv['cashier']} | <b>الوردية:</b> {inv['shift']}<br>
             <b>الزبون:</b> {inv['customer']} <br><b>طريقة الدفع:</b> {inv['method']}</p><hr>
@@ -242,7 +233,8 @@ def show_page():
                 st.dataframe(pd.DataFrame([{"الكود": i.get("code", "-"), "اسم الصنف": i["name"], "الكمية": i["qty"], "السعر": i["price"], "الإجمالي": i["total"]} for i in st.session_state["cart"]]), use_container_width=True, height=250, hide_index=True)
 
             g_tot = sum(item["total"] for item in st.session_state.get("cart", []))
-            st.markdown(f'<div class="totals-panel">إجمالي الفاتورة: <span style="color:white !important;">{g_tot:,.2f} د.ل</span> &nbsp; | &nbsp; <span style="color:#22c55e !important; font-size:26px;">الصافي المطلوب: {g_tot:,.2f} د.ل</span></div>', unsafe_allow_html=True)
+            # 🌟 إصلاح تداخل الحروف والأرقام في شريط الإجمالي
+            st.markdown(f'<div class="totals-panel">الإجمالي: <b>{g_tot:,.2f} د.ل</b> &nbsp;|&nbsp; الصافي المطلوب: <span style="color:#22c55e;">{g_tot:,.2f} د.ل</span></div>', unsafe_allow_html=True)
             
             st.write("")
             c_btn1, c_btn3 = st.columns([2, 1])
@@ -258,30 +250,33 @@ def show_page():
                     st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
 
-        # 🌟 قسم المفضلة مع الصور
+        # 🌟 قسم المفضلة والصور مرتب ومنظم في الأعلى بدون هبوط للأسفل
         with col_fav:
             st.markdown("### ⭐ الأصناف المفضلة")
-            # جلب الأصناف التي أخذت رقم 1 في المفضلة من هذا الفرع
-            fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 10", (b_id,)).fetchall()
+            fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 15", (b_id,)).fetchall()
             
-            st.markdown("<div style='background-color:#f1f5f9; padding:10px; border-radius:5px; height:400px; overflow-y:auto; border:1px solid #cbd5e1;'>", unsafe_allow_html=True)
+            st.markdown("<div style='background-color:#f1f5f9; padding:8px; border-radius:8px; height:380px; overflow-y:auto; border:1px solid #cbd5e1;'>", unsafe_allow_html=True)
             if fav_items:
-                fav_cols = st.columns(2) # عرضهم في عمودين بجوار بعض
-                for idx, item in enumerate(fav_items):
-                    with fav_cols[idx % 2]:
-                        img_path = os.path.join("item_images", f"{item['item_code']}.jpg")
-                        if os.path.exists(img_path):
-                            st.image(img_path, use_container_width=True)
-                        else:
-                            st.markdown("<div style='font-size:30px; text-align:center;'>🥜</div>", unsafe_allow_html=True)
-                            
-                        if st.button(f"{item['item_name']}\n{item['sale_price']} د.ل", key=f"fav_{item['id']}", use_container_width=True):
-                            qty = st.session_state.get("barcode_qty_input", 1.0)
-                            st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(qty), "total": float(item["sale_price"]) * float(qty)})
-                            st.rerun()
-                        st.markdown("<hr style='margin:5px 0;'>", unsafe_allow_html=True)
+                for item in fav_items:
+                    st.markdown("<div style='background:white; padding:6px; border-radius:6px; margin-bottom:8px; border:1px solid #e2e8f0; text-align:center;'>", unsafe_allow_html=True)
+                    img_path = os.path.join("item_images", f"{item['item_code']}.jpg")
+                    if os.path.exists(img_path):
+                        try:
+                            with open(img_path, "rb") as f:
+                                img_bytes = f.read()
+                            st.image(img_bytes, use_container_width=True)
+                        except:
+                            st.markdown("🥜")
+                    else:
+                        st.markdown("<div style='font-size:22px;'>🥜</div>", unsafe_allow_html=True)
+                        
+                    if st.button(f"{item['item_name']} ({item['sale_price']} د.ل)", key=f"fav_{item['id']}", use_container_width=True):
+                        qty = st.session_state.get("barcode_qty_input", 1.0)
+                        st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(qty), "total": float(item["sale_price"]) * float(qty)})
+                        st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
             else:
-                st.info("لم تقم بتحديد أصناف مفضلة. اذهب لشاشة 'لوحة المفضلة' وضع رقم 1 أمام الصنف.")
+                st.info("لم تحدد أصناف مفضلة (اضبطها من لوحة المفضلة).")
             st.markdown("</div>", unsafe_allow_html=True)
 
     # ==========================================
