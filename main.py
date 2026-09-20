@@ -17,10 +17,11 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS - مع إصلاح لون الأزرار ليكون أبيض ناصع
+# إضافة ستايل CSS - (تم إصلاح خطأ الأزرار المتداخلة وحجمها)
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
+    
     html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table, th, td { 
         font-family: 'Tajawal', sans-serif !important; 
         color: #000000 !important; 
@@ -32,28 +33,37 @@ st.markdown("""
     h2 { font-size: 24px !important; color: #1e293b !important; }
     h3 { font-size: 20px !important; color: #334155 !important; }
     
-    /* 🌟 إجبار النص داخل أي زر ليكون باللون الأبيض */
-    div.stButton > button, div.stButton > button * { 
-        color: #ffffff !important; 
-    }
-    
+    /* 🌟 أزرار البرنامج العامة */
     div.stButton > button { 
         border-radius: 8px; font-weight: 900 !important; transition: all 0.3s ease; height: 50px; 
         background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
         box-shadow: 0 3px 6px rgba(0,0,0,0.15); font-size: 18px !important;
+        color: #ffffff !important;
     }
     div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-2px); }
+    div.stButton > button p, div.stButton > button span { color: #ffffff !important; }
     
+    /* 🌟 القائمة الجانبية */
     [data-testid="stSidebar"] { background-color: #0f172a; }
     [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
     
-    /* 🌟 إصلاح ألوان القائمة الجانبية لتكون بيضاء أيضاً */
-    [data-testid="stSidebar"] .stButton>button, [data-testid="stSidebar"] .stButton>button * {
-        background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
-        border-radius: 10px; padding: 12px 15px; text-align: right; font-weight: 900 !important;
-        transition: all 0.3s ease; margin-bottom: 8px; font-size: 17px !important; height: auto;
+    /* 🌟 أزرار القائمة الجانبية (تصحيح الحجم المبالغ فيه) */
+    [data-testid="stSidebar"] .stButton > button {
+        background-color: #1e293b !important; 
+        border: 1px solid #334155 !important;
+        border-radius: 8px !important; 
+        padding: 8px 12px !important; 
+        text-align: right !important; 
+        font-weight: 900 !important;
+        transition: all 0.3s ease !important; 
+        margin-bottom: 5px !important; 
+        height: auto !important;
+        color: #ffffff !important;
+        display: block !important;
+        width: 100% !important;
     }
-    [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; border-color: #0284c7; transform: translateX(-5px); }
+    [data-testid="stSidebar"] .stButton > button:hover { background-color: #0284c7 !important; border-color: #0284c7 !important; transform: translateX(-5px) !important; }
+    [data-testid="stSidebar"] .stButton > button p { margin: 0 !important; padding: 0 !important; font-size: 16px !important; color: #ffffff !important; }
     </style>
 """, unsafe_allow_html=True)
 
