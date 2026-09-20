@@ -164,6 +164,12 @@ elif choice == "👥 إدارة المستخدمين":
         users.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة إدارة المستخدمين (views/users.py) غير موجود في المجلد.")
+        elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
+    try:
+        from views import adjustments
+        adjustments.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة الفائض والتوالف (views/adjustments.py) غير موجود.")
 
 else:
     st.info(f"🚧 الشاشة ({choice}) يتم العمل على تجهيزها برمجياً ضمن الخطة الجديدة.")
