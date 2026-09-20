@@ -92,11 +92,21 @@ if not st.session_state["logged_in"]:
                     st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
     st.stop()
 
-# --- القائمة الجانبية ---
+# --- القائمة الجانبية (Navigation Menu) ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
+# أزرار التنقل بين الشاشات
+st.sidebar.markdown("### 📌 القائمة الرئيسية")
+if st.sidebar.button("🏠 الرئيسية واللوحة", use_container_width=True): set_page("🏠 الرئيسية واللوحة")
+if st.sidebar.button("🛒 نقطة البيع (POS)", use_container_width=True): set_page("🛒 نقطة البيع (POS)")
+if st.sidebar.button("⭐ لوحة المفضلة (1-20)", use_container_width=True): set_page("⭐ لوحة المفضلة (1-20)")
+
+# زر مجهز للشاشة القادمة التي سنعمل عليها
+if st.sidebar.button("📦 إدارة المخزن", use_container_width=True): set_page("📦 إدارة المخزن")
+
+st.sidebar.markdown("---")
 if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
     st.session_state.clear()
     st.rerun()
@@ -112,3 +122,10 @@ if st.session_state["page"] == "🏠 الرئيسية واللوحة":
 elif st.session_state["page"] == "🛒 نقطة البيع (POS)":
     from views import pos
     pos.show_page()
+
+elif st.session_state["page"] == "⭐ لوحة المفضلة (1-20)":
+    from views import favorites
+    favorites.show_page()
+    
+elif st.session_state["page"] == "📦 إدارة المخزن":
+    st.info("🚀 هذه هي الشاشة القادمة! أخبرني بتفاصيلها لنبدأ العمل عليها وربطها.")
