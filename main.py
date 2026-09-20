@@ -1,5 +1,10 @@
-import streamlit as st
 import os
+import re
+import io
+import sqlite3
+import pandas as pd
+import streamlit as st
+from datetime import datetime, timedelta
 from database import initialize_database, get_db_connection
 
 # تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
@@ -92,19 +97,33 @@ if not st.session_state["logged_in"]:
                     st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
     st.stop()
 
-# --- القائمة الجانبية (Navigation Menu) ---
+# --- القائمة الجانبية (Navigation Menu) مرتبة ومنظمة ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
-if st.sidebar.button("👥 إدارة المستخدمين", use_container_width=True): set_page("👥 إدارة المستخدمين")
-# أزرار التنقل بين الشاشات
-st.sidebar.markdown("### 📌 القائمة الرئيسية")
-if st.sidebar.button("🏠 الرئيسية واللوحة", use_container_width=True): set_page("🏠 الرئيسية واللوحة")
-if st.sidebar.button("🛒 نقطة البيع (POS)", use_container_width=True): set_page("🛒 نقطة البيع (POS)")
-if st.sidebar.button("⭐ لوحة المفضلة (1-20)", use_container_width=True): set_page("⭐ لوحة المفضلة (1-20)")
 
-# زر مجهز للشاشة القادمة التي سنعمل عليها
-if st.sidebar.button("📦 إدارة المخزن", use_container_width=True): set_page("📦 إدارة المخزن")
+# قائمة الشاشات المتاحة في النظام
+DEFAULT_MENUS = [
+    "🏠 الرئيسية واللوحة",
+    "🛒 نقطة البيع (POS)",
+    "🏢 إدارة الفروع",
+    "👥 إدارة المستخدمين",
+    "⭐ لوحة المفضلة (1-20)",
+    "📦 إدارة المخزن والفروع",
+    "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
+    "🔄 تزويد الفروع والأرشيف",
+    "📁 استيراد Excel",
+    "💰 المصروفات",
+    "📥 المشتريات والموردين",
+    "⚙️ الجرد والتصفير السنوي",
+    "🥜 التحميص والخلط",
+    "📊 التقارير والأرباح"
+]
+
+# عرض أزرار القائمة الجانبية بشكل ديناميكي وآمن
+for menu_name in DEFAULT_MENUS:
+    if st.sidebar.button(menu_name, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
+        set_page(menu_name)
 
 st.sidebar.markdown("---")
 if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
@@ -114,20 +133,37 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# --- منطقة توجيه الشاشات (Router) ---
+# --- منطقة توجيه الشاشات (Router) الآمنة ---
+choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
-if st.session_state["page"] == "🏠 الرئيسية واللوحة":
-    from views import dashboard
-    dashboard.show_page()
+if choice == "🏠 الرئيسية واللوحة":
+    try:
+        from views import dashboard
+        dashboard.show_page()
+    except ImportError:
+        st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
+        st.info("مرحباً بك في النظام السحابي. شاشة الرئيسية قيد التجهيز.")
 
-elif st.session_state["page"] == "🛒 نقطة البيع (POS)":
-    from views import pos
-    pos.show_page()
+elif choice == "🛒 نقطة البيع (POS)":
+    try:
+        from views import pos
+        pos.show_page()
+    except ImportError:
+        st.info("🛒 شاشة نقطة البيع قيد الترتيب وفق الهيكل الجديد...")
 
-elif st.session_state["page"] == "👥 إدارة المستخدمين":
-    from views import users
-    users.show_page()
+elif choice == "🏢 إدارة الفروع":
+    try:
+        from views import branches
+        branches.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة إدارة الفروع (views/branches.py) غير موجود في المجلد.")
 
-elif st.session_state["page"] == "🏢 إدارة الفروع":
-    from views import branches
-    branches.show_page()
+elif choice == "👥 إدارة المستخدمين":
+    try:
+        from views import users
+        users.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة إدارة المستخدمين (views/users.py) غير موجود في المجلد.")
+
+else:
+    st.info(f"🚧 الشاشة ({choice}) يتم العمل على تجهيزها برمجياً ضمن الخطة الجديدة.")
