@@ -307,10 +307,22 @@ def show_page():
             else: st.warning("يرجى إدخال سعر صحيح للصنف الحر.")
 
     # ==========================================
-    # 3. الأرشيف وإعادة الطباعة
+    # 3. الأرشيف وإعادة الطباعة + أرشيف فواتير التزويد للفرع
     # ==========================================
     elif st.session_state["pos_active_view"] == "الأرشيف":
-        st.subheader("📋 أرشيف وإعادة الطباعة")
+        st.subheader("📦 أرشيف فواتير التزويد الواردة لفرعك")
+        branch_transfers = conn.execute("""
+            SELECT id AS 'رقم التزويد', items_details AS 'تفاصيل الأصناف والكميات', status AS 'حالة الاستلام', transfer_date AS 'تاريخ الإرسال'
+            FROM transfer_logs WHERE to_branch_id = ? ORDER BY id DESC
+        """, (b_id,)).fetchall()
+        
+        if branch_transfers:
+            st.dataframe(pd.DataFrame(branch_transfers), use_container_width=True, hide_index=True)
+        else:
+            st.info("📭 لا توجد فواتير تزويد بضائع سابقة مسجلة لهذا الفرع.")
+
+        st.markdown("---")
+        st.subheader("📋 أرشيف مبيعات الفرع وإعادة الطباعة")
         recent_invs = conn.execute("SELECT id, customer_name, total_amount, created_at FROM invoices WHERE branch_id = ? ORDER BY id DESC LIMIT 100", (b_id,)).fetchall()
         
         if recent_invs:
@@ -344,6 +356,6 @@ def show_page():
                     st.components.v1.html(html_reprint_content, height=350, scrolling=True)
                     st.download_button(label="📥 تحميل الفاتورة المسترجعة (HTML)", data=html_reprint_content.encode('utf-8'), file_name=f"Invoice_Reprint_{target_inv_id}.html", mime="text/html", use_container_width=True)
         else:
-            st.info("📭 لا توجد فواتير سابقة مؤرشفة لهذا الفرع.")
+            st.info("📭 لا توجد فواتير مبيعات سابقة مؤرشفة لهذا الفرع.")
 
     conn.close()
