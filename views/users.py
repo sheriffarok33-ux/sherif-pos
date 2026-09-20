@@ -10,9 +10,9 @@ def show_page():
     current_user_role = st.session_state.get("role", "")
     current_username = st.session_state.get("username", "")
     
-    # جلب قائمة الفروع مع إضافة خيار "كافة الفروع"
+    # جلب قائمة الفروع مع خيار "كافة الفروع"
     branches_list = conn.execute("SELECT id, branch_name FROM branches").fetchall()
-    b_opts_dict = {"🌐 كافة الفروع (الكل)": "ALL"}
+    b_opts_dict = {"🌐 كافة الفروع (الكل)": None}
     for b in branches_list:
         b_opts_dict[b["branch_name"]] = b["id"]
         
@@ -42,7 +42,9 @@ def show_page():
                     st.error("❌ عذراً، لا يمكن إضافة مشرف نظام (Admin) إلا بواسطة Admin آخر حصرياً!")
                 else:
                     try:
+                        # جلب الـ ID الحقيقي للفرع أو None إذا اختار الكل
                         assigned_b_id = b_opts_dict[sel_user_branch]
+                        
                         conn.execute("INSERT INTO users (username, phone, password, role, branch_id) VALUES (?, ?, ?, ?, ?)", 
                                      (uname.strip(), uphone.strip(), upass, urole, assigned_b_id))
                         conn.commit()
@@ -89,7 +91,6 @@ def show_page():
                 can_delete = False
                 delete_error_msg = "❌ تحذير أمني: المدير العام لا يملك صلاحية حذف حسابات الأدمن (Admin)!"
             else:
-                # التأكد من عدم حذف الأدمن الأساسي الوحيد
                 admin_count = conn.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin'").fetchone()[0]
                 if admin_count <= 1:
                     can_delete = False
