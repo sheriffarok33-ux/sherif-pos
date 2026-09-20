@@ -89,7 +89,7 @@ def check_user_permission(menu_name):
     if role in ["Admin", "General_Supervisor"]: 
         return True
     
-    # 🛒 صلاحيات الكاشير: مسموح له فقط بالرئيسية ونقطة البيع بناءً على طلبك
+    # 🛒 صلاحيات الكاشير: مسموح له فقط بالرئيسية ونقطة البيع
     if role == "Cashier": 
         return menu_name in [
             "🏠 الرئيسية واللوحة", 
@@ -158,6 +158,7 @@ DEFAULT_MENUS = [
     "💰 المصروفات والايرادات",
     "📥 المشتريات والموردين",
     "🥜 التحميص والخلط",
+    "👥 إدارة المستخدمين",
     "📊 التقارير والأرباح"
 ]
 
@@ -236,6 +237,12 @@ elif choice == "🥜 التحميص والخلط":
         roasting_mixing.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
+elif choice == "👥 إدارة المستخدمين":
+    try:
+        from views import users
+        users.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
 elif choice == "📊 التقارير والأرباح":
     try:
         from views import reports
