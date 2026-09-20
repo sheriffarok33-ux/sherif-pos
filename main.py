@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS - (تم إصلاح خطأ الأزرار المتداخلة وحجمها)
+# إضافة ستايل CSS 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -86,10 +86,31 @@ def set_page(page_name):
 
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
-    if role in ["Admin", "General_Supervisor"]: return True
-    if role == "Cashier": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)", "🔄 تزويد الفروع والأرشيف", "💰 المصروفات والايرادات"]
-    if role == "Viewer": return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
-    if role == "Branch_Supervisor": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف", "💰 المصروفات والايرادات"]
+    if role in ["Admin", "General_Supervisor"]: 
+        return True
+    
+    # 🛒 صلاحيات الكاشير: مسموح له فقط بالرئيسية ونقطة البيع بناءً على طلبك
+    if role == "Cashier": 
+        return menu_name in [
+            "🏠 الرئيسية واللوحة", 
+            "🛒 نقطة البيع (POS)"
+        ]
+        
+    if role == "Viewer": 
+        return menu_name in [
+            "🏠 الرئيسية واللوحة", 
+            "📊 التقارير والأرباح"
+        ]
+        
+    if role == "Branch_Supervisor": 
+        return menu_name in [
+            "🏠 الرئيسية واللوحة", 
+            "🛒 نقطة البيع (POS)", 
+            "📦 إدارة المخزن والفروع", 
+            "🔄 تزويد الفروع والأرشيف", 
+            "💰 المصروفات والايرادات"
+        ]
+        
     return False
 
 # --- بوابة الدخول ---
@@ -184,7 +205,7 @@ elif choice == "📦 إدارة المخزن والفروع":
         from views import inventory
         inventory.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة إدارة المخزن والفروع (views/inventory.py) غير موجود.")
+        st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
 elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
     try:
         from views import adjustments
