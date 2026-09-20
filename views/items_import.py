@@ -59,7 +59,6 @@ def show_page():
                     conn_imp = get_db_connection()
                     success_count = 0
                     
-                    # تحديد الفروع المستهدفة بناءً على اختيار المستخدم
                     target_branches = [b["id"] for b in branches] if "كافة الفروع" in target_mode else [selected_branch_id]
 
                     for _, row in df.iterrows():
@@ -72,7 +71,6 @@ def show_page():
 
                         if name and name != "nan":
                             for b_id in target_branches:
-                                # التحقق إذا كان الصنف موجوداً مسبقاً في هذا الفرع لتحديثه أو إضافته
                                 existing = conn_imp.execute(
                                     "SELECT id FROM items WHERE branch_id = ? AND (item_code = ? OR item_name = ?)", 
                                     (b_id, code, name)
@@ -94,7 +92,7 @@ def show_page():
                     conn_imp.close()
                     st.success(f"✅ تمت معالجة وترحيل {success_count} صنفاَ بنجاح تام!")
             except Exception as e:
-                st.error(f قراءة الملف: {e}")
+                st.error(f"خطأ في قراءة الملف: {e}")
 
     # --- التبويب الثاني: إدخال صنف جديد يدوياً ---
     with tab2:
@@ -108,9 +106,8 @@ def show_page():
             with col2:
                 m_sale = st.number_input("سعر البيع (د.ل):", min_value=0.0, value=0.0, step=0.5)
                 m_qty = st.number_input("الكمية الابتدائية:", min_value=0.0, value=0.0, step=0.5)
-                m_expiry = st.text_input("تاريخ الصلاحية (اختياري - مثلاً 2027/12):", value="")
+                m_expiry = st.text_input("تاريخ الصلاحية (اختياري):", value="")
 
-            # حساب هامش الربح التجريبي للمعاينة أمام المستخدم
             if m_sale > 0 and m_buy > 0:
                 profit_margin = m_sale - m_buy
                 profit_percent = (profit_margin / m_buy) * 100
