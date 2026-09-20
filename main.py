@@ -96,7 +96,7 @@ if not st.session_state["logged_in"]:
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
-
+if st.sidebar.button("👥 إدارة المستخدمين", use_container_width=True): set_page("👥 إدارة المستخدمين")
 # أزرار التنقل بين الشاشات
 st.sidebar.markdown("### 📌 القائمة الرئيسية")
 if st.sidebar.button("🏠 الرئيسية واللوحة", use_container_width=True): set_page("🏠 الرئيسية واللوحة")
@@ -129,3 +129,6 @@ elif st.session_state["page"] == "⭐ لوحة المفضلة (1-20)":
     
 elif st.session_state["page"] == "📦 إدارة المخزن":
     st.info("🚀 هذه هي الشاشة القادمة! أخبرني بتفاصيلها لنبدأ العمل عليها وربطها.")
+elif st.session_state["page"] == "👥 إدارة المستخدمين":
+    from views import users
+    users.show_page()
