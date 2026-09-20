@@ -115,23 +115,19 @@ st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
 # --- منطقة توجيه الشاشات (Router) ---
+
 if st.session_state["page"] == "🏠 الرئيسية واللوحة":
     from views import dashboard
     dashboard.show_page()
-    
+
 elif st.session_state["page"] == "🛒 نقطة البيع (POS)":
     from views import pos
     pos.show_page()
 
-elif st.session_state["page"] == "⭐ لوحة المفضلة (1-20)":
-    from views import favorites
-    favorites.show_page()
-    
-elif st.session_state["page"] == "📦 إدارة المخزن":
-    st.info("🚀 هذه هي الشاشة القادمة! أخبرني بتفاصيلها لنبدأ العمل عليها وربطها.")
 elif st.session_state["page"] == "👥 إدارة المستخدمين":
     from views import users
     users.show_page()
+
 elif st.session_state["page"] == "🏢 إدارة الفروع":
     from views import branches
     branches.show_page()
