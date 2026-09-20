@@ -47,7 +47,7 @@ st.markdown("""
     [data-testid="stSidebar"] { background-color: #0f172a; }
     [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
     
-    /* 🌟 أزرار القائمة الجانبية (تصحيح الحجم المبالغ فيه) */
+    /* 🌟 أزرار القائمة الجانبية */
     [data-testid="stSidebar"] .stButton > button {
         background-color: #1e293b !important; 
         border: 1px solid #334155 !important;
@@ -166,60 +166,60 @@ if choice == "🏠 الرئيسية واللوحة":
         dashboard.show_page()
     except ImportError:
         st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
-        st.info("مرحباً بك في النظام السحابي. شاشة الرئيسية قيد التجهيز.")
+        st.info("مرحباً بك في النظام السحابي.")
 elif choice == "🛒 نقطة البيع (POS)":
     try:
         from views import pos
         pos.show_page()
     except ImportError:
-        st.info("🛒 شاشة نقطة البيع قيد الترتيب...")
-elif choice == "🏢 إدارة الفروع":
+        st.warning("⚠️ ملف شاشة نقطة البيع غير موجود.")
+elif choice == "⭐ لوحة المفضلة (1-20)":
     try:
-        from views import branches
-        branches.show_page()
+        from views import favorites
+        favorites.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
-elif choice == "👥 إدارة المستخدمين":
+        st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
+elif choice == "📦 إدارة المخزن والفروع":
     try:
-        from views import users
-        users.show_page()
+        from views import inventory
+        inventory.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
+        st.warning("⚠️ ملف شاشة إدارة المخزن والفروع (views/inventory.py) غير موجود.")
 elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
     try:
         from views import adjustments
         adjustments.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود.")
-elif choice == "📁 استيراد Excel":
+elif choice == "🔄 تزويد الفروع والأرشيف":
     try:
-        from views import items_import
-        items_import.show_page()
+        from views import transfers
+        transfers.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
+        st.warning("⚠️ ملف شاشة التزويد غير موجود.")
 elif choice == "💰 المصروفات":
     try:
         from views import expenses
         expenses.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
-elif choice == "👥 جهات التعامل":
-    try:
-        from views import parties
-        parties.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
-elif choice == "📥 المشتريات":
+elif choice == "📥 المشتريات والموردين":
     try:
         from views import purchases
         purchases.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
-elif choice == "⭐ لوحة المفضلة (1-20)":
+elif choice == "🥜 التحميص والخلط":
     try:
-        from views import favorites
-        favorites.show_page()
+        from views import roasting_mixing
+        roasting_mixing.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة المفضلة (views/favorites.py) غير موجود.")
+        st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
+elif choice == "📊 التقارير والأرباح":
+    try:
+        from views import reports
+        reports.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة التقارير غير موجود.")
 else:
     st.info(f"شاشة {choice} قيد التجهيز.")
