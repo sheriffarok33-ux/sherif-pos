@@ -175,3 +175,9 @@ elif choice == "➕ الفائض والتوالف والمرتجعات وتعد�
 
 else:
     st.info(f"🚧 الشاشة ({choice}) يتم العمل على تجهيزها برمجياً ضمن الخطة الجديدة.")
+elif choice == "📁 استيراد Excel":
+    try:
+        from views import items_import
+        items_import.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة الاستيراد (views/items_import.py) غير موجود.")
