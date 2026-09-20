@@ -132,3 +132,6 @@ elif st.session_state["page"] == "📦 إدارة المخزن":
 elif st.session_state["page"] == "👥 إدارة المستخدمين":
     from views import users
     users.show_page()
+elif st.session_state["page"] == "🏢 إدارة الفروع":
+    from views import branches
+    branches.show_page()
