@@ -116,7 +116,6 @@ def show_page():
         current_code = st.session_state["scanned_code"]
 
         if current_code:
-            # فحص ما إذا كان الكود موجوداً في الفرع المحدد أو المخزن الرئيسي
             check_b_id = selected_target_branch_id if selected_target_branch_id else branches[0]["id"]
             cur_chk = conn.cursor()
             existing_item = cur_chk.execute(
