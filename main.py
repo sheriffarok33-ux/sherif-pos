@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS
+# إضافة ستايل CSS - مع إصلاح لون الأزرار ليكون أبيض ناصع
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -32,21 +32,28 @@ st.markdown("""
     h2 { font-size: 24px !important; color: #1e293b !important; }
     h3 { font-size: 20px !important; color: #334155 !important; }
     
+    /* 🌟 إجبار النص داخل أي زر ليكون باللون الأبيض */
+    div.stButton > button, div.stButton > button * { 
+        color: #ffffff !important; 
+    }
+    
     div.stButton > button { 
         border-radius: 8px; font-weight: 900 !important; transition: all 0.3s ease; height: 50px; 
-        background: linear-gradient(135deg, #0284c7, #0369a1); color: white !important; border: none;
+        background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
         box-shadow: 0 3px 6px rgba(0,0,0,0.15); font-size: 18px !important;
     }
     div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-2px); }
     
     [data-testid="stSidebar"] { background-color: #0f172a; }
     [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
-    [data-testid="stSidebar"] .stButton>button {
+    
+    /* 🌟 إصلاح ألوان القائمة الجانبية لتكون بيضاء أيضاً */
+    [data-testid="stSidebar"] .stButton>button, [data-testid="stSidebar"] .stButton>button * {
         background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
         border-radius: 10px; padding: 12px 15px; text-align: right; font-weight: 900 !important;
         transition: all 0.3s ease; margin-bottom: 8px; font-size: 17px !important; height: auto;
     }
-    [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); }
+    [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; border-color: #0284c7; transform: translateX(-5px); }
     </style>
 """, unsafe_allow_html=True)
 
@@ -62,53 +69,18 @@ if "user_id" not in st.session_state: st.session_state["user_id"] = None
 if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
 if "cart" not in st.session_state: st.session_state["cart"] = []
 if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
-if "success_alert_msg" not in st.session_state: st.session_state["success_alert_msg"] = ""
 
 def set_page(page_name): 
     st.session_state["page"] = page_name
     st.rerun()
 
-# -------------------------------------------------------------
-# 🛡️ دالة فحص الصلاحيات (التي تمنع الكاشير من رؤية باقي الشاشات)
-# -------------------------------------------------------------
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
-    
-    # الأدمن والمشرف العام مسموح لهم بكل الشاشات
-    if role in ["Admin", "General_Supervisor"]: 
-        return True
-        
-    # الكاشير مسموح له بشاشات البيع فقط
-    if role == "Cashier":
-        allowed_for_cashier = [
-            "🏠 الرئيسية واللوحة", 
-            "🛒 نقطة البيع (POS)", 
-            "⭐ لوحة المفضلة (1-20)", 
-            "🔄 تزويد الفروع والأرشيف"
-        ]
-        return menu_name in allowed_for_cashier
-
-    # العارض مسموح له بالتقارير فقط
-    if role == "Viewer":
-        allowed_for_viewer = [
-            "🏠 الرئيسية واللوحة",
-            "📊 التقارير والأرباح"
-        ]
-        return menu_name in allowed_for_viewer
-        
-    # مشرف الفرع مسموح له بإدارة فرعه فقط
-    if role == "Branch_Supervisor":
-         allowed_for_bs = [
-            "🏠 الرئيسية واللوحة",
-            "🛒 نقطة البيع (POS)",
-            "📦 إدارة المخزن والفروع",
-            "🔄 تزويد الفروع والأرشيف"
-         ]
-         return menu_name in allowed_for_bs
-
+    if role in ["Admin", "General_Supervisor"]: return True
+    if role == "Cashier": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)", "🔄 تزويد الفروع والأرشيف"]
+    if role == "Viewer": return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
+    if role == "Branch_Supervisor": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف"]
     return False
-# -------------------------------------------------------------
-
 
 # --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
@@ -140,31 +112,18 @@ if not st.session_state["logged_in"]:
                     st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
     st.stop()
 
-# --- القائمة الجانبية (Navigation Menu) مرتبة ومنظمة ---
+# --- القائمة الجانبية ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-# قائمة الشاشات المتاحة في النظام (تم تحديثها لفصل الموردين عن المشتريات)
 DEFAULT_MENUS = [
-    "🏠 الرئيسية واللوحة",
-    "🛒 نقطة البيع (POS)",
-    "🏢 إدارة الفروع",
-    "👥 إدارة المستخدمين",
-    "⭐ لوحة المفضلة (1-20)",
-    "📦 إدارة المخزن والفروع",
-    "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
-    "🔄 تزويد الفروع والأرشيف",
-    "📁 استيراد Excel",
-    "💰 المصروفات",
-    "👥 جهات التعامل",
-    "📥 المشتريات",
-    "⚙️ الجرد والتصفير السنوي",
-    "🥜 التحميص والخلط",
-    "📊 التقارير والأرباح"
+    "🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "🏢 إدارة الفروع", "👥 إدارة المستخدمين", 
+    "⭐ لوحة المفضلة (1-20)", "📦 إدارة المخزن والفروع", "➕ الفائض والتوالف والمرتجعات وتعديل السعر", 
+    "🔄 تزويد الفروع والأرشيف", "📁 استيراد Excel", "💰 المصروفات", "👥 جهات التعامل", 
+    "📥 المشتريات", "⚙️ الجرد والتصفير السنوي", "🥜 التحميص والخلط", "📊 التقارير والأرباح"
 ]
 
-# 🛡️ تطبيق فلتر الصلاحيات على القائمة الجانبية
 for menu_name in DEFAULT_MENUS:
     if check_user_permission(menu_name):
         if st.sidebar.button(menu_name, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
@@ -178,7 +137,7 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# --- منطقة توجيه الشاشات (Router) الآمنة ---
+# --- الموجه (Router) ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
 if not check_user_permission(choice):
@@ -192,79 +151,53 @@ if choice == "🏠 الرئيسية واللوحة":
     except ImportError:
         st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
         st.info("مرحباً بك في النظام السحابي. شاشة الرئيسية قيد التجهيز.")
-
 elif choice == "🛒 نقطة البيع (POS)":
     try:
         from views import pos
         pos.show_page()
     except ImportError:
-        st.info("🛒 شاشة نقطة البيع قيد الترتيب وفق الهيكل الجديد...")
-
+        st.info("🛒 شاشة نقطة البيع قيد الترتيب...")
 elif choice == "🏢 إدارة الفروع":
     try:
         from views import branches
         branches.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة إدارة الفروع (views/branches.py) غير موجود في المجلد.")
-
+        st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
 elif choice == "👥 إدارة المستخدمين":
     try:
         from views import users
         users.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة إدارة المستخدمين (views/users.py) غير موجود في المجلد.")
-
+        st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
 elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
     try:
         from views import adjustments
         adjustments.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة الفائض والتوالف (views/adjustments.py) غير موجود.")
-
+        st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود.")
 elif choice == "📁 استيراد Excel":
     try:
         from views import items_import
         items_import.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة الاستيراد (views/items_import.py) غير موجود.")
-
+        st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
 elif choice == "💰 المصروفات":
     try:
         from views import expenses
         expenses.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة المصروفات (views/expenses.py) غير موجود.")
-
-# === الإضافات الجديدة الخاصة بالموجه ===
-
+        st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
 elif choice == "👥 جهات التعامل":
     try:
         from views import parties
         parties.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة جهات التعامل (views/parties.py) غير موجود.")
-
+        st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
 elif choice == "📥 المشتريات":
     try:
         from views import purchases
         purchases.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة المشتريات (views/purchases.py) غير موجود.")
-
-elif choice == "⭐ لوحة المفضلة (1-20)":
-    st.info("⭐ شاشة المفضلة قيد التجهيز.")
-
-elif choice == "📦 إدارة المخزن والفروع":
-    st.info("📦 شاشة إدارة المخزن والفروع قيد التجهيز.")
-
-elif choice == "🔄 تزويد الفروع والأرشيف":
-    st.info("🔄 شاشة تزويد الفروع قيد التجهيز.")
-
-elif choice == "⚙️ الجرد والتصفير السنوي":
-    st.info("⚙️ شاشة الجرد قيد التجهيز.")
-
-elif choice == "🥜 التحميص والخلط":
-    st.info("🥜 شاشة التحميص قيد التجهيز.")
-
-elif choice == "📊 التقارير والأرباح":
-    st.info("📊 شاشة التقارير قيد التجهيز.")
+        st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
+else:
+    st.info(f"شاشة {choice} قيد التجهيز.")
