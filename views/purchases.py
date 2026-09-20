@@ -8,7 +8,11 @@ def show_page():
     
     conn = get_db_connection()
     b_dict = {b["branch_name"]: b["id"] for b in conn.execute("SELECT id, branch_name FROM branches").fetchall()}
-    s_dict = {s["supplier_name"]: s["id"] for s in conn.execute("SELECT id, supplier_name FROM suppliers").fetchall()}
+    
+    # جلب بيانات الموردين كاملة لمعرفة أرصدتهم ومديونياتهم
+    suppliers_data = conn.execute("SELECT id, supplier_name, balance FROM suppliers").fetchall()
+    s_dict = {s["supplier_name"]: s["id"] for s in suppliers_data}
+    s_balance_dict = {s["supplier_name"]: float(s["balance"]) for s in suppliers_data}
     
     if not b_dict or not s_dict:
         st.warning("⚠️ لا يمكن إدخال مشتريات. يجب التأكد من وجود (فرع/مخزن) و(مورد) واحد على الأقل في النظام.")
@@ -20,6 +24,15 @@ def show_page():
     ps = col_h2.selectbox("🚛 المورد (التاجر):", list(s_dict.keys()))
     inv_num = col_h3.text_input("🧾 رقم فاتورة الشراء:")
     ptype = col_h4.selectbox("💳 طريقة الدفع:", ["كاش (مدفوعة بالكامل)", "آجل (تسجل على حساب المورد)"])
+
+    # 🌟 عرض رصيد المورد الحالي (الديون) فور اختياره بشفافية تامة
+    current_supplier_balance = s_balance_dict.get(ps, 0.0)
+    if current_supplier_balance > 0:
+        st.markdown(f"<div style='background-color: #fee2e2; padding: 10px; border-radius: 8px; color: #991b1b; font-weight: bold; margin-bottom: 15px;'>⚠️ تنبيه مالي: إجمالي الدين الحالي المستحق لهذا المورد (في ذمة المحل) = {current_supplier_balance:,.2f} د.ل</div>", unsafe_allow_html=True)
+    elif current_supplier_balance < 0:
+        st.markdown(f"<div style='background-color: #d1fae5; padding: 10px; border-radius: 8px; color: #065f46; font-weight: bold; margin-bottom: 15px;'>✅ رصيد لصالح المحل عند هذا المورد = {abs(current_supplier_balance):,.2f} د.ل</div>", unsafe_allow_html=True)
+    else:
+        st.markdown(f"<div style='background-color: #f1f5f9; padding: 10px; border-radius: 8px; color: #334155; font-weight: bold; margin-bottom: 15px;'>ℹ️ حساب المورد حالياً مسفّر (صفر د.ل)</div>", unsafe_allow_html=True)
 
     if "purch_cart" not in st.session_state: 
         st.session_state["purch_cart"] = []
@@ -68,7 +81,6 @@ def show_page():
                 det = []
                 
                 for pi in st.session_state["purch_cart"]:
-                    # معادلة متوسط التكلفة المحاسبية الدقيقة
                     old_r = cur_p.execute("SELECT quantity, avg_cost, buy_price FROM items WHERE id = ?", (pi['id'],)).fetchone()
                     old_q = float(old_r["quantity"])
                     old_avg = float(old_r["avg_cost"]) if float(old_r["avg_cost"]) > 0 else float(old_r["buy_price"])
