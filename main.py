@@ -87,9 +87,9 @@ def set_page(page_name):
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     if role in ["Admin", "General_Supervisor"]: return True
-    if role == "Cashier": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)", "🔄 تزويد الفروع والأرشيف"]
+    if role == "Cashier": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)", "🔄 تزويد الفروع والأرشيف", "💰 المصروفات والايرادات"]
     if role == "Viewer": return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
-    if role == "Branch_Supervisor": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف"]
+    if role == "Branch_Supervisor": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف", "💰 المصروفات والايرادات"]
     return False
 
 # --- بوابة الدخول ---
@@ -197,12 +197,12 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
         transfers.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة التزويد غير موجود.")
-elif choice == "💰 المصروفات":
+elif choice == "💰 المصروفات والايرادات":
     try:
         from views import expenses
         expenses.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
+        st.warning("⚠️ ملف شاشة المصروفات والإيرادات غير موجود.")
 elif choice == "📥 المشتريات والموردين":
     try:
         from views import purchases
