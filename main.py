@@ -179,9 +179,6 @@ elif choice == "📁 استيراد Excel":
         items_import.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة الاستيراد (views/items_import.py) غير موجود.")
-
-else:
-    st.info(f"🚧 الشاشة ({choice}) يتم العمل على تجهيزها برمجياً ضمن الخطة الجديدة.")
 elif choice == "💰 المصروفات":
     try:
         from views import expenses
