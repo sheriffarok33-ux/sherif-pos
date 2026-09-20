@@ -13,57 +13,63 @@ def get_current_shift_number():
     else:
         return 2  # وردية 2 (مسائي)
 
-# --- دالة التحقق من فواتير التزويد الواردة للفرع وتأكيد استلامها ---
+# --- دالة التحقق الإلزامي من فواتير التزويد الواردة للفرع وتأكيد استلامها ---
 def check_and_accept_incoming_transfers(b_id, branch_name):
     conn = get_db_connection()
-    # البحث عن عمليات التزويد الموجهة لهذا الفرع ولم يتم تأكيد استلامها بعد (status = معلقة أو قيد الانتظار)
     pending_transfers = conn.execute("""
         SELECT * FROM transfer_logs 
         WHERE to_branch_id = ? AND (status = 'معلقة' OR status IS NULL OR status = 'قيد الانتظار')
     """, (b_id,)).fetchall()
     
     if pending_transfers:
-        st.warning(f"🚨 تنبيه هام للكاشير: يوجد ({len(pending_transfers)}) عملية تزويد بضائع واردة إلى ({branch_name}) بانتظار المراجعة والقبول!")
+        st.warning(f"🚨 تنبيه هام جداً للكاشير: تم رصد ({len(pending_transfers)}) فاتورة تزويد بضائع جديدة مرسلة من المخزن الرئيسي إلى فرعك ({branch_name}). يجب مراجعتها وتأكيد الاستلام أولاً!")
         
         for tr in pending_transfers:
-            with st.expander(f"📦 تفاصيل بضاعة واردة برقم مرجعي #{tr['id']} بتاريخ ({tr['transfer_date']})"):
-                st.write(f"**تفاصيل الأصناف:** {tr['items_details']}")
-                if st.button(f"✅ قبول وتأكيد استلام التزويد #{tr['id']} وتحديث رصيد الفرع", key=f"accept_tr_{tr['id']}", type="primary"):
-                    try:
-                        # تحديث حالة التحويل إلى مكتملة
-                        conn.execute("UPDATE transfer_logs SET status = 'مكتملة' WHERE id = ?", (tr['id'],))
-                        
-                        # تحليل أصناف التحويل وإضافتها لمخزون الفرع الحالي
+            with st.expander(f"📦 تفاصيل فاتورة تزويد بضاعة برقم مرجعي #{tr['id']} بتاريخ ({tr['transfer_date']})", expanded=True):
+                st.write(f"**الأصناف والكميات الواردة:** {tr['items_details']}")
+                
+                cashier_name_input = st.text_input("أدخل اسمك الثلاثي (كاشير الفرع) لتأكيد الاستلام:", key=f"cashier_sign_{tr['id']}")
+                
+                if st.button(f"✅ تم الاستلام واعتماد التزويد #{tr['id']}", key=f"accept_tr_{tr['id']}", type="primary"):
+                    if cashier_name_input.strip():
                         try:
-                            items_list = json.loads(tr['items_details'])
-                            for itm in items_list:
-                                itm_name = itm.get("name")
-                                itm_qty = float(itm.get("qty", 0))
-                                
-                                # التحقق إذا كان الصنف موجوداً مسبقاً في مخزون الفرع لزيادة كميته، أو إضافته جديداً
-                                existing_item = conn.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (b_id, itm_name)).fetchone()
-                                if existing_item:
-                                    conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (itm_qty, existing_item["id"]))
-                                else:
-                                    # جلب بيانات الصنف من المخزن الرئيسي أو الفرع المصدر
-                                    src_item = conn.execute("SELECT * FROM items WHERE item_name = ? LIMIT 1", (itm_name,)).fetchone()
-                                    buy_p = float(src_item["buy_price"]) if src_item else 0.0
-                                    sale_p = float(src_item["sale_price"]) if src_item else 0.0
-                                    code = src_item["item_code"] if src_item else "TR-CODE"
+                            # تحديث الحالة إلى مكتملة ومستلمة
+                            conn.execute("""
+                                UPDATE transfer_logs 
+                                SET status = ? 
+                                WHERE id = ?
+                            """, (f"مكتملة ومستلمة بواسطة الكاشير: {cashier_name_input.strip()}", tr['id']))
+                            
+                            # تحديث مخزون الأصناف في الفرع تلقائياً
+                            try:
+                                items_list = json.loads(tr['items_details'])
+                                for itm in items_list:
+                                    it_name = itm.get("name")
+                                    it_qty = float(itm.get("qty", 0))
                                     
-                                    conn.execute("""
-                                        INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price)
-                                        VALUES (?, ?, ?, ?, ?, ?)
-                                    """, (b_id, code, itm_name, itm_qty, buy_p, sale_p))
-                        except Exception as parse_err:
-                            # في حال كانت تفاصيل الأصناف نصية وليست JSON
-                            st.info("ملاحظة: تمت معالجة استلام البضائع وتحديث الحالة بنجاح.")
+                                    ex_item = conn.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (b_id, it_name)).fetchone()
+                                    if ex_item:
+                                        conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (it_qty, ex_item["id"]))
+                                    else:
+                                        src_it = conn.execute("SELECT * FROM items WHERE item_name = ? LIMIT 1", (it_name,)).fetchone()
+                                        b_p = float(src_it["buy_price"]) if src_it else 0.0
+                                        s_p = float(src_it["sale_price"]) if src_it else 0.0
+                                        c_code = src_it["item_code"] if src_it else "TR-CODE"
+                                        
+                                        conn.execute("""
+                                            INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price)
+                                            VALUES (?, ?, ?, ?, ?, ?)
+                                        """, (b_id, c_code, it_name, it_qty, b_p, s_p))
+                            except Exception:
+                                pass
 
-                        conn.commit()
-                        st.success("✅ تم قبول بضائع التزويد بنجاح وتحديث أرصدة المخزون للفرع!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"⚠️ حدث خطأ أثناء قبول البضاعة: {e}")
+                            conn.commit()
+                            st.success("✅ تم تأكيد استلام البضاعة بنجاح وإرسال إشعار الاعتماد للمخزن الرئيسي!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"⚠️ خطأ أثناء اعتماد الاستلام: {e}")
+                    else:
+                        st.error("⚠️ يرجى إدخال اسم الكاشير المستلم أولاً.")
     conn.close()
 
 # --- دالة شاشة إتمام الدفع وإصدار الفاتورة ---
@@ -209,7 +215,7 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
-    # 🌟 استدعاء دالة فحص وتأكيد تزويد البضائع الواردة للفرع
+    # 🌟 تفعيل تنبيه واستلام فواتير التزويد الواردة إجبارياً للفرع
     check_and_accept_incoming_transfers(b_id, branch_name_display)
 
     today_date = datetime.now().strftime("%Y-%m-%d")
@@ -254,10 +260,11 @@ def show_page():
     if "pos_active_view" not in st.session_state: st.session_state["pos_active_view"] = "الكاشير السريع"
         
     st.markdown("---")
+    # 🌟 التبويبات المتاحة للكاشير: البيع السريع + البحث اليدوي + أرشيف فواتير التزويد الخاصة بفرعه وإعادة طباعة الفواتير (بدون أي اثر لـ X و Z)
     t_col1, t_col2, t_col3 = st.columns(3)
     if t_col1.button("🛒 الكاشير السريع والباركود", use_container_width=True): st.session_state["pos_active_view"] = "الكاشير السريع"
     if t_col2.button("🔍 البحث اليدوي والصنف الحر", use_container_width=True): st.session_state["pos_active_view"] = "البحث اليدوي"
-    if t_col3.button("📋 الأرشيف وإعادة الطباعة", use_container_width=True): st.session_state["pos_active_view"] = "الأرشيف"
+    if t_col3.button("📋 أرشيف فواتير فرعي وإعادة الطباعة", use_container_width=True): st.session_state["pos_active_view"] = "أرشيف الفرع"
     st.markdown("---")
 
     # ==========================================
@@ -363,11 +370,24 @@ def show_page():
             else: st.warning("يرجى إدخال سعر صحيح للصنف الحر.")
 
     # ==========================================
-    # 3. الأرشيف وإعادة الطباعة (مخصص للفواتير فقط بدون X أو Z)
+    # 3. أرشيف فواتير الفرع وإعادة طباعة الفواتير
     # ==========================================
-    elif st.session_state["pos_active_view"] == "الأرشيف":
-        st.subheader("📋 أرشيف وإعادة طباعة الفواتير")
-        recent_invs = conn.execute("SELECT id, customer_name, total_amount, created_at FROM invoices WHERE branch_id = ? ORDER BY id DESC LIMIT 100", (b_id,)).fetchall()
+    elif st.session_state["pos_active_view"] == "أرشيف الفرع":
+        st.subheader("📋 أرشيف فواتير تزويد البضائع الواردة لفرعك")
+        
+        branch_transfers = conn.execute("""
+            SELECT id AS 'رقم التزويد', transfer_type AS 'نوع الحركة', items_details AS 'تفاصيل الأصناف', status AS 'حالة الاستلام', transfer_date AS 'التاريخ'
+            FROM transfer_logs WHERE to_branch_id = ? ORDER BY id DESC
+        """, (b_id,)).fetchall()
+        
+        if branch_transfers:
+            st.dataframe(pd.DataFrame(branch_transfers), use_container_width=True, hide_index=True)
+        else:
+            st.info("📭 لا توجد فواتير تزويد بضائع سابقة مسجلة لهذا الفرع.")
+
+        st.markdown("---")
+        st.subheader("🖨️ أرشيف وإعادة طباعة مبيعات الفرع")
+        recent_invs = conn.execute("SELECT id, customer_name, total_amount, created_at FROM invoices WHERE branch_id = ? ORDER BY id DESC LIMIT 50", (b_id,)).fetchall()
         
         if recent_invs:
             inv_dict = {f"فاتورة مرجعية #{r['id']} | الزبون: {r['customer_name']} | المبلغ: {r['total_amount']} د.ل | التاريخ: {r['created_at']}": r['id'] for r in recent_invs}
@@ -400,6 +420,6 @@ def show_page():
                     st.components.v1.html(html_reprint_content, height=350, scrolling=True)
                     st.download_button(label="📥 تحميل الفاتورة المسترجعة (HTML)", data=html_reprint_content.encode('utf-8'), file_name=f"Invoice_Reprint_{target_inv_id}.html", mime="text/html", use_container_width=True)
         else:
-            st.info("📭 لا توجد فواتير سابقة مؤرشفة لهذا الفرع.")
+            st.info("📭 لا توجد مبيعات مسجلة سابقة.")
 
     conn.close()
