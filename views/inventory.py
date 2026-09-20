@@ -35,17 +35,23 @@ def show_page():
 
     st.markdown("---")
 
-    # تقسيم شاشة المخزن إلى تبويبات شاملة مع دعم التصدير
-    tab_manage, tab_add, tab_excel, tab_transfer, tab_all = st.tabs([
-        f"📋 عرض وتعديل أرصدة ({selected_branch})",
-        "➕ إضافة صنف جديد (بالبار كود والسكانر)",
-        "📁 استيراد وتحديث عبر Excel",
-        "🔄 تحويل البضاعة بين الفروع",
-        "🌐 كشوف جرد ومتابعة كافة الفروع"
-    ])
+    # 🎛️ تحويل الأقسام إلى أزرار اختيار أفقية (Radio) منظمة وعصرية بدلاً من الـ Tabs التقليدية
+    selected_mode = st.radio(
+        "🎯 اختر القسم المطلوب:",
+        [
+            f"📋 عرض وتعديل أرصدة ({selected_branch})",
+            "➕ إضافة صنف جديد (بالبار كود والسكانر)",
+            "📁 استيراد وتحديث عبر Excel",
+            "🔄 تحويل البضاعة بين الفروع",
+            "🌐 كشوف الجرد ومتابعة كافة الفروع"
+        ],
+        horizontal=True
+    )
 
-    # 1. التبويب الأول: التعديل المباشر مع تصدير إكسيل
-    with tab_manage:
+    st.markdown("---")
+
+    # 1. قسم: عرض وتعديل الأرصدة
+    if selected_mode.startswith("📋"):
         st.subheader(f"📋 أصناف وأسعار فرع: ({selected_branch})")
         
         edit_scope = st.radio(
@@ -108,8 +114,8 @@ def show_page():
         else:
             st.info("لا توجد أصناف مسجلة في هذا الفرع.")
 
-    # 2. التبويب الثاني: إضافة صنف جديد
-    with tab_add:
+    # 2. قسم: إضافة صنف جديد
+    elif selected_mode.startswith("➕"):
         st.subheader("➕ إضافة صنف جديد عبر قارئ الباركود (السكانر)")
         
         scope = st.radio("النطاق:", [f"فرع {selected_branch} فقط", "تعميم لكافة الفروع والمخازن"], horizontal=True, key="add_scope_radio")
@@ -174,8 +180,8 @@ def show_page():
             st.session_state["scanner_code"] = ""
             st.rerun()
 
-    # 3. التبويب الثالث: استيراد إكسيل
-    with tab_excel:
+    # 3. قسم: استيراد إكسيل
+    elif selected_mode.startswith("📁"):
         st.subheader(f"📁 استيراد ملف الأصناف (Excel / CSV) لـ ({selected_branch})")
         st.markdown("> الأعمدة المطلوبة بالملف: `كود الصنف` | `اسم الصنف` | `سعر البيع` | `سعر الشراء` | `الكمية`")
         
@@ -216,8 +222,8 @@ def show_page():
             except Exception as ex:
                 st.error(f"خطأ في معالجة الملف: {ex}")
 
-    # 4. التبويب الرابع: التحويل بين الفروع
-    with tab_transfer:
+    # 4. قسم: التحويل بين الفروع
+    elif selected_mode.startswith("🔄"):
         st.subheader("🔄 تحويل البضاعة بين الفروع")
         col_f1, col_f2 = st.columns(2)
         with col_f1:
@@ -267,8 +273,8 @@ def show_page():
             else:
                 st.info("لا توجد أصناف في الفرع المصدر.")
 
-    # 5. التبويب الخامس: كشوف الجرد ومتابعة الفروع الفردية والشاملة مع تصدير Excel
-    with tab_all:
+    # 5. قسم: كشوف الجرد ومتابعة الفروع
+    elif selected_mode.startswith("🌐"):
         st.subheader("🌐 كشوف الجرد ومتابعة أرصدة الفروع والمخازن")
         
         report_mode = st.radio(
@@ -298,7 +304,6 @@ def show_page():
 
                 st.dataframe(branch_report_df, use_container_width=True, hide_index=True)
 
-                # زر تصدير إكسيل لكشف الجرد الخاص بالفرع
                 excel_rep = to_excel(branch_report_df)
                 st.download_button(
                     label=f"📥 تصدير كشف جرد ({sel_report_branch}) إلى Excel",
@@ -320,7 +325,6 @@ def show_page():
             if not all_df.empty:
                 st.dataframe(all_df, use_container_width=True, hide_index=True)
                 
-                # زر تصدير إكسيل لكافة الفروع
                 excel_all = to_excel(all_df)
                 st.download_button(
                     label="📥 تصدير كشف جرد كافة الفروع والمخازن إلى Excel",
