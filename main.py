@@ -145,7 +145,7 @@ st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجمو
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-# قائمة الشاشات المتاحة في النظام
+# قائمة الشاشات المتاحة في النظام (تم تحديثها لفصل الموردين عن المشتريات)
 DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
@@ -157,7 +157,8 @@ DEFAULT_MENUS = [
     "🔄 تزويد الفروع والأرشيف",
     "📁 استيراد Excel",
     "💰 المصروفات",
-    "📥 المشتريات والموردين",
+    "👥 جهات التعامل",
+    "📥 المشتريات",
     "⚙️ الجرد والتصفير السنوي",
     "🥜 التحميص والخلط",
     "📊 التقارير والأرباح"
@@ -165,7 +166,7 @@ DEFAULT_MENUS = [
 
 # 🛡️ تطبيق فلتر الصلاحيات على القائمة الجانبية
 for menu_name in DEFAULT_MENUS:
-    if check_user_permission(menu_name): # هذا السطر هو الذي يحمي النظام
+    if check_user_permission(menu_name):
         if st.sidebar.button(menu_name, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
             set_page(menu_name)
 
@@ -180,7 +181,6 @@ st.sidebar.text("ENG: SHERIF M. FAROK")
 # --- منطقة توجيه الشاشات (Router) الآمنة ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
-# 🛡️ طبقة حماية إضافية لمنع المستخدم من كتابة اسم الشاشة برمجياً
 if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
@@ -234,3 +234,37 @@ elif choice == "💰 المصروفات":
         expenses.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة المصروفات (views/expenses.py) غير موجود.")
+
+# === الإضافات الجديدة الخاصة بالموجه ===
+
+elif choice == "👥 جهات التعامل":
+    try:
+        from views import parties
+        parties.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة جهات التعامل (views/parties.py) غير موجود.")
+
+elif choice == "📥 المشتريات":
+    try:
+        from views import purchases
+        purchases.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة المشتريات (views/purchases.py) غير موجود.")
+
+elif choice == "⭐ لوحة المفضلة (1-20)":
+    st.info("⭐ شاشة المفضلة قيد التجهيز.")
+
+elif choice == "📦 إدارة المخزن والفروع":
+    st.info("📦 شاشة إدارة المخزن والفروع قيد التجهيز.")
+
+elif choice == "🔄 تزويد الفروع والأرشيف":
+    st.info("🔄 شاشة تزويد الفروع قيد التجهيز.")
+
+elif choice == "⚙️ الجرد والتصفير السنوي":
+    st.info("⚙️ شاشة الجرد قيد التجهيز.")
+
+elif choice == "🥜 التحميص والخلط":
+    st.info("🥜 شاشة التحميص قيد التجهيز.")
+
+elif choice == "📊 التقارير والأرباح":
+    st.info("📊 شاشة التقارير قيد التجهيز.")
