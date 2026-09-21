@@ -13,6 +13,38 @@ def get_current_shift_number():
     else:
         return 2  # وردية 2 (مسائي)
 
+# --- دالة منبثقة لتأكيد استلام بضاعة المخزن الرئيسي للفرع ---
+@st.dialog("🚨 تنبيه هام: توجد بضاعة جديدة مُرسلة لفرعك")
+def pending_transfer_dialog(pending_transfers, branch_name):
+    st.warning(f"📦 تم رصد تحويلات بضاعة جديدة مُرسلة من المخزن الرئيسي إلى فرعك ({branch_name}). يرجى مراجعتها وتأكيد الاستلام:")
+    
+    for pt in pending_transfers:
+        st.markdown(f"""
+        <div style="background-color: #f1f5f9; padding: 12px; border-radius: 8px; border-right: 4px solid #0284c7; margin-bottom: 10px; color: #0f172a; direction: rtl; text-align: right;">
+            <p style="margin: 0;"><b>رقم الحركة:</b> #{pt['id']} | <b>التاريخ:</b> {pt['transfer_date']}</p>
+            <p style="margin: 5px 0 0 0;"><b>التفاصيل والأصناف:</b> {pt['items_details']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    cashier_confirm_name = st.text_input("أدخل اسمك الثلاثي (الكاشير المستلم):", value=st.session_state.get("username", ""))
+    
+    if st.button("✅ تأكيد استلام البضاعة (تم الاستلام)", type="primary", use_container_width=True):
+        if cashier_confirm_name.strip():
+            conn = get_db_connection()
+            cur_pt = conn.cursor()
+            for pt in pending_transfers:
+                cur_pt.execute("""
+                    UPDATE transfer_logs 
+                    SET status = ? 
+                    WHERE id = ?
+                """, (f"مكتملة ومستلمة بواسطة الكاشير: {cashier_confirm_name.strip()}", pt['id']))
+            conn.commit()
+            conn.close()
+            st.success("✅ تم تأكيد الاستلام بنجاح، وإرسال إشعار الاعتماد للمخزن الرئيسي!")
+            st.rerun()
+        else:
+            st.error("⚠️ يجب إدخال اسم الكاشير المستلم لتأكيد الاستلام.")
+
 # --- دالة شاشة إتمام الدفع وإصدار الفاتورة ---
 @st.dialog("💳 إتمام الدفع وإصدار الفاتورة")
 def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shift_num, daily_inv_num):
@@ -34,7 +66,6 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
     
     selected_account_id = None
     if pay_method in ["آجل (على الحساب)", "خصم من حساب (مورد / زبون جملة)"]:
-        # 🌟 التعديل الجوهري: جلب الزبائن الآجلين من جدول customers لتظهر للكاشير في القائمة
         accounts = conn.execute("SELECT id, customer_name, balance FROM customers").fetchall()
         if accounts:
             acc_opts = {f"{a['customer_name']} (الرصيد/المديونية: {a['balance']} د.ل)": a["id"] for a in accounts}
@@ -65,7 +96,6 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
                 if c_item.get("id") != 99999:
                     conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
 
-            # 🌟 تحديث رصيد الزبون الآجل وإجمالي مشترياته عند اختيار الدفع الآجل
             if selected_account_id and pay_method in ["آجل (على الحساب)", "خصم من حساب (مورد / زبون جملة)"]:
                 conn.execute("UPDATE customers SET balance = balance + ?, total_purchases = total_purchases + ? WHERE id = ?", (final_tot, final_tot, selected_account_id))
 
@@ -157,6 +187,12 @@ def show_page():
         branch_name_display = b_row["branch_name"] if b_row else "الفرع الحالي"
         
     st.session_state["branch_id"] = b_id
+
+    # 🚨 فحص بضاعة التزويد المعلقة وإجبار الكاشير على تأكيد الاستلام
+    if b_id and b_id != "ALL":
+        pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE to_branch_id = ? AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id,)).fetchall()
+        if pending_logs:
+            pending_transfer_dialog(pending_logs, branch_name_display)
 
     today_date = datetime.now().strftime("%Y-%m-%d")
     branch_inv_count = conn.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date)).fetchone()[0]
