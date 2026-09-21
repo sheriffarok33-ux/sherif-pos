@@ -1,7 +1,12 @@
-import sqlite3
 import os
+import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
-DB_NAME = "abu_zaid_new_system.db"
+# مفتاح التبديل: "sqlite" أثناء التطوير المحلي، أو "postgres" عند النشر السحابي
+DB_TYPE = os.getenv("DB_TYPE", "sqlite") 
+SQLITE_DB_NAME = "abu_zaid_new_system.db"
+POSTGRES_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/dbname")
 
 DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة",
@@ -21,14 +26,21 @@ DEFAULT_MENUS = [
 ]
 
 def get_db_connection():
-    """دالة لإنشاء اتصال بقاعدة البيانات وإرجاعه"""
-    conn = sqlite3.connect(DB_NAME, timeout=10)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.row_factory = sqlite3.Row
-    return conn
+    """دالة لإنشاء اتصال بقاعدة البيانات وإرجاعه (تدعم SQLite و PostgreSQL)"""
+    if DB_TYPE == "postgres":
+        conn = psycopg2.connect(POSTGRES_URL, cursor_factory=RealDictCursor)
+        return conn
+    else:
+        conn = sqlite3.connect(SQLITE_DB_NAME, timeout=10)
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.row_factory = sqlite3.Row
+        return conn
 
 def reindex_table(conn, table_name):
-    """إعادة ترقيم الـ ID تلقائياً ليكون متسلسلاً 1، 2، 3... بدون فجوات بعد الحذف"""
+    """إعادة ترقيم الـ ID تلقائياً ليكون متسلسلاً 1، 2، 3... بدون فجوات بعد الحذف (مخصص لـ SQLite المحلي)"""
+    if DB_TYPE == "postgres":
+        return # السيرفر السحابي يدير التسلسل تلقائياً عبر SERIAL
+    
     cursor = conn.cursor()
     try:
         if table_name == "branches":
@@ -50,97 +62,168 @@ def reindex_table(conn, table_name):
         print(f"Error re-indexing {table_name}: {e}")
 
 def initialize_database():
-    """دالة لإنشاء الجداول الأساسية للنظام إذا لم تكن موجودة"""
+    """دالة لإنشاء الجداول الأساسية للنظام وإدخال البيانات الافتراضية"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    cursor.execute("CREATE TABLE IF NOT EXISTS branches (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_name TEXT UNIQUE NOT NULL, branch_type TEXT DEFAULT 'فرع')")
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            phone TEXT,
-            password TEXT NOT NULL,
-            role TEXT NOT NULL,
-            branch_id INTEGER,
-            allowed_branches TEXT DEFAULT 'ALL',
-            custom_permissions TEXT DEFAULT '',
-            is_active INTEGER DEFAULT 1,
-            FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL
-        )
-    """)
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            branch_id INTEGER,
-            item_code TEXT,
-            item_name TEXT NOT NULL,
-            quantity REAL DEFAULT 0.0,
-            buy_price REAL DEFAULT 0.0,
-            sale_price REAL NOT NULL,
-            avg_cost REAL DEFAULT 0.0,
-            expiry_date TEXT DEFAULT '',
-            no_expiry INTEGER DEFAULT 0,
-            favorite_rank INTEGER DEFAULT 0,
-            FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
-        )
-    """)
-    
-    cursor.execute("CREATE TABLE IF NOT EXISTS suppliers (id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_name TEXT UNIQUE NOT NULL, phone TEXT, balance REAL DEFAULT 0.0)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT UNIQUE NOT NULL, total_purchases REAL DEFAULT 0.0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS purchases (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            branch_id INTEGER,
-            supplier_id INTEGER,
-            supplier_name TEXT,
-            invoice_number TEXT,
-            total_cost REAL,
-            payment_type TEXT DEFAULT 'كاش',
-            items_details TEXT,
-            invoice_date TEXT,
-            FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
-        )
-    """)
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS transfer_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            from_branch_id INTEGER,
-            to_branch_id INTEGER,
-            transfer_type TEXT,
-            items_details TEXT,
-            status TEXT DEFAULT 'مكتملة',
-            transfer_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    cursor.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, amount REAL NOT NULL, description TEXT NOT NULL, is_general_store INTEGER DEFAULT 0, expense_date TEXT)")
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS invoices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            branch_id INTEGER,
-            user_id INTEGER,
-            customer_name TEXT DEFAULT 'زبون نقدي',
-            customer_phone TEXT DEFAULT '',
-            total_amount REAL,
-            payment_method TEXT DEFAULT 'كاش',
-            notes TEXT,
-            shift_status TEXT DEFAULT 'open',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    cursor.execute("CREATE TABLE IF NOT EXISTS negative_sales_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role TEXT PRIMARY KEY, allowed_menus TEXT)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS custom_labels (original_name TEXT PRIMARY KEY, custom_name TEXT NOT NULL)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS activity_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    if DB_TYPE == "postgres":
+        # --- جداول PostgreSQL السحابية ---
+        cursor.execute("CREATE TABLE IF NOT EXISTS branches (id SERIAL PRIMARY KEY, branch_name VARCHAR(255) UNIQUE NOT NULL, branch_type VARCHAR(100) DEFAULT 'فرع');")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) NOT NULL,
+                phone VARCHAR(100),
+                password VARCHAR(255) NOT NULL,
+                role VARCHAR(100) NOT NULL,
+                branch_id INT REFERENCES branches(id) ON DELETE SET NULL,
+                allowed_branches TEXT DEFAULT 'ALL',
+                custom_permissions TEXT DEFAULT '',
+                is_active INT DEFAULT 1
+            );
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS items (
+                id SERIAL PRIMARY KEY,
+                branch_id INT REFERENCES branches(id) ON DELETE CASCADE,
+                item_code VARCHAR(255),
+                item_name VARCHAR(255) NOT NULL,
+                quantity FLOAT DEFAULT 0.0,
+                buy_price FLOAT DEFAULT 0.0,
+                sale_price FLOAT NOT NULL,
+                avg_cost FLOAT DEFAULT 0.0,
+                expiry_date VARCHAR(50) DEFAULT '',
+                no_expiry INT DEFAULT 0,
+                favorite_rank INT DEFAULT 0
+            );
+        """)
+        cursor.execute("CREATE TABLE IF NOT EXISTS suppliers (id SERIAL PRIMARY KEY, supplier_name VARCHAR(255) UNIQUE NOT NULL, phone VARCHAR(100), balance FLOAT DEFAULT 0.0);")
+        cursor.execute("CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, customer_name VARCHAR(255) NOT NULL, phone VARCHAR(100) UNIQUE NOT NULL, total_purchases FLOAT DEFAULT 0.0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS purchases (
+                id SERIAL PRIMARY KEY,
+                branch_id INT REFERENCES branches(id) ON DELETE CASCADE,
+                supplier_id INT,
+                supplier_name VARCHAR(255),
+                invoice_number VARCHAR(255),
+                total_cost FLOAT,
+                payment_type VARCHAR(100) DEFAULT 'كاش',
+                items_details TEXT,
+                invoice_date VARCHAR(50)
+            );
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transfer_logs (
+                id SERIAL PRIMARY KEY,
+                from_branch_id INT,
+                to_branch_id INT,
+                transfer_type VARCHAR(100),
+                items_details TEXT,
+                status VARCHAR(100) DEFAULT 'مكتملة',
+                transfer_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute("CREATE TABLE IF NOT EXISTS expenses (id SERIAL PRIMARY KEY, branch_id INT, amount FLOAT NOT NULL, description TEXT NOT NULL, is_general_store INT DEFAULT 0, expense_date VARCHAR(50));")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS invoices (
+                id SERIAL PRIMARY KEY,
+                branch_id INT,
+                user_id INT,
+                customer_name VARCHAR(255) DEFAULT 'زبون نقدي',
+                customer_phone VARCHAR(100) DEFAULT '',
+                total_amount FLOAT,
+                payment_method VARCHAR(100) DEFAULT 'كاش',
+                notes TEXT,
+                shift_status VARCHAR(50) DEFAULT 'open',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute("CREATE TABLE IF NOT EXISTS negative_sales_logs (id SERIAL PRIMARY KEY, branch_id INT, user_id INT, item_name VARCHAR(255), sale_qty FLOAT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
+        cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role VARCHAR(100) PRIMARY KEY, allowed_menus TEXT);")
+        cursor.execute("CREATE TABLE IF NOT EXISTS custom_labels (original_name VARCHAR(255) PRIMARY KEY, custom_name VARCHAR(255) NOT NULL);")
+        cursor.execute("CREATE TABLE IF NOT EXISTS activity_logs (id SERIAL PRIMARY KEY, user_id INT, action TEXT, details TEXT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
 
-    # إدخال البيانات الأساسية (الصلاحيات)
+    else:
+        # --- جداول SQLite المحلية (الوضع الحالي للتطوير) ---
+        cursor.execute("CREATE TABLE IF NOT EXISTS branches (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_name TEXT UNIQUE NOT NULL, branch_type TEXT DEFAULT 'فرع')")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                phone TEXT,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL,
+                branch_id INTEGER,
+                allowed_branches TEXT DEFAULT 'ALL',
+                custom_permissions TEXT DEFAULT '',
+                is_active INTEGER DEFAULT 1,
+                FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id INTEGER,
+                item_code TEXT,
+                item_name TEXT NOT NULL,
+                quantity REAL DEFAULT 0.0,
+                buy_price REAL DEFAULT 0.0,
+                sale_price REAL NOT NULL,
+                avg_cost REAL DEFAULT 0.0,
+                expiry_date TEXT DEFAULT '',
+                no_expiry INTEGER DEFAULT 0,
+                favorite_rank INTEGER DEFAULT 0,
+                FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("CREATE TABLE IF NOT EXISTS suppliers (id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_name TEXT UNIQUE NOT NULL, phone TEXT, balance REAL DEFAULT 0.0)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT UNIQUE NOT NULL, total_purchases REAL DEFAULT 0.0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS purchases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id INTEGER,
+                supplier_id INTEGER,
+                supplier_name TEXT,
+                invoice_number TEXT,
+                total_cost REAL,
+                payment_type TEXT DEFAULT 'كاش',
+                items_details TEXT,
+                invoice_date TEXT,
+                FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transfer_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_branch_id INTEGER,
+                to_branch_id INTEGER,
+                transfer_type TEXT,
+                items_details TEXT,
+                status TEXT DEFAULT 'مكتملة',
+                transfer_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, amount REAL NOT NULL, description TEXT NOT NULL, is_general_store INTEGER DEFAULT 0, expense_date TEXT)")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS invoices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id INTEGER,
+                user_id INTEGER,
+                customer_name TEXT DEFAULT 'زبون نقدي',
+                customer_phone TEXT DEFAULT '',
+                total_amount REAL,
+                payment_method TEXT DEFAULT 'كاش',
+                notes TEXT,
+                shift_status TEXT DEFAULT 'open',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("CREATE TABLE IF NOT EXISTS negative_sales_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role TEXT PRIMARY KEY, allowed_menus TEXT)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS custom_labels (original_name TEXT PRIMARY KEY, custom_name TEXT NOT NULL)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS activity_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+
+    # إدخال البيانات الأساسية والصلاحيات
     try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(DEFAULT_MENUS),))
     except: pass
     try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
@@ -165,4 +248,4 @@ def initialize_database():
 
 if __name__ == "__main__":
     initialize_database()
-    print("✅ تم إنشاء قاعدة البيانات والجداول بنجاح!")
+    print("✅ تم إنشاء قاعدة البيانات والجداول بنجاح مع دعم Hybrid (SQLite & PostgreSQL)!")
