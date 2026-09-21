@@ -9,13 +9,40 @@ def show_page():
     conn = get_db_connection()
     b_dict = {b["branch_name"]: b["id"] for b in conn.execute("SELECT id, branch_name FROM branches").fetchall()}
     
-    # جلب بيانات الموردين كاملة لمعرفة أرصدتهم ومديونياتهم
+    # 🌟 زر سريع لإضافة مورد جديد مباشرة داخل شاشة المشتريات لكي لا يضطر المستخدم للخروج منها
+    with st.expander("➕ إضافة مورد (تاجر) جديد سريعاً"):
+        with st.form("quick_add_supplier_form_in_purchases", clear_on_submit=True):
+            col_q1, col_q2 = st.columns(2)
+            new_sup_name = col_q1.text_input("اسم المورد / الشركة الجديد:")
+            new_sup_phone = col_q2.text_input("رقم الهاتف:")
+            
+            if st.form_submit_button("💾 حفظ المورد الجديد", type="primary"):
+                if new_sup_name.strip():
+                    try:
+                        conn.execute("INSERT INTO suppliers (supplier_name, phone, balance) VALUES (?, ?, 0.0)", 
+                                     (new_sup_name.strip(), new_sup_phone.strip()))
+                        conn.commit()
+                        st.success(f"✅ تمت إضافة المورد ({new_sup_name}) بنجاح!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error("⚠️ حدث خطأ، ربما اسم المورد موجود مسبقاً.")
+                else:
+                    st.warning("⚠️ يرجى إدخال اسم المورد على الأقل.")
+
+    st.markdown("---")
+
+    # جلب بيانات الموردين بعد التحديث
     suppliers_data = conn.execute("SELECT id, supplier_name, balance FROM suppliers").fetchall()
     s_dict = {s["supplier_name"]: s["id"] for s in suppliers_data}
     s_balance_dict = {s["supplier_name"]: float(s["balance"]) for s in suppliers_data}
     
-    if not b_dict or not s_dict:
-        st.warning("⚠️ لا يمكن إدخال مشتريات. يجب التأكد من وجود (فرع/مخزن) و(مورد) واحد على الأقل في النظام.")
+    if not b_dict:
+        st.warning("⚠️ لا يمكن إدخال مشتريات. يرجى التأكد من وجود فرع أو مخزن واحد على الأقل في النظام.")
+        conn.close()
+        return
+
+    if not s_dict:
+        st.warning("⚠️ لا يوجد أي مورد مسجل في النظام. يرجى استخدام زر الإضافة بالأعلى لإضافة مورد جديد.")
         conn.close()
         return
 
@@ -25,7 +52,7 @@ def show_page():
     inv_num = col_h3.text_input("🧾 رقم فاتورة الشراء:")
     ptype = col_h4.selectbox("💳 طريقة الدفع:", ["كاش (مدفوعة بالكامل)", "آجل (تسجل على حساب المورد)"])
 
-    # 🌟 عرض رصيد المورد الحالي (الديون) فور اختياره بشفافية تامة
+    # عرض رصيد المورد الحالي (الديون)
     current_supplier_balance = s_balance_dict.get(ps, 0.0)
     if current_supplier_balance > 0:
         st.markdown(f"<div style='background-color: #fee2e2; padding: 10px; border-radius: 8px; color: #991b1b; font-weight: bold; margin-bottom: 15px;'>⚠️ تنبيه مالي: إجمالي الدين الحالي المستحق لهذا المورد (في ذمة المحل) = {current_supplier_balance:,.2f} د.ل</div>", unsafe_allow_html=True)
@@ -39,9 +66,7 @@ def show_page():
 
     st.markdown("---")
     
-    # ==========================================
     # إدخال أصناف الفاتورة
-    # ==========================================
     db_items = conn.execute("SELECT id, item_code, item_name, buy_price FROM items WHERE branch_id = ?", (b_dict[pb],)).fetchall()
     i_opts = {f"[{i['item_code']}] {i['item_name']}": i for i in db_items} if db_items else {}
     
@@ -61,9 +86,7 @@ def show_page():
     else:
         st.info(f"لا توجد أصناف معرفة في {pb}. يرجى تعريف الأصناف في المخزن أولاً.")
 
-    # ==========================================
     # سلة المشتريات واعتماد الفاتورة
-    # ==========================================
     if st.session_state["purch_cart"]:
         st.markdown("### 🛒 محتويات فاتورة الشراء الحالية")
         cart_df = pd.DataFrame(st.session_state["purch_cart"]).rename(columns={"code": "الكود", "name": "الصنف", "qty": "الكمية", "price": "سعر الوحدة", "total": "الإجمالي"})
@@ -94,11 +117,9 @@ def show_page():
                     cur_p.execute("UPDATE items SET quantity = quantity + ?, buy_price = ?, avg_cost = ? WHERE id = ?", (pi['qty'], pi['price'], new_avg_cost, pi['id']))
                     det.append(f"{pi['name']} ({pi['qty']} كجم)")
                 
-                # حفظ الفاتورة في السجل
                 cur_p.execute("INSERT INTO purchases (branch_id, supplier_id, supplier_name, invoice_number, total_cost, payment_type, items_details, invoice_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                               (b_dict[pb], sup_id, ps, inv_num.strip(), g_tot, ptype, " - ".join(det), datetime.now().strftime('%Y-%m-%d')))
                 
-                # إذا كان الدفع آجلاً، نزيد المديونية على المحل لصالح المورد
                 if ptype == "آجل (تسجل على حساب المورد)": 
                     cur_p.execute("UPDATE suppliers SET balance = balance + ? WHERE id = ?", (g_tot, sup_id))
                 
