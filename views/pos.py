@@ -157,43 +157,38 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
-    # 🚨 فحص بضاعة التزويد المعلقة بدقة لفرع الكاشير أو لأي فرع يتابعه
+    # 🌟 رسالة الترحيب وتأكيد استلام التزويد للكاشير مباشرة بدون الحاجة لدخول شاشات أخرى
     if b_id and b_id != "ALL":
         pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE (to_branch_id = ? OR to_branch_id IN (SELECT id FROM branches WHERE branch_name LIKE '%مصراتة%' OR id = ?)) AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id, b_id)).fetchall()
         if pending_logs:
             st.markdown(f"""
-                <div style="background-color: #fef2f2; padding: 18px; border-radius: 8px; border-right: 6px solid #dc2626; margin-bottom: 15px; color: #7f1d1d; direction: rtl; text-align: right;">
-                    <h3 style="margin-top:0; color:#dc2626;">🚨 تنبيه هام: توجد بضاعة جديدة مُرسلة لفرعك ({branch_name_display})</h3>
-                    <p style="font-size: 16px;">يجب تأكيد استلام البضاعة أولاً قبل فتح شاشة البيع ومتابعة العمل:</p>
+                <div style="background-color: #f0fdf4; padding: 20px; border-radius: 10px; border: 2px solid #22c55e; margin-bottom: 20px; color: #166534; direction: rtl; text-align: right;">
+                    <h3 style="margin-top:0; color:#16a34a;">👋 مرحباً بك يا {username}</h3>
+                    <p style="font-size: 17px; font-weight: bold;">📦 لقد تم تزويد فرعك ({branch_name_display}) بفاتورة بضاعة جديدة.</p>
             """, unsafe_allow_html=True)
             
             for pt in pending_logs:
                 st.markdown(f"""
-                <div style="background-color: #ffffff; padding: 12px; border-radius: 6px; border: 1px solid #fecaca; margin-bottom: 8px; color: #1e293b; direction: rtl; text-align: right;">
+                <div style="background-color: #ffffff; padding: 12px; border-radius: 6px; border: 1px solid #bbf7d0; margin-bottom: 10px; color: #1e293b; direction: rtl; text-align: right;">
                     <p style="margin: 0; font-size: 15px;"><b>رقم الحركة:</b> #{pt['id']} | <b>التاريخ:</b> {pt['transfer_date']}</p>
-                    <p style="margin: 5px 0 0 0; font-size: 15px;"><b>التفاصيل والأصناف:</b> {pt['items_details']}</p>
+                    <p style="margin: 5px 0 0 0; font-size: 15px;"><b>الأصناف والكميات الواردة:</b> {pt['items_details']}</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
             st.markdown('</div>', unsafe_allow_html=True)
             
-            cashier_confirm_name = st.text_input("أدخل اسمك الثلاثي (الكاشير المستلم لتأكيد الاستلام):", value=username)
-            
-            if st.button("✅ تأكيد استلام البضاعة (تم الاستلام ومتابعة العمل)", type="primary", use_container_width=True):
-                if cashier_confirm_name.strip():
-                    cur_pt = conn.cursor()
-                    for pt in pending_logs:
-                        cur_pt.execute("""
-                            UPDATE transfer_logs 
-                            SET status = ? 
-                            WHERE id = ?
-                        """, (f"مكتملة ومستلمة بواسطة الكاشير: {cashier_confirm_name.strip()}", pt['id']))
-                    conn.commit()
-                    conn.close()
-                    st.success("✅ تم تأكيد الاستلام بنجاح، وفتح شاشة البيع!")
-                    st.rerun()
-                else:
-                    st.error("⚠️ يجب إدخال اسم الكاشير المستلم لتأكيد الاستلام.")
+            if st.button("✅ اضغط للموافقة وتأكيد استلام البضاعة وبدء العمل", type="primary", use_container_width=True):
+                cur_pt = conn.cursor()
+                for pt in pending_logs:
+                    cur_pt.execute("""
+                        UPDATE transfer_logs 
+                        SET status = ? 
+                        WHERE id = ?
+                    """, (f"مكتملة ومستلمة بواسطة الكاشير: {username}", pt['id']))
+                conn.commit()
+                conn.close()
+                st.success("✅ تم تأكيد استلام البضاعة بنجاح! جاري فتح نقطة البيع...")
+                st.rerun()
             
             conn.close()
             st.stop()
@@ -273,7 +268,6 @@ def show_page():
             if not st.session_state["cart"]:
                 st.info("السلة فارغة حالياً.")
             else:
-                # 🌟 إضافة ميزة حذف صنف محدد من السلة بدلاً من تفريغها بالكامل
                 for index, cart_item in enumerate(st.session_state["cart"]):
                     c_col1, c_col2, c_col3, c_col4, c_col5 = st.columns([2, 1, 1, 1, 0.6])
                     c_col1.write(f"🏷️ {cart_item['name']}")
