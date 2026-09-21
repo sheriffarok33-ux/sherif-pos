@@ -128,6 +128,11 @@ def show_page():
         .btn-green > button { background-color: #16a34a !important; }
         .btn-red > button { background-color: #dc2626 !important; }
         .rtl-container { direction: rtl !important; text-align: right !important; }
+        
+        /* 🌟 جعل النصوص داخل أزرار الواجهة باللون الأبيض الناصع دائماً */
+        div.stButton > button p, div.stButton > button span, div.stButton > button div {
+            color: #ffffff !important;
+        }
         </style>
     """, unsafe_allow_html=True)
 
