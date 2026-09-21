@@ -34,13 +34,14 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
     
     selected_account_id = None
     if pay_method in ["آجل (على الحساب)", "خصم من حساب (مورد / زبون جملة)"]:
-        accounts = conn.execute("SELECT id, supplier_name, balance FROM suppliers").fetchall()
+        # 🌟 التعديل الجوهري: جلب الزبائن الآجلين من جدول customers لتظهر للكاشير في القائمة
+        accounts = conn.execute("SELECT id, customer_name, balance FROM customers").fetchall()
         if accounts:
-            acc_opts = {f"{a['supplier_name']} (الرصيد الحالي: {a['balance']} د.ل)": a["id"] for a in accounts}
-            sel_acc_str = st.selectbox("📌 اختر الحساب لترحيل/خصم المبلغ:", list(acc_opts.keys()))
+            acc_opts = {f"{a['customer_name']} (الرصيد/المديونية: {a['balance']} د.ل)": a["id"] for a in accounts}
+            sel_acc_str = st.selectbox("📌 اختر الزبون الآجل لتسجيل المديونية عليه:", list(acc_opts.keys()))
             selected_account_id = acc_opts[sel_acc_str]
         else:
-            st.error("⚠️ لا توجد جهات تعامل مسجلة!")
+            st.error("⚠️ لا توجد زبائن آجلين مسجلين في النظام!")
             st.stop()
             
     paid_amount = st.number_input("المبلغ المدفوع (د.ل):", min_value=0.0, value=float(final_tot), step=0.5, format="%.2f")
@@ -64,8 +65,9 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
                 if c_item.get("id") != 99999:
                     conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
 
-            if selected_account_id:
-                conn.execute("UPDATE suppliers SET balance = balance - ? WHERE id = ?", (final_tot, selected_account_id))
+            # 🌟 تحديث رصيد الزبون الآجل وإجمالي مشترياته عند اختيار الدفع الآجل
+            if selected_account_id and pay_method in ["آجل (على الحساب)", "خصم من حساب (مورد / زبون جملة)"]:
+                conn.execute("UPDATE customers SET balance = balance + ?, total_purchases = total_purchases + ? WHERE id = ?", (final_tot, final_tot, selected_account_id))
 
             conn.commit()
             conn.close()
