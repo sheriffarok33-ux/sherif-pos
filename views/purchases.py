@@ -4,11 +4,10 @@ from datetime import datetime
 from database import get_db_connection
 
 def show_page():
-    # ستايل CSS لضمان اتجاه النصوص العربية بشكل صحيح ومنع أي تداخل
+    # ستايل CSS لضمان ضبط الاتجاهات ومنع تداخل الحروف والأيقونات
     st.markdown("""
         <style>
-        div.stExpander { direction: rtl; text-align: right; }
-        .arabic-title { direction: rtl; text-align: right; font-weight: bold; }
+        .arabic-container { direction: rtl; text-align: right; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -27,7 +26,7 @@ def show_page():
         except:
             pass
 
-    # 🌟 التبويبات السريعة لإضافة مورد أو زبون آجل بدون تداخل حروف
+    # 🌟 التبويبات السريعة لإضافة مورد أو زبون آجل بدون أي تداخل في الحروف
     st.markdown("### ⚙️ الإدارة السريعة لجهات التعامل")
     quick_tab1, quick_tab2 = st.tabs(["➕ إضافة مورد (تاجر) جديد", "➕ إضافة زبون آجل جديد"])
     
@@ -75,7 +74,7 @@ def show_page():
     s_dict = {s["supplier_name"]: s["id"] for s in suppliers_data}
     s_balance_dict = {s["supplier_name"]: float(s["balance"]) for s in suppliers_data}
 
-    # جلب بيانات الزبائن الآجلين وعرض أرصدتهم أيضاً لمن يرغب بمتابعتها
+    # جلب بيانات الزبائن الآجلين وعرض أرصدتهم
     customers_data = conn.execute("SELECT id, customer_name, balance FROM customers").fetchall()
     c_balance_dict = {c["customer_name"]: float(c["balance"]) for c in customers_data}
     
@@ -95,7 +94,7 @@ def show_page():
     inv_num = col_h3.text_input("🧾 رقم فاتورة الشراء:")
     ptype = col_h4.selectbox("💳 طريقة الدفع:", ["كاش (مدفوعة بالكامل)", "آجل (تسجل على حساب المورد)"])
 
-    # 🌟 التنبيه المالي الدقيق للمورد (اللي لينا واللي علينا)
+    # 🌟 التنبيه المالي الدقيق للمورد
     current_supplier_balance = s_balance_dict.get(ps, 0.0)
     if current_supplier_balance > 0:
         st.markdown(f"<div style='background-color: #fee2e2; padding: 10px; border-radius: 8px; color: #991b1b; font-weight: bold; margin-bottom: 10px;'>⚠️ تنبيه مالي (علينا للمورد): إجمالي الدين الحالي المستحق لهذا المورد = {current_supplier_balance:,.2f} د.ل</div>", unsafe_allow_html=True)
@@ -104,19 +103,23 @@ def show_page():
     else:
         st.markdown(f"<div style='background-color: #f1f5f9; padding: 10px; border-radius: 8px; color: #334155; font-weight: bold; margin-bottom: 10px;'>ℹ️ حساب المورد حالياً مسفّر (صفر د.ل) - لا يوجد له أو عليه شيء</div>", unsafe_allow_html=True)
 
-    # 🌟 إمكانية استعراض رصيد أي زبون آجل سريعاً من نفس الشاشة للمتابعة
+    # 🌟 استعراض مديونية الزبائن الآجلين (تم استبدال الـ Expander المسبب للمشكلة بقالب كارد منظم تماماً وبدون أي تداخل)
+    st.markdown("<div style='background-color: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 15px;'>", unsafe_allow_html=True)
+    st.markdown("<b>👁️ استعراض مديونية وأرصدة الزبائن الآجلين السريعة</b>", unsafe_allow_html=True)
     if customers_data:
-        with st.expander("👁️ استعراض مديونية وأرصدة الزبائن الآجلين السريعة"):
-            cust_names_list = [c["customer_name"] for c in customers_data]
-            selected_check_cust = st.selectbox("اختر الزبون لمعرفة رصيده الحالي:", cust_names_list)
-            if selected_check_cust:
-                c_bal = c_balance_dict.get(selected_check_cust, 0.0)
-                if c_bal > 0:
-                    st.markdown(f"<span style='color: #dc2626; font-weight: bold;'>⚠️ إجمالي الدين المستحق على الزبون ({selected_check_cust}) = {c_bal:,.2f} د.ل (لينا برة عند الزبون)</span>", unsafe_allow_html=True)
-                elif c_bal < 0:
-                    st.markdown(f"<span style='color: #16a34a; font-weight: bold;'>✅ رصيد متبقي لصالح الزبون ({selected_check_cust}) = {abs(c_bal):,.2f} د.ل (علينا له)</span>", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"<span style='color: #475569;'>ℹ️ حساب الزبون ({selected_check_cust}) مسفّر (صفر د.ل)</span>", unsafe_allow_html=True)
+        cust_names_list = [c["customer_name"] for c in customers_data]
+        selected_check_cust = st.selectbox("اختر الزبون لمعرفة رصيده الحالي:", cust_names_list, key="check_cust_balance_box")
+        if selected_check_cust:
+            c_bal = c_balance_dict.get(selected_check_cust, 0.0)
+            if c_bal > 0:
+                st.markdown(f"<span style='color: #dc2626; font-weight: bold;'>⚠️ إجمالي الدين المستحق على الزبون ({selected_check_cust}) = {c_bal:,.2f} د.ل (لينا برة عند الزبون)</span>", unsafe_allow_html=True)
+            elif c_bal < 0:
+                st.markdown(f"<span style='color: #16a34a; font-weight: bold;'>✅ رصيد متبقي لصالح الزبون ({selected_check_cust}) = {abs(c_bal):,.2f} د.ل (علينا له)</span>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<span style='color: #475569;'>ℹ️ حساب الزبون ({selected_check_cust}) مسفّر (صفر د.ل)</span>", unsafe_allow_html=True)
+    else:
+        st.info("لا توجد زبائن آجلين مسجلين حتى الآن.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
     if "purch_cart" not in st.session_state: 
         st.session_state["purch_cart"] = []
@@ -173,7 +176,7 @@ def show_page():
                     det.append(f"{pi['name']} ({pi['qty']} كجم)")
                 
                 cur_p.execute("INSERT INTO purchases (branch_id, supplier_id, supplier_name, invoice_number, total_cost, payment_type, items_details, invoice_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                              (b_dict[pb], sup_id, ps, inv_num.rtrip() if hasattr(inv_num, 'rtrip') else inv_num.strip(), g_tot, ptype, " - ".join(det), datetime.now().strftime('%Y-%m-%d')))
+                              (b_dict[pb], sup_id, ps, inv_num.strip(), g_tot, ptype, " - ".join(det), datetime.now().strftime('%Y-%m-%d')))
                 
                 if ptype == "آجل (تسجل على حساب المورد)": 
                     cur_p.execute("UPDATE suppliers SET balance = balance + ? WHERE id = ?", (g_tot, sup_id))
