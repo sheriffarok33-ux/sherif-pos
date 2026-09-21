@@ -156,7 +156,18 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
-    # 🚨 فحص بضاعة التزويد المعلقة وإيقاف الشاشة تماماً وإجبار الكاشير على تأكيد الاستلام
+    # 🛠️ [صندوق تشخيصي مؤقت] لنرى ما الذي يقرأه النظام من القاعدة بالضبط
+    with st.expander("🔍 صندوق تشخيص بضائع التزويد (للإدارة فقط)"):
+        st.write(f"رقم فرعك الحالي (b_id): {b_id}")
+        all_logs = conn.execute("SELECT * FROM transfer_logs").fetchall()
+        if all_logs:
+            st.write("جميع الحركات الموجودة في جدول transfer_logs:")
+            for l in all_logs:
+                st.write(dict(l))
+        else:
+            st.warning("جدول transfer_logs فارغ تماماً في قاعدة البيانات! لا توجد أي عملية تزويد مُرسلة أصلاً من المخزن الرئيسي.")
+
+    # 🚨 فحص بضاعة التزويد المعلقة
     if b_id and b_id != "ALL":
         pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE to_branch_id = ? AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id,)).fetchall()
         if pending_logs:
@@ -189,7 +200,7 @@ def show_page():
                     st.error("⚠️ يجب إدخال اسم الكاشير المستلم لتأكيد الاستلام.")
             
             conn.close()
-            st.stop()  # إيقاف التنفيذ بالكامل لمنع الكاشير من رؤية أي شيء قبل تأكيد الاستلام
+            st.stop()
 
     today_date = datetime.now().strftime("%Y-%m-%d")
     branch_inv_count = conn.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date)).fetchone()[0]
