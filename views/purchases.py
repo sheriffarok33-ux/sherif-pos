@@ -69,9 +69,15 @@ def show_page():
     st.markdown("### 🛒 إدخال فاتورة مشتريات البضاعة للمخازن")
 
     b_dict = {b["branch_name"]: b["id"] for b in conn.execute("SELECT id, branch_name FROM branches").fetchall()}
+    
+    # جلب بيانات الموردين
     suppliers_data = conn.execute("SELECT id, supplier_name, balance FROM suppliers").fetchall()
     s_dict = {s["supplier_name"]: s["id"] for s in suppliers_data}
     s_balance_dict = {s["supplier_name"]: float(s["balance"]) for s in suppliers_data}
+
+    # جلب بيانات الزبائن الآجلين وعرض أرصدتهم أيضاً لمن يرغب بمتابعتها
+    customers_data = conn.execute("SELECT id, customer_name, balance FROM customers").fetchall()
+    c_balance_dict = {c["customer_name"]: float(c["balance"]) for c in customers_data}
     
     if not b_dict:
         st.warning("⚠️ لا يمكن إدخال مشتريات. يرجى التأكد من وجود مخزن أو فرع واحد على الأقل.")
@@ -89,14 +95,28 @@ def show_page():
     inv_num = col_h3.text_input("🧾 رقم فاتورة الشراء:")
     ptype = col_h4.selectbox("💳 طريقة الدفع:", ["كاش (مدفوعة بالكامل)", "آجل (تسجل على حساب المورد)"])
 
-    # 🌟 التعديل المحاسبي الدقيق: توضيح ما لنا وما علينا للمورد
+    # 🌟 التنبيه المالي الدقيق للمورد (اللي لينا واللي علينا)
     current_supplier_balance = s_balance_dict.get(ps, 0.0)
     if current_supplier_balance > 0:
-        st.markdown(f"<div style='background-color: #fee2e2; padding: 10px; border-radius: 8px; color: #991b1b; font-weight: bold; margin-bottom: 15px;'>⚠️ تنبيه مالي (علينا للمورد): إجمالي الدين الحالي المستحق لهذا المورد = {current_supplier_balance:,.2f} د.ل</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background-color: #fee2e2; padding: 10px; border-radius: 8px; color: #991b1b; font-weight: bold; margin-bottom: 10px;'>⚠️ تنبيه مالي (علينا للمورد): إجمالي الدين الحالي المستحق لهذا المورد = {current_supplier_balance:,.2f} د.ل</div>", unsafe_allow_html=True)
     elif current_supplier_balance < 0:
-        st.markdown(f"<div style='background-color: #d1fae5; padding: 10px; border-radius: 8px; color: #065f46; font-weight: bold; margin-bottom: 15px;'>✅ تنبيه مالي (لنا برة عند المورد): رصيد لصالح المحل بقيمة = {abs(current_supplier_balance):,.2f} د.ل</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background-color: #d1fae5; padding: 10px; border-radius: 8px; color: #065f46; font-weight: bold; margin-bottom: 10px;'>✅ تنبيه مالي (لنا برة عند المورد): رصيد لصالح المحل بقيمة = {abs(current_supplier_balance):,.2f} د.ل</div>", unsafe_allow_html=True)
     else:
-        st.markdown(f"<div style='background-color: #f1f5f9; padding: 10px; border-radius: 8px; color: #334155; font-weight: bold; margin-bottom: 15px;'>ℹ️ حساب المورد حالياً مسفّر (صفر د.ل) - لا يوجد له أو عليه شيء</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background-color: #f1f5f9; padding: 10px; border-radius: 8px; color: #334155; font-weight: bold; margin-bottom: 10px;'>ℹ️ حساب المورد حالياً مسفّر (صفر د.ل) - لا يوجد له أو عليه شيء</div>", unsafe_allow_html=True)
+
+    # 🌟 إمكانية استعراض رصيد أي زبون آجل سريعاً من نفس الشاشة للمتابعة
+    if customers_data:
+        with st.expander("👁️ استعراض مديونية وأرصدة الزبائن الآجلين السريعة"):
+            cust_names_list = [c["customer_name"] for c in customers_data]
+            selected_check_cust = st.selectbox("اختر الزبون لمعرفة رصيده الحالي:", cust_names_list)
+            if selected_check_cust:
+                c_bal = c_balance_dict.get(selected_check_cust, 0.0)
+                if c_bal > 0:
+                    st.markdown(f"<span style='color: #dc2626; font-weight: bold;'>⚠️ إجمالي الدين المستحق على الزبون ({selected_check_cust}) = {c_bal:,.2f} د.ل (لينا برة عند الزبون)</span>", unsafe_allow_html=True)
+                elif c_bal < 0:
+                    st.markdown(f"<span style='color: #16a34a; font-weight: bold;'>✅ رصيد متبقي لصالح الزبون ({selected_check_cust}) = {abs(c_bal):,.2f} د.ل (علينا له)</span>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<span style='color: #475569;'>ℹ️ حساب الزبون ({selected_check_cust}) مسفّر (صفر د.ل)</span>", unsafe_allow_html=True)
 
     if "purch_cart" not in st.session_state: 
         st.session_state["purch_cart"] = []
@@ -153,7 +173,7 @@ def show_page():
                     det.append(f"{pi['name']} ({pi['qty']} كجم)")
                 
                 cur_p.execute("INSERT INTO purchases (branch_id, supplier_id, supplier_name, invoice_number, total_cost, payment_type, items_details, invoice_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                              (b_dict[pb], sup_id, ps, inv_num.strip(), g_tot, ptype, " - ".join(det), datetime.now().strftime('%Y-%m-%d')))
+                              (b_dict[pb], sup_id, ps, inv_num.rtrip() if hasattr(inv_num, 'rtrip') else inv_num.strip(), g_tot, ptype, " - ".join(det), datetime.now().strftime('%Y-%m-%d')))
                 
                 if ptype == "آجل (تسجل على حساب المورد)": 
                     cur_p.execute("UPDATE suppliers SET balance = balance + ? WHERE id = ?", (g_tot, sup_id))
