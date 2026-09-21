@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS
+# إضافة ستايل CSS مع ضبط لون الحروف داخل الأزرار الزرقاء ليصبح أبيضاً
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -32,9 +32,14 @@ st.markdown("""
     h2 { font-size: 24px !important; color: #1e293b !important; }
     h3 { font-size: 20px !important; color: #334155 !important; }
     
+    /* 🌟 جعل النصوص وأيقونات الأزرار الزرقاء باللون الأبيض حصرياً */
+    div.stButton > button, div.stButton > button * { 
+        color: #ffffff !important; 
+    }
+    
     div.stButton > button { 
         border-radius: 8px; font-weight: 900 !important; transition: all 0.3s ease; height: 50px; 
-        background: linear-gradient(135deg, #0284c7, #0369a1); color: white !important; border: none;
+        background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
         box-shadow: 0 3px 6px rgba(0,0,0,0.15); font-size: 18px !important;
     }
     div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-2px); }
