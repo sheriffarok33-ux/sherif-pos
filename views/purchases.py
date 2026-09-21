@@ -4,10 +4,22 @@ from datetime import datetime
 from database import get_db_connection
 
 def show_page():
-    # ستايل CSS لضمان ضبط الاتجاهات ومنع تداخل الحروف والأيقونات
+    # 🌟 ستايل CSS شامل لفرض الاتجاه العربي الصحيح (RTL) على كل عناصر الصفحة والصناديق
     st.markdown("""
         <style>
-        .arabic-container { direction: rtl; text-align: right; }
+        .rtl-box {
+            direction: rtl !important;
+            text-align: right !important;
+            background-color: #f8fafc;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #cbd5e1;
+            margin-bottom: 15px;
+        }
+        .rtl-box * {
+            direction: rtl !important;
+            text-align: right !important;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -26,7 +38,7 @@ def show_page():
         except:
             pass
 
-    # 🌟 التبويبات السريعة لإضافة مورد أو زبون آجل بدون أي تداخل في الحروف
+    # 🌟 التبويبات السريعة لإضافة مورد أو زبون آجل
     st.markdown("### ⚙️ الإدارة السريعة لجهات التعامل")
     quick_tab1, quick_tab2 = st.tabs(["➕ إضافة مورد (تاجر) جديد", "➕ إضافة زبون آجل جديد"])
     
@@ -94,17 +106,17 @@ def show_page():
     inv_num = col_h3.text_input("🧾 رقم فاتورة الشراء:")
     ptype = col_h4.selectbox("💳 طريقة الدفع:", ["كاش (مدفوعة بالكامل)", "آجل (تسجل على حساب المورد)"])
 
-    # 🌟 التنبيه المالي الدقيق للمورد
+    # التنبيه المالي الدقيق للمورد
     current_supplier_balance = s_balance_dict.get(ps, 0.0)
     if current_supplier_balance > 0:
-        st.markdown(f"<div style='background-color: #fee2e2; padding: 10px; border-radius: 8px; color: #991b1b; font-weight: bold; margin-bottom: 10px;'>⚠️ تنبيه مالي (علينا للمورد): إجمالي الدين الحالي المستحق لهذا المورد = {current_supplier_balance:,.2f} د.ل</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background-color: #fee2e2; padding: 10px; border-radius: 8px; color: #991b1b; font-weight: bold; margin-bottom: 10px; direction: rtl; text-align: right;'>⚠️ تنبيه مالي (علينا للمورد): إجمالي الدين الحالي المستحق لهذا المورد = {current_supplier_balance:,.2f} د.ل</div>", unsafe_allow_html=True)
     elif current_supplier_balance < 0:
-        st.markdown(f"<div style='background-color: #d1fae5; padding: 10px; border-radius: 8px; color: #065f46; font-weight: bold; margin-bottom: 10px;'>✅ تنبيه مالي (لنا برة عند المورد): رصيد لصالح المحل بقيمة = {abs(current_supplier_balance):,.2f} د.ل</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background-color: #d1fae5; padding: 10px; border-radius: 8px; color: #065f46; font-weight: bold; margin-bottom: 10px; direction: rtl; text-align: right;'>✅ تنبيه مالي (لنا برة عند المورد): رصيد لصالح المحل بقيمة = {abs(current_supplier_balance):,.2f} د.ل</div>", unsafe_allow_html=True)
     else:
-        st.markdown(f"<div style='background-color: #f1f5f9; padding: 10px; border-radius: 8px; color: #334155; font-weight: bold; margin-bottom: 10px;'>ℹ️ حساب المورد حالياً مسفّر (صفر د.ل) - لا يوجد له أو عليه شيء</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background-color: #f1f5f9; padding: 10px; border-radius: 8px; color: #334155; font-weight: bold; margin-bottom: 10px; direction: rtl; text-align: right;'>ℹ️ حساب المورد حالياً مسفّر (صفر د.ل) - لا يوجد له أو عليه شيء</div>", unsafe_allow_html=True)
 
-    # 🌟 استعراض مديونية الزبائن الآجلين (تم استبدال الـ Expander المسبب للمشكلة بقالب كارد منظم تماماً وبدون أي تداخل)
-    st.markdown("<div style='background-color: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 15px;'>", unsafe_allow_html=True)
+    # 🌟 استخدام كلاس الـ RTL الجديد لضمان عدم تداخل الحروف نهائياً في قسم استعراض الزبائن
+    st.markdown('<div class="rtl-box">', unsafe_allow_html=True)
     st.markdown("<b>👁️ استعراض مديونية وأرصدة الزبائن الآجلين السريعة</b>", unsafe_allow_html=True)
     if customers_data:
         cust_names_list = [c["customer_name"] for c in customers_data]
@@ -119,7 +131,7 @@ def show_page():
                 st.markdown(f"<span style='color: #475569;'>ℹ️ حساب الزبون ({selected_check_cust}) مسفّر (صفر د.ل)</span>", unsafe_allow_html=True)
     else:
         st.info("لا توجد زبائن آجلين مسجلين حتى الآن.")
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     if "purch_cart" not in st.session_state: 
         st.session_state["purch_cart"] = []
