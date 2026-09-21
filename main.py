@@ -69,7 +69,7 @@ def set_page(page_name):
     st.rerun()
 
 # -------------------------------------------------------------
-# 🛡️ دالة فحص الصلاحيات المحدثة
+# 🛡️ دالة فحص الصلاحيات المحمية بدقة عالية
 # -------------------------------------------------------------
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
@@ -78,13 +78,12 @@ def check_user_permission(menu_name):
     if role in ["Admin", "General_Supervisor"]: 
         return True
         
-    # الكاشير مسموح له بشاشات البيع والمفضلة وتزويد الفروع والأرشيف لتأكيد الاستلام
+    # 🔒 الكاشير: ممنوع من أي صلاحيات إدارية، مسموح له فقط ببيع ومفضلة
     if role == "Cashier":
         allowed_for_cashier = [
             "🏠 الرئيسية واللوحة", 
             "🛒 نقطة البيع (POS)", 
-            "⭐ لوحة المفضلة (1-20)", 
-            "🔄 تزويد الفروع والأرشيف"
+            "⭐ لوحة المفضلة (1-20)"
         ]
         return menu_name in allowed_for_cashier
 
@@ -96,13 +95,12 @@ def check_user_permission(menu_name):
         ]
         return menu_name in allowed_for_viewer
         
-    # مشرف الفرع مسموح له بإدارة فرعه فقط
+    # مشرف الفرع مسموح له بإدارة فرعه والبيع فقط
     if role == "Branch_Supervisor":
          allowed_for_bs = [
             "🏠 الرئيسية واللوحة",
             "🛒 نقطة البيع (POS)",
-            "📦 إدارة المخزن والفروع",
-            "🔄 تزويد الفروع والأرشيف"
+            "📦 إدارة المخزن والفروع"
          ]
          return menu_name in allowed_for_bs
 
@@ -257,7 +255,11 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
         st.info("🔄 شاشة تزويد الفروع قيد التجهيز.")
 
 elif choice == "⭐ لوحة المفضلة (1-20)":
-    st.info("⭐ شاشة المفضلة قيد التجهيز.")
+    try:
+        from views import favorites
+        favorites.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
 
 elif choice == "📦 إدارة المخزن والفروع":
     st.info("📦 شاشة إدارة المخزن والفروع قيد التجهيز.")
