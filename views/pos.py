@@ -123,10 +123,11 @@ def process_barcode_scan():
 def show_page():
     st.markdown("""
         <style>
-        .top-panel { background-color: #e2e8f0; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 10px; }
+        .top-panel { background-color: #e2e8f0; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 10px; direction: rtl; text-align: right; }
         .totals-panel { background-color: #0f172a; color: #ffffff !important; padding: 12px; border-radius: 8px; text-align: center; font-size: 19px; border: 2px solid #334155; margin-top: 8px; direction: ltr; }
         .btn-green > button { background-color: #16a34a !important; }
         .btn-red > button { background-color: #dc2626 !important; }
+        .rtl-card { direction: rtl !important; text-align: right !important; background-color: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 15px; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -156,18 +157,7 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
-    # 🛠️ [صندوق تشخيصي مؤقت] لنرى ما الذي يقرأه النظام من القاعدة بالضبط
-    with st.expander("🔍 صندوق تشخيص بضائع التزويد (للإدارة فقط)"):
-        st.write(f"رقم فرعك الحالي (b_id): {b_id}")
-        all_logs = conn.execute("SELECT * FROM transfer_logs").fetchall()
-        if all_logs:
-            st.write("جميع الحركات الموجودة في جدول transfer_logs:")
-            for l in all_logs:
-                st.write(dict(l))
-        else:
-            st.warning("جدول transfer_logs فارغ تماماً في قاعدة البيانات! لا توجد أي عملية تزويد مُرسلة أصلاً من المخزن الرئيسي.")
-
-    # 🚨 فحص بضاعة التزويد المعلقة
+    # 🚨 فحص بضاعة التزويد المعلقة الخاصة بالفرع الحالي بدقة
     if b_id and b_id != "ALL":
         pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE to_branch_id = ? AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id,)).fetchall()
         if pending_logs:
@@ -263,7 +253,7 @@ def show_page():
             st.text_input("🔍 مسح الباركود الفوري (Enter):", key="barcode_scan_input", on_change=process_barcode_scan)
         with col_info:
             st.markdown(f"""
-                <div style="font-size: 14px; text-align: left; line-height: 1.5;">
+                <div style="font-size: 14px; text-align: right; line-height: 1.5;">
                     <b>رقم فاتورة اليوم:</b> <span style="color:red; font-size: 16px;">#{daily_inv_num}</span> | <b>الوردية:</b> <span style="color:blue;">رقم {current_shift_num}</span><br>
                     <b>الفرع:</b> {branch_name_display} | <b>الكاشير:</b> {username}
                 </div>
