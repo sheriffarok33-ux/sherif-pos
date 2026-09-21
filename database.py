@@ -3,10 +3,15 @@ import sqlite3
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-# مفتاح التبديل: "sqlite" أثناء التطوير المحلي، أو "postgres" عند النشر السحابي
-DB_TYPE = os.getenv("DB_TYPE", "sqlite") 
+# مفتاح التبديل: اجعله "postgres" ليعمل مباشرة على سحابة Supabase التي أنشأناها
+DB_TYPE = os.getenv("DB_TYPE", "postgres") 
 SQLITE_DB_NAME = "abu_zaid_new_system.db"
-POSTGRES_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/dbname")
+
+# رابط الاتصال بقاعدة بيانات Supabase السحابية مع ترميز الرمز الخاص في كلمة المرور
+POSTGRES_URL = os.getenv(
+    "DATABASE_URL", 
+    "postgresql://postgres:Saif_Sherif%401690@db.xuorffwqftrbxguqpucx.supabase.co:5432/postgres"
+)
 
 DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة",
@@ -37,9 +42,9 @@ def get_db_connection():
         return conn
 
 def reindex_table(conn, table_name):
-    """إعادة ترقيم الـ ID تلقائياً ليكون متسلسلاً 1، 2، 3... بدون فجوات بعد الحذف (مخصص لـ SQLite المحلي)"""
+    """إعادة ترقيم الـ ID تلقائياً (مخصص لـ SQLite المحلي، وفي بوستجريس يدار تلقائياً عبر SERIAL)"""
     if DB_TYPE == "postgres":
-        return # السيرفر السحابي يدير التسلسل تلقائياً عبر SERIAL
+        return 
     
     cursor = conn.cursor()
     try:
@@ -144,7 +149,7 @@ def initialize_database():
         cursor.execute("CREATE TABLE IF NOT EXISTS activity_logs (id SERIAL PRIMARY KEY, user_id INT, action TEXT, details TEXT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
 
     else:
-        # --- جداول SQLite المحلية (الوضع الحالي للتطوير) ---
+        # --- جداول SQLite المحلية (الوضع الاحتياطي) ---
         cursor.execute("CREATE TABLE IF NOT EXISTS branches (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_name TEXT UNIQUE NOT NULL, branch_type TEXT DEFAULT 'فرع')")
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -224,28 +229,48 @@ def initialize_database():
         cursor.execute("CREATE TABLE IF NOT EXISTS activity_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
     # إدخال البيانات الأساسية والصلاحيات
-    try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(DEFAULT_MENUS),))
-    except: pass
-    try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
-    except: pass
-    try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة المفضلة (1-20),🔄 تزويد الفروع والأرشيف')")
-    except: pass
+    try: cursor.execute("INSERT INTO role_permissions (role, allowed_menus) VALUES ('Admin', %s) ON CONFLICT (role) DO NOTHING", (",".join(DEFAULT_MENUS),))
+    except: 
+        try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(DEFAULT_MENUS),))
+        except: pass
+
+    try: cursor.execute("INSERT INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', %s) ON CONFLICT (role) DO NOTHING", (",".join(DEFAULT_MENUS),))
+    except: 
+        try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
+        except: pass
+
+    try: cursor.execute("INSERT INTO role_permissions (role, allowed_menus) VALUES ('Cashier', %s) ON CONFLICT (role) DO NOTHING", ('🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة المفضلة (1-20),🔄 تزويد الفروع والأرشيف',))
+    except: 
+        try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة المفضلة (1-20),🔄 تزويد الفروع والأرشيف')")
+        except: pass
 
     # الفروع الافتراضية
-    branch_count = cursor.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
-    if branch_count == 0:
+    cursor.execute("SELECT COUNT(*) FROM branches")
+    branch_count = cursor.fetchone()
+    count_val = branch_count["count"] if isinstance(branch_count, dict) else branch_count[0]
+    
+    if count_val == 0:
         default_branches = [("المخزن الرئيسي", "مخزن"), ("فرع الجزيرة", "فرع"), ("فرع 2", "فرع")]
         for b_name, b_type in default_branches:
-            cursor.execute("INSERT OR IGNORE INTO branches (branch_name, branch_type) VALUES (?, ?)", (b_name, b_type))
+            try:
+                cursor.execute("INSERT INTO branches (branch_name, branch_type) VALUES (%s, %s) ON CONFLICT (branch_name) DO NOTHING", (b_name, b_type))
+            except:
+                cursor.execute("INSERT OR IGNORE INTO branches (branch_name, branch_type) VALUES (?, ?)", (b_name, b_type))
 
     # مستخدم الأدمن الافتراضي
-    admin_chk = cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin' AND is_active = 1").fetchone()[0]
-    if admin_chk == 0:
-        cursor.execute("INSERT OR IGNORE INTO users (username, phone, password, role, allowed_branches, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', 'ALL', 1)")
+    cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin' AND is_active = 1")
+    admin_chk = cursor.fetchone()
+    admin_count = admin_chk["count"] if isinstance(admin_chk, dict) else admin_chk[0]
+    
+    if admin_count == 0:
+        try:
+            cursor.execute("INSERT INTO users (username, phone, password, role, allowed_branches, is_active) VALUES (%s, %s, %s, %s, %s, %s)", ('admin', '0910000000', 'admin', 'Admin', 'ALL', 1))
+        except:
+            cursor.execute("INSERT OR IGNORE INTO users (username, phone, password, role, allowed_branches, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', 'ALL', 1)")
 
     conn.commit()
     conn.close()
 
 if __name__ == "__main__":
     initialize_database()
-    print("✅ تم إنشاء قاعدة البيانات والجداول بنجاح مع دعم Hybrid (SQLite & PostgreSQL)!")
+    print("✅ تم ربط وتجهيز قاعدة البيانات السحابية على Supabase بنجاح تام!")
