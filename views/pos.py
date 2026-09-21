@@ -121,17 +121,18 @@ def process_barcode_scan():
 
 # --- واجهة شاشة نقطة البيع الأساسية ---
 def show_page():
+    # 🌟 ستايل CSS شامل لفرض اتجاه الـ RTL ومنع أي تداخل حروف تماماً
     st.markdown("""
         <style>
-        .top-panel { background-color: #e2e8f0; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 10px; direction: rtl; text-align: right; }
+        .top-panel { background-color: #e2e8f0; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 12px; direction: rtl; text-align: right; }
         .totals-panel { background-color: #0f172a; color: #ffffff !important; padding: 12px; border-radius: 8px; text-align: center; font-size: 19px; border: 2px solid #334155; margin-top: 8px; direction: ltr; }
         .btn-green > button { background-color: #16a34a !important; }
         .btn-red > button { background-color: #dc2626 !important; }
-        .rtl-card { direction: rtl !important; text-align: right !important; background-color: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 15px; }
+        .rtl-container { direction: rtl !important; text-align: right !important; }
         </style>
     """, unsafe_allow_html=True)
 
-    st.header("🛒 نقطة البيع (POS)")
+    st.markdown('<h2 class="rtl-container">🛒 نقطة البيع (POS)</h2>', unsafe_allow_html=True)
     
     conn = get_db_connection()
     role = st.session_state.get("role", "")
@@ -157,20 +158,26 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
-    # 🚨 فحص بضاعة التزويد المعلقة الخاصة بالفرع الحالي بدقة
+    # 🚨 فحص بضاعة التزويد المعلقة للفرع الحالي بدقة تامة
     if b_id and b_id != "ALL":
         pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE to_branch_id = ? AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id,)).fetchall()
         if pending_logs:
-            st.error(f"🚨 تنبيه هام: توجد بضاعة جديدة مُرسلة من المخزن الرئيسي إلى فرعك ({branch_name_display}). يجب تأكيد استلامها أولاً قبل فتح شاشة البيع:")
+            st.markdown(f"""
+                <div style="background-color: #fef2f2; padding: 18px; border-radius: 8px; border-right: 6px solid #dc2626; margin-bottom: 15px; color: #7f1d1d; direction: rtl; text-align: right;">
+                    <h3 style="margin-top:0; color:#dc2626;">🚨 تنبيه هام: توجد بضاعة جديدة مُرسلة لفرعك ({branch_name_display})</h3>
+                    <p style="font-size: 16px;">يجب تأكيد استلام البضاعة أولاً قبل فتح شاشة البيع ومتابعة العمل:</p>
+            """, unsafe_allow_html=True)
             
             for pt in pending_logs:
                 st.markdown(f"""
-                <div style="background-color: #fef2f2; padding: 15px; border-radius: 8px; border-right: 5px solid #dc2626; margin-bottom: 10px; color: #7f1d1d; direction: rtl; text-align: right;">
-                    <p style="margin: 0; font-size: 16px;"><b>رقم الحركة:</b> #{pt['id']} | <b>التاريخ:</b> {pt['transfer_date']}</p>
-                    <p style="margin: 5px 0 0 0; font-size: 16px;"><b>التفاصيل والأصناف:</b> {pt['items_details']}</p>
+                <div style="background-color: #ffffff; padding: 12px; border-radius: 6px; border: 1px solid #fecaca; margin-bottom: 8px; color: #1e293b; direction: rtl; text-align: right;">
+                    <p style="margin: 0; font-size: 15px;"><b>رقم الحركة:</b> #{pt['id']} | <b>التاريخ:</b> {pt['transfer_date']}</p>
+                    <p style="margin: 5px 0 0 0; font-size: 15px;"><b>التفاصيل والأصناف:</b> {pt['items_details']}</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
+            st.markdown('</div>', unsafe_allow_html=True)
+            
             cashier_confirm_name = st.text_input("أدخل اسمك الثلاثي (الكاشير المستلم لتأكيد الاستلام):", value=username)
             
             if st.button("✅ تأكيد استلام البضاعة (تم الاستلام ومتابعة العمل)", type="primary", use_container_width=True):
@@ -221,7 +228,7 @@ def show_page():
         </html>
         """
         st.success("✅ تمت عملية الدفع بنجاح!")
-        st.markdown("<div style='border: 2px solid #0284c7; padding: 15px; border-radius: 10px; background-color: #f0f9ff; margin-bottom: 20px;'>", unsafe_allow_html=True)
+        st.markdown("<div style='border: 2px solid #0284c7; padding: 15px; border-radius: 10px; background-color: #f0f9ff; margin-bottom: 20px; direction: rtl;'>", unsafe_allow_html=True)
         st.components.v1.html(html_file_content, height=450, scrolling=True)
         c_inv1, c_inv2 = st.columns(2)
         with c_inv1: st.download_button("📥 تحميل الفاتورة (HTML)", data=html_file_content.encode('utf-8'), file_name=f"Invoice_{inv['inv_id']}.html", mime="text/html", use_container_width=True)
@@ -253,7 +260,7 @@ def show_page():
             st.text_input("🔍 مسح الباركود الفوري (Enter):", key="barcode_scan_input", on_change=process_barcode_scan)
         with col_info:
             st.markdown(f"""
-                <div style="font-size: 14px; text-align: right; line-height: 1.5;">
+                <div style="font-size: 14px; text-align: right; line-height: 1.5; direction: rtl;">
                     <b>رقم فاتورة اليوم:</b> <span style="color:red; font-size: 16px;">#{daily_inv_num}</span> | <b>الوردية:</b> <span style="color:blue;">رقم {current_shift_num}</span><br>
                     <b>الفرع:</b> {branch_name_display} | <b>الكاشير:</b> {username}
                 </div>
@@ -286,10 +293,10 @@ def show_page():
                 st.markdown('</div>', unsafe_allow_html=True)
 
         with col_fav:
-            st.markdown("### ⭐ المفضلة")
+            st.markdown('<h3 class="rtl-container">⭐ المفضلة</h3>', unsafe_allow_html=True)
             fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 12", (b_id,)).fetchall()
             
-            st.markdown("<div style='background-color:#f1f5f9; padding:6px; border-radius:8px; height:360px; overflow-y:auto; border:1px solid #cbd5e1;'>", unsafe_allow_html=True)
+            st.markdown("<div style='background-color:#f1f5f9; padding:6px; border-radius:8px; height:360px; overflow-y:auto; border:1px solid #cbd5e1; direction: rtl;'>", unsafe_allow_html=True)
             if fav_items:
                 for item in fav_items:
                     st.markdown("<div style='background:white; padding:4px; border-radius:6px; margin-bottom:6px; border:1px solid #e2e8f0; text-align:center;'>", unsafe_allow_html=True)
@@ -317,7 +324,7 @@ def show_page():
     # 2. البحث اليدوي والصنف الحر
     # ==========================================
     elif st.session_state["pos_active_view"] == "البحث اليدوي":
-        st.subheader("⚡ البحث اليدوي عن الأصناف")
+        st.markdown('<h3 class="rtl-container">⚡ البحث اليدوي عن الأصناف</h3>', unsafe_allow_html=True)
         all_items_db = conn.execute("SELECT * FROM items WHERE branch_id = ?", (b_id,)).fetchall()
         if all_items_db:
             item_names_dict = {it["item_name"] + f" (الكود: {it['item_code']} - السعر: {it['sale_price']} د.ل)": it for it in all_items_db}
@@ -330,7 +337,7 @@ def show_page():
                 st.success(f"تمت إضافة ({selected_item_obj['item_name']}) بنجاح!")
                 
         st.markdown("---")
-        st.subheader("🛒 بيع صنف حر (بدون كود)")
+        st.markdown('<h3 class="rtl-container">🛒 بيع صنف حر (بدون كود)</h3>', unsafe_allow_html=True)
         col_f1, col_f2, col_f3 = st.columns(3)
         free_name = col_f1.text_input("اسم الصنف (اختياري):", value="صنف عام / خدمة")
         free_price = col_f2.number_input("السعر (د.ل):", min_value=0.0, step=1.0)
@@ -346,7 +353,7 @@ def show_page():
     # 3. الأرشيف وإعادة الطباعة + أرشيف فواتير التزويد للفرع
     # ==========================================
     elif st.session_state["pos_active_view"] == "الأرشيف":
-        st.subheader("📦 أرشيف فواتير التزويد الواردة لفرعك")
+        st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك</h3>', unsafe_allow_html=True)
         branch_transfers = conn.execute("""
             SELECT id AS 'رقم التزويد', items_details AS 'تفاصيل الأصناف والكميات', status AS 'حالة الاستلام', transfer_date AS 'تاريخ الإرسال'
             FROM transfer_logs WHERE to_branch_id = ? ORDER BY id DESC
@@ -358,7 +365,7 @@ def show_page():
             st.info("📭 لا توجد فواتير تزويد بضائع سابقة مسجلة لهذا الفرع.")
 
         st.markdown("---")
-        st.subheader("📋 أرشيف مبيعات الفرع وإعادة الطباعة")
+        st.markdown('<h3 class="rtl-container">📋 أرشيف مبيعات الفرع وإعادة الطباعة</h3>', unsafe_allow_html=True)
         recent_invs = conn.execute("SELECT id, customer_name, total_amount, created_at FROM invoices WHERE branch_id = ? ORDER BY id DESC LIMIT 100", (b_id,)).fetchall()
         
         if recent_invs:
