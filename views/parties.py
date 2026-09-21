@@ -3,10 +3,10 @@ import pandas as pd
 from database import get_db_connection
 
 def show_page():
-    st.header("👥 جهات التعامل (الموردين والزبائن والديون)")
+    st.header("👥 جهات التعامل المعتمدة (الموردين والزبائن الآجلين)")
     
     conn = get_db_connection()
-    tab_sup, tab_cust = st.tabs(["🚛 الموردين (تجار الجملة والديون)", "🤝 الزبائن (نظام الولاء والديون الآجلة)"])
+    tab_sup, tab_cust = st.tabs(["🚛 الموردين (تجار الجملة والديون)", "🤝 الزبائن المعتمدين للبيع الآجل والولاء"])
     
     # ==========================================
     # 1. إدارة الموردين
@@ -51,12 +51,35 @@ def show_page():
             st.info("لا توجد مبالغ أو موردين مسجلين.")
 
     # ==========================================
-    # 2. إدارة الزبائن (الولاء والديون الآجلة)
+    # 2. إدارة الزبائن المعتمدين للآجل والولاء
     # ==========================================
     with tab_cust:
-        st.markdown("### 📊 قائمة زبائن المحل والديون الآجلة")
+        st.markdown("### ➕ إضافة زبون جديد مسموح له بالشراء بالآجل")
+        with st.form("new_credit_customer_form", clear_on_submit=True):
+            col_c1, col_c2 = st.columns(2)
+            c_name = col_c1.text_input("اسم الزبون المعتمد:")
+            c_phone = col_c2.text_input("رقم الهاتف (أساسي للتعرف عليه بالكاشير):")
+            
+            if st.form_submit_button("💾 اعتماد وحفظ الزبون الآجل", type="primary"):
+                if c_name.strip() and c_phone.strip():
+                    try:
+                        # التأكد من إنشاء العمود balance إن لم يكن موجوداً
+                        try:
+                            conn.execute("SELECT balance FROM customers LIMIT 1")
+                        except:
+                            conn.execute("ALTER TABLE customers ADD COLUMN balance REAL DEFAULT 0.0")
+                        
+                        conn.execute("INSERT INTO customers (customer_name, phone, total_purchases, balance) VALUES (?, ?, 0.0, 0.0)", (c_name.strip(), c_phone.strip()))
+                        conn.commit()
+                        st.success(f"✅ تم اعتماد الزبون الآجل ({c_name}) بنجاح! أصبح ظاهراً للكاشير.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error("⚠️ رقم الهاتف أو اسم الزبون مسجل مسبقاً.")
+                else:
+                    st.warning("⚠️ يجب إدخال اسم الزبون ورقم هاتفه.")
+
+        st.markdown("### 📊 قائمة الزبائن المعتمدين والديون المستحقة")
         
-        # التأكد من وجود عمود balance في جدول customers إن لم يكن موجوداً لتجنب الأخطاء
         try:
             conn.execute("SELECT balance FROM customers LIMIT 1")
         except:
@@ -73,21 +96,21 @@ def show_page():
             
             st.markdown("**💵 تحصيل دفعة من زبون آجل (قبض نقدية):**")
             col_cp1, col_cp2 = st.columns(2)
-            cust_list = {c["customer_name"] + f" ({c['phone']})": c["id"] for c in conn.execute("SELECT id, customer_name, phone FROM customers WHERE balance > 0").fetchall()}
+            cust_list = {c["customer_name"] + f" ({c['phone']})": c["id"] for c in conn.execute("SELECT id, customer_name, phone FROM customers").fetchall()}
             
             if cust_list:
-                sel_pay_cust = col_cp1.selectbox("اختر الزبون المدين للتحصيل منه:", list(cust_list.keys()))
-                cust_pay_amount = col_cp2.number_input("المبلغ المحصيل المقبوض (د.ل):", min_value=0.0, step=10.0, key="cust_pay_input")
+                sel_pay_cust = col_cp1.selectbox("اختر الزبون للتحصيل منه:", list(cust_list.keys()))
+                cust_pay_amount = col_cp2.number_input("المبلغ المحصول المقبوض (د.ل):", min_value=0.0, step=10.0, key="cust_pay_input")
                 
                 if st.button("✅ تسجيل القبض وخصمه من مديونية الزبون", key="btn_cust_pay"):
                     if cust_pay_amount > 0:
                         conn.execute("UPDATE customers SET balance = balance - ? WHERE id = ?", (cust_pay_amount, cust_list[sel_pay_cust]))
                         conn.commit()
-                        st.success("تم تسطير وقبض الدفعة من الزبون بنجاح وتحديث حسابه.")
+                        st.success("تم قبض الدفعة من الزبون بنجاح وتحديث رصيده.")
                         st.rerun()
             else:
-                st.info("لا يوجد زبائن عليهم ديون آجلة حالياً.")
+                st.info("لا يوجد زبائن مسجلين.")
         else:
-            st.info("لا يوجد زبائن مسجلين حالياً. يتم تسجيلهم تلقائياً من شاشة الكاشير عند إدخال هواتفهم.")
+            st.info("لا توجد عملاء مسجلين حالياً.")
             
     conn.close()
