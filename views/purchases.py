@@ -27,7 +27,7 @@ def show_page():
         except:
             pass
 
-    # 🌟 تفعيل إمكانية الإضافة السريعة (مورد جديد أو زبون آجل جديد) بدون تداخل حروف
+    # 🌟 التبويبات السريعة لإضافة مورد أو زبون آجل بدون تداخل حروف
     st.markdown("### ⚙️ الإدارة السريعة لجهات التعامل")
     quick_tab1, quick_tab2 = st.tabs(["➕ إضافة مورد (تاجر) جديد", "➕ إضافة زبون آجل جديد"])
     
@@ -89,13 +89,14 @@ def show_page():
     inv_num = col_h3.text_input("🧾 رقم فاتورة الشراء:")
     ptype = col_h4.selectbox("💳 طريقة الدفع:", ["كاش (مدفوعة بالكامل)", "آجل (تسجل على حساب المورد)"])
 
+    # 🌟 التعديل المحاسبي الدقيق: توضيح ما لنا وما علينا للمورد
     current_supplier_balance = s_balance_dict.get(ps, 0.0)
     if current_supplier_balance > 0:
-        st.markdown(f"<div style='background-color: #fee2e2; padding: 10px; border-radius: 8px; color: #991b1b; font-weight: bold; margin-bottom: 15px;'>⚠️ تنبيه مالي: إجمالي الدين الحالي المستحق لهذا المورد = {current_supplier_balance:,.2f} د.ل</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background-color: #fee2e2; padding: 10px; border-radius: 8px; color: #991b1b; font-weight: bold; margin-bottom: 15px;'>⚠️ تنبيه مالي (علينا للمورد): إجمالي الدين الحالي المستحق لهذا المورد = {current_supplier_balance:,.2f} د.ل</div>", unsafe_allow_html=True)
     elif current_supplier_balance < 0:
-        st.markdown(f"<div style='background-color: #d1fae5; padding: 10px; border-radius: 8px; color: #065f46; font-weight: bold; margin-bottom: 15px;'>✅ رصيد لصالح المحل عند هذا المورد = {abs(current_supplier_balance):,.2f} د.ل</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background-color: #d1fae5; padding: 10px; border-radius: 8px; color: #065f46; font-weight: bold; margin-bottom: 15px;'>✅ تنبيه مالي (لنا برة عند المورد): رصيد لصالح المحل بقيمة = {abs(current_supplier_balance):,.2f} د.ل</div>", unsafe_allow_html=True)
     else:
-        st.markdown(f"<div style='background-color: #f1f5f9; padding: 10px; border-radius: 8px; color: #334155; font-weight: bold; margin-bottom: 15px;'>ℹ️ حساب المورد حالياً مسفّر (صفر د.ل)</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background-color: #f1f5f9; padding: 10px; border-radius: 8px; color: #334155; font-weight: bold; margin-bottom: 15px;'>ℹ️ حساب المورد حالياً مسفّر (صفر د.ل) - لا يوجد له أو عليه شيء</div>", unsafe_allow_html=True)
 
     if "purch_cart" not in st.session_state: 
         st.session_state["purch_cart"] = []
