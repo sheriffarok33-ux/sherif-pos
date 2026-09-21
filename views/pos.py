@@ -121,7 +121,6 @@ def process_barcode_scan():
 
 # --- واجهة شاشة نقطة البيع الأساسية ---
 def show_page():
-    # 🌟 ستايل CSS شامل لفرض اتجاه الـ RTL ومنع أي تداخل حروف تماماً
     st.markdown("""
         <style>
         .top-panel { background-color: #e2e8f0; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 12px; direction: rtl; text-align: right; }
@@ -158,9 +157,9 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
-    # 🚨 فحص بضاعة التزويد المعلقة للفرع الحالي بدقة تامة
+    # 🚨 فحص بضاعة التزويد المعلقة بدقة لفرع الكاشير أو لأي فرع يتابعه
     if b_id and b_id != "ALL":
-        pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE to_branch_id = ? AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id,)).fetchall()
+        pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE (to_branch_id = ? OR to_branch_id IN (SELECT id FROM branches WHERE branch_name LIKE '%مصراتة%' OR id = ?)) AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id, b_id)).fetchall()
         if pending_logs:
             st.markdown(f"""
                 <div style="background-color: #fef2f2; padding: 18px; border-radius: 8px; border-right: 6px solid #dc2626; margin-bottom: 15px; color: #7f1d1d; direction: rtl; text-align: right;">
@@ -270,10 +269,21 @@ def show_page():
         col_grid, col_fav = st.columns([3, 1])
         
         with col_grid:
+            st.markdown("### 🧾 محتويات سلة المبيعات الحالية")
             if not st.session_state["cart"]:
-                st.dataframe(pd.DataFrame(columns=["الكود", "اسم الصنف", "الكمية", "السعر", "الإجمالي"]), use_container_width=True, height=260)
+                st.info("السلة فارغة حالياً.")
             else:
-                st.dataframe(pd.DataFrame([{"الكود": i.get("code", "-"), "اسم الصنف": i["name"], "الكمية": i["qty"], "السعر": i["price"], "الإجمالي": i["total"]} for i in st.session_state["cart"]]), use_container_width=True, height=260, hide_index=True)
+                # 🌟 إضافة ميزة حذف صنف محدد من السلة بدلاً من تفريغها بالكامل
+                for index, cart_item in enumerate(st.session_state["cart"]):
+                    c_col1, c_col2, c_col3, c_col4, c_col5 = st.columns([2, 1, 1, 1, 0.6])
+                    c_col1.write(f"🏷️ {cart_item['name']}")
+                    c_col2.write(f"كمية: {cart_item['qty']}")
+                    c_col3.write(f"سعر: {cart_item['price']} د.ل")
+                    c_col4.write(f"إجمالي: {cart_item['total']} د.ل")
+                    if c_col5.button("🗑️", key=f"del_cart_{index}", help="حذف هذا الصنف فقط"):
+                        st.session_state["cart"].pop(index)
+                        st.rerun()
+                st.markdown("---")
 
             g_tot = sum(item["total"] for item in st.session_state.get("cart", []))
             st.markdown(f'<div class="totals-panel">الإجمالي: <b>{g_tot:,.2f} د.ل</b> &nbsp;|&nbsp; الصافي المطلوب: <span style="color:#22c55e;">{g_tot:,.2f} د.ل</span></div>', unsafe_allow_html=True)
@@ -287,7 +297,7 @@ def show_page():
                 st.markdown('</div>', unsafe_allow_html=True)
             with c_btn3:
                 st.markdown('<div class="pos-btn btn-red">', unsafe_allow_html=True)
-                if st.button("❌ تفريغ الفاتورة", use_container_width=True): 
+                if st.button("❌ تفريغ السلة بالكامل", use_container_width=True): 
                     st.session_state["cart"] = []
                     st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
