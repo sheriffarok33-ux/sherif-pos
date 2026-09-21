@@ -5,12 +5,13 @@ from database import get_db_connection
 
 def show_page():
     st.header("📥 إدارة المشتريات وإدخال البضاعة للمخازن")
+    st.markdown("---")
     
     conn = get_db_connection()
     b_dict = {b["branch_name"]: b["id"] for b in conn.execute("SELECT id, branch_name FROM branches").fetchall()}
     
-    # 🌟 زر سريع لإضافة مورد جديد مباشرة داخل شاشة المشتريات لكي لا يضطر المستخدم للخروج منها
-    with st.expander("➕ إضافة مورد (تاجر) جديد سريعاً"):
+    # 🌟 زر سريع ومنظم لإضافة مورد جديد بدون أي تداخل في النصوص
+    with st.expander("➕ اضغط هنا لإضافة مورد (تاجر) جديد سريعاً"):
         with st.form("quick_add_supplier_form_in_purchases", clear_on_submit=True):
             col_q1, col_q2 = st.columns(2)
             new_sup_name = col_q1.text_input("اسم المورد / الشركة الجديد:")
@@ -29,20 +30,17 @@ def show_page():
                 else:
                     st.warning("⚠️ يرجى إدخال اسم المورد على الأقل.")
 
-    st.markdown("---")
-
-    # جلب بيانات الموردين بعد التحديث
     suppliers_data = conn.execute("SELECT id, supplier_name, balance FROM suppliers").fetchall()
     s_dict = {s["supplier_name"]: s["id"] for s in suppliers_data}
     s_balance_dict = {s["supplier_name"]: float(s["balance"]) for s in suppliers_data}
     
     if not b_dict:
-        st.warning("⚠️ لا يمكن إدخال مشتريات. يرجى التأكد من وجود فرع أو مخزن واحد على الأقل في النظام.")
+        st.warning("⚠️ لا يمكن إدخال مشتريات. يرجى التأكد من وجود فرع أو مخزن واحد على الأقل.")
         conn.close()
         return
 
     if not s_dict:
-        st.warning("⚠️ لا يوجد أي مورد مسجل في النظام. يرجى استخدام زر الإضافة بالأعلى لإضافة مورد جديد.")
+        st.warning("⚠️ لا يوجد أي مورد مسجل في النظام. يرجى استخدام القائمة بالأعلى لإضافة مورد جديد.")
         conn.close()
         return
 
@@ -66,7 +64,6 @@ def show_page():
 
     st.markdown("---")
     
-    # إدخال أصناف الفاتورة
     db_items = conn.execute("SELECT id, item_code, item_name, buy_price FROM items WHERE branch_id = ?", (b_dict[pb],)).fetchall()
     i_opts = {f"[{i['item_code']}] {i['item_name']}": i for i in db_items} if db_items else {}
     
@@ -86,7 +83,6 @@ def show_page():
     else:
         st.info(f"لا توجد أصناف معرفة في {pb}. يرجى تعريف الأصناف في المخزن أولاً.")
 
-    # سلة المشتريات واعتماد الفاتورة
     if st.session_state["purch_cart"]:
         st.markdown("### 🛒 محتويات فاتورة الشراء الحالية")
         cart_df = pd.DataFrame(st.session_state["purch_cart"]).rename(columns={"code": "الكود", "name": "الصنف", "qty": "الكمية", "price": "سعر الوحدة", "total": "الإجمالي"})
