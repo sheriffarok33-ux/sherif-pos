@@ -103,7 +103,7 @@ def initialize_database():
             );
         """)
         cursor.execute("CREATE TABLE IF NOT EXISTS suppliers (id SERIAL PRIMARY KEY, supplier_name VARCHAR(255) UNIQUE NOT NULL, phone VARCHAR(100), balance FLOAT DEFAULT 0.0);")
-        cursor.execute("CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, customer_name VARCHAR(255) NOT NULL, phone VARCHAR(100) UNIQUE NOT NULL, total_purchases FLOAT DEFAULT 0.0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
+        cursor.execute("CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, customer_name VARCHAR(255) NOT NULL, phone VARCHAR(100) UNIQUE NOT NULL, total_purchases FLOAT DEFAULT 0.0, balance FLOAT DEFAULT 0.0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS purchases (
                 id SERIAL PRIMARY KEY,
@@ -182,7 +182,7 @@ def initialize_database():
             )
         """)
         cursor.execute("CREATE TABLE IF NOT EXISTS suppliers (id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_name TEXT UNIQUE NOT NULL, phone TEXT, balance REAL DEFAULT 0.0)")
-        cursor.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT UNIQUE NOT NULL, total_purchases REAL DEFAULT 0.0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT UNIQUE NOT NULL, total_purchases REAL DEFAULT 0.0, balance REAL DEFAULT 0.0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS purchases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -229,20 +229,17 @@ def initialize_database():
         cursor.execute("CREATE TABLE IF NOT EXISTS activity_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
     # إدخال البيانات الأساسية والصلاحيات
-    try: cursor.execute("INSERT INTO role_permissions (role, allowed_menus) VALUES ('Admin', %s) ON CONFLICT (role) DO NOTHING", (",".join(DEFAULT_MENUS),))
-    except: 
-        try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(DEFAULT_MENUS),))
-        except: pass
-
-    try: cursor.execute("INSERT INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', %s) ON CONFLICT (role) DO NOTHING", (",".join(DEFAULT_MENUS),))
-    except: 
-        try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
-        except: pass
-
-    try: cursor.execute("INSERT INTO role_permissions (role, allowed_menus) VALUES ('Cashier', %s) ON CONFLICT (role) DO NOTHING", ('🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة المفضلة (1-20),🔄 تزويد الفروع والأرشيف',))
-    except: 
-        try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة المفضلة (1-20),🔄 تزويد الفروع والأرشيف')")
-        except: pass
+    try:
+        if DB_TYPE == "postgres":
+            cursor.execute("INSERT INTO role_permissions (role, allowed_menus) VALUES ('Admin', %s) ON CONFLICT (role) DO NOTHING", (",".join(DEFAULT_MENUS),))
+            cursor.execute("INSERT INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', %s) ON CONFLICT (role) DO NOTHING", (",".join(DEFAULT_MENUS),))
+            cursor.execute("INSERT INTO role_permissions (role, allowed_menus) VALUES ('Cashier', %s) ON CONFLICT (role) DO NOTHING", ('🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة المفضلة (1-20),🔄 تزويد الفروع والأرشيف',))
+        else:
+            cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(DEFAULT_MENUS),))
+            cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
+            cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة المفضلة (1-20),🔄 تزويد الفروع والأرشيف')")
+    except Exception as e:
+        print(f"Role permissions error: {e}")
 
     # الفروع الافتراضية
     cursor.execute("SELECT COUNT(*) FROM branches")
@@ -253,9 +250,12 @@ def initialize_database():
         default_branches = [("المخزن الرئيسي", "مخزن"), ("فرع الجزيرة", "فرع"), ("فرع 2", "فرع")]
         for b_name, b_type in default_branches:
             try:
-                cursor.execute("INSERT INTO branches (branch_name, branch_type) VALUES (%s, %s) ON CONFLICT (branch_name) DO NOTHING", (b_name, b_type))
-            except:
-                cursor.execute("INSERT OR IGNORE INTO branches (branch_name, branch_type) VALUES (?, ?)", (b_name, b_type))
+                if DB_TYPE == "postgres":
+                    cursor.execute("INSERT INTO branches (branch_name, branch_type) VALUES (%s, %s) ON CONFLICT (branch_name) DO NOTHING", (b_name, b_type))
+                else:
+                    cursor.execute("INSERT OR IGNORE INTO branches (branch_name, branch_type) VALUES (?, ?)", (b_name, b_type))
+            except Exception as e:
+                print(f"Branch insert error: {e}")
 
     # مستخدم الأدمن الافتراضي
     cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin' AND is_active = 1")
@@ -264,9 +264,12 @@ def initialize_database():
     
     if admin_count == 0:
         try:
-            cursor.execute("INSERT INTO users (username, phone, password, role, allowed_branches, is_active) VALUES (%s, %s, %s, %s, %s, %s)", ('admin', '0910000000', 'admin', 'Admin', 'ALL', 1))
-        except:
-            cursor.execute("INSERT OR IGNORE INTO users (username, phone, password, role, allowed_branches, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', 'ALL', 1)")
+            if DB_TYPE == "postgres":
+                cursor.execute("INSERT INTO users (username, phone, password, role, allowed_branches, is_active) VALUES (%s, %s, %s, %s, %s, %s)", ('admin', '0910000000', 'admin', 'Admin', 'ALL', 1))
+            else:
+                cursor.execute("INSERT OR IGNORE INTO users (username, phone, password, role, allowed_branches, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', 'ALL', 1)")
+        except Exception as e:
+            print(f"Admin insert error: {e}")
 
     conn.commit()
     conn.close()
