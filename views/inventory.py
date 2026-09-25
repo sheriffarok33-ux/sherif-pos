@@ -15,7 +15,7 @@ def show_page():
     
     conn = get_db_connection()
     
-    # جلب الفروع
+    # جلب الفروع والمخازن
     branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
     b_dict = {b["branch_name"]: b["id"] for b in branches}
     
@@ -27,9 +27,9 @@ def show_page():
     selected_branch = st.selectbox("اختر المخزن أو الفرع الحالي:", list(b_dict.keys()))
     target_branch_id = b_dict[selected_branch]
 
-    st.markdown("### 🏷️ إضافة أو تحديث صنف (نظام الكراتين والقطع)")
+    st.markdown("### 🏷️ إضافة أو تحديث صنف (نظام الكراتين والقطع والباركود)")
     
-    # نموذج مدخلات دقيق ومرتب يدعم الكراتين والقطع والباركود بدون مسح
+    # نموذج مدخلات دقيق يدعم الكراتين والقطع والباركود بدون مسح
     with st.form("inventory_master_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         item_code = col1.text_input("كود الصنف (الباركود - مرر القارئ هنا):")
