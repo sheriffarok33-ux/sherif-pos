@@ -1,19 +1,18 @@
 import streamlit as st
 import pandas as pd
 from database import get_db_connection
+import io
 
 def show_page():
-    # 🌟 تنسيق CSS قوي يستهدف أقصى درجات التغميق والوضوح لجميع النصوص والجداول
+    # 🌟 تنسيق CSS قوي للخط الأسود الداكن والعريض جداً
     st.markdown("""
         <style>
-        /* فرض الخط الأسود الداكن والعريض جداً على كافة عناصر الجداول والنصوص */
         .stDataFrame, .stDataFrame *, div[data-testid="stTable"] *, th, td, 
         div[data-baseweb="select"] *, span, p, label, h3, h4 {
             color: #000000 !important;
             font-family: 'Tajawal', sans-serif !important;
             font-weight: 900 !important;
         }
-        /* تغميق وتكبير رؤوس الجداول وبياناتها بالكامل */
         th {
             background-color: #cbd5e1 !important;
             color: #000000 !important;
@@ -90,14 +89,13 @@ def show_page():
                     pl_data.append({
                         "اسم الفرع": b_name,
                         "نوع المنشأة": b["branch_type"],
-                        "إجمالي المبيعات (د.ل)": f"{b_sales:,.2f}",
-                        "إجمالي المصروفات والرواتب والإيجارات (د.ل)": f"{b_expenses:,.2f}",
-                        "صافي الربح التقديري (د.ل)": f"{b_net_profit:,.2f}"
+                        "إجمالي المبيعات (د.ل)": b_sales,
+                        "إجمالي المصروفات والرواتب والإيجارات (د.ل)": b_expenses,
+                        "صافي الربح التقديري (د.ل)": b_net_profit
                     })
 
                 df_pl = pd.DataFrame(pl_data)
                 
-                # 🌟 استخدام Pandas Styler لضمان ظهور خطوط الجدول بالأسود العريض والصريح
                 styled_df_pl = df_pl.style.set_properties(**{
                     'color': '#000000',
                     'font-weight': '900',
@@ -105,6 +103,19 @@ def show_page():
                     'text-align': 'right'
                 })
                 st.dataframe(styled_df_pl, use_container_width=True, hide_index=True)
+
+                # 🌟 زر تصدير أرباح وخسائر الفروع إلى Excel للأدمن
+                output_pl = io.BytesIO()
+                with pd.ExcelWriter(output_pl, engine='xlsxwriter') as writer:
+                    df_pl.to_excel(writer, index=False, sheet_name='Profit_Loss_Report')
+                
+                st.download_button(
+                    label="📥 تحميل تقرير الأرباح والخسائر كملف Excel",
+                    data=output_pl.getvalue(),
+                    file_name="Profit_Loss_Report.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_pl_excel"
+                )
 
                 label_text = "ملخص الأداء المالي العام لكل الفروع:" if selected_pl_branch == "🌐 كافة الفروع (إجمالي الشركة)" else f"ملخص الأداء المالي للفرع ({selected_pl_branch}):"
                 
@@ -170,7 +181,6 @@ def show_page():
                 df_items = df_items.drop(columns=['سعر الشراء الأساسي', 'متوسط التكلفة الفعلي'], errors='ignore')
                 st.info("ℹ️ ملاحظة: أعمدة التكاليف وهامش الربح محجوبة لغير الأدمن.")
 
-            # 🌟 استخدام Pandas Styler لتلوين وتغميق خطوط جدول الأصناف باللون الأسود العريض الصريح
             styled_df_items = df_items.style.set_properties(**{
                 'color': '#000000',
                 'font-weight': '900',
@@ -178,6 +188,19 @@ def show_page():
                 'text-align': 'right'
             })
             st.dataframe(styled_df_items, use_container_width=True, hide_index=True)
+
+            # 🌟 زر تصدير تقرير الأصناف والأرباح إلى Excel للأدمن
+            output_items = io.BytesIO()
+            with pd.ExcelWriter(output_items, engine='xlsxwriter') as writer:
+                df_items.to_excel(writer, index=False, sheet_name='Items_Profit_Report')
+            
+            st.download_button(
+                label="📥 تحميل تقرير تفصيل الأصناف والأرباح كملف Excel",
+                data=output_items.getvalue(),
+                file_name="Items_Profit_Report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_items_excel"
+            )
         else:
             st.info("لا توجد أصناف مسجلة في هذا الفرع.")
 
