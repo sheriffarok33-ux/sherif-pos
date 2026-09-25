@@ -32,7 +32,6 @@ st.markdown("""
     h2 { font-size: 24px !important; color: #1e293b !important; }
     h3 { font-size: 20px !important; color: #334155 !important; }
     
-    /* 🌟 جعل النصوص وأيقونات الأزرار الزرقاء باللون الأبيض حصرياً */
     div.stButton > button, div.stButton > button * { 
         color: #ffffff !important; 
     }
@@ -79,11 +78,9 @@ def set_page(page_name):
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     
-    # الأدمن والمشرف العام مسموح لهم بكل الشاشات
     if role in ["Admin", "General_Supervisor"]: 
         return True
         
-    # 🔒 الكاشير: ممنوع من أي صلاحيات إدارية، مسموح له فقط ببيع ومفضلة
     if role == "Cashier":
         allowed_for_cashier = [
             "🏠 الرئيسية واللوحة", 
@@ -92,7 +89,6 @@ def check_user_permission(menu_name):
         ]
         return menu_name in allowed_for_cashier
 
-    # العارض مسموح له بالتقارير فقط
     if role == "Viewer":
         allowed_for_viewer = [
             "🏠 الرئيسية واللوحة",
@@ -100,7 +96,6 @@ def check_user_permission(menu_name):
         ]
         return menu_name in allowed_for_viewer
         
-    # مشرف الفرع مسموح له بإدارة فرعه والبيع فقط
     if role == "Branch_Supervisor":
          allowed_for_bs = [
             "🏠 الرئيسية واللوحة",
@@ -111,7 +106,6 @@ def check_user_permission(menu_name):
 
     return False
 # -------------------------------------------------------------
-
 
 # --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
@@ -143,12 +137,11 @@ if not st.session_state["logged_in"]:
                     st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
     st.stop()
 
-# --- القائمة الجانبية (Navigation Menu) مرتبة ومنظمة ---
+# --- القائمة الجانبية (Navigation Menu) ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-# قائمة الشاشات المتاحة في النظام
 DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
@@ -167,7 +160,6 @@ DEFAULT_MENUS = [
     "📊 التقارير والأرباح"
 ]
 
-# 🛡️ تطبيق فلتر الصلاحيات على القائمة الجانبية
 for menu_name in DEFAULT_MENUS:
     if check_user_permission(menu_name):
         if st.sidebar.button(menu_name, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
