@@ -3,29 +3,27 @@ import pandas as pd
 from database import get_db_connection
 
 def show_page():
-    # 🌟 تنسيق CSS شامل ومقوى لفرض الخط الأسود العريض والواضح بحجم كبير على كل الجداول والنصوص
+    # 🌟 تنسيق CSS قوي يستهدف أقصى درجات التغميق والوضوح لجميع النصوص والجداول
     st.markdown("""
         <style>
-        /* فرض الخط الأسود العريض جداً والكبير على كافة خلايا ونصوص الجداول */
+        /* فرض الخط الأسود الداكن والعريض جداً على كافة عناصر الجداول والنصوص */
         .stDataFrame, .stDataFrame *, div[data-testid="stTable"] *, th, td, 
-        .streamlit-expanderHeader, div[data-baseweb="select"] *, span, p, label {
+        div[data-baseweb="select"] *, span, p, label, h3, h4 {
             color: #000000 !important;
             font-family: 'Tajawal', sans-serif !important;
             font-weight: 900 !important;
-            font-size: 18px !important;
         }
-        /* تعبئة وتغميق رؤوس الجداول */
+        /* تغميق وتكبير رؤوس الجداول وبياناتها بالكامل */
         th {
             background-color: #cbd5e1 !important;
             color: #000000 !important;
-            font-size: 19px !important;
+            font-size: 18px !important;
             font-weight: 900 !important;
         }
-        /* زيادة وضوح وصعوبة الخط داخل مربعات الاختيار */
-        div[data-baseweb="select"] div {
+        td {
             color: #000000 !important;
+            font-size: 17px !important;
             font-weight: 900 !important;
-            font-size: 18px !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -35,22 +33,19 @@ def show_page():
 
     conn = get_db_connection()
     
-    # التحقق من صلاحيات المستخدم
     role = st.session_state.get("role", "")
     is_admin_or_supervisor = role in ["Admin", "General_Supervisor"]
 
-    # جلب الفروع
     branches = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
     b_dict = {b["branch_name"]: b["id"] for b in branches}
 
-    # تبويبات التقارير
     tab_pl, tab_items_rep = st.tabs([
         "💰 قائمة الأرباح والخسائر الشاملة (لكل فرع)", 
         "📦 تقرير تفصيلي للأصناف ومتوسط التكلفة وهامش الربح"
     ])
 
     # =========================================================================
-    # 1. تبويب أرباح وخسائر الفروع (مع فلتر الفروع الدقيق)
+    # 1. تبويب أرباح وخسائر الفروع
     # =========================================================================
     with tab_pl:
         st.markdown("### 📈 الحسابات الختامية وأرباح الفروع")
@@ -101,7 +96,15 @@ def show_page():
                     })
 
                 df_pl = pd.DataFrame(pl_data)
-                st.dataframe(df_pl, use_container_width=True, hide_index=True)
+                
+                # 🌟 استخدام Pandas Styler لضمان ظهور خطوط الجدول بالأسود العريض والصريح
+                styled_df_pl = df_pl.style.set_properties(**{
+                    'color': '#000000',
+                    'font-weight': '900',
+                    'font-size': '16px',
+                    'text-align': 'right'
+                })
+                st.dataframe(styled_df_pl, use_container_width=True, hide_index=True)
 
                 label_text = "ملخص الأداء المالي العام لكل الفروع:" if selected_pl_branch == "🌐 كافة الفروع (إجمالي الشركة)" else f"ملخص الأداء المالي للفرع ({selected_pl_branch}):"
                 
@@ -167,7 +170,14 @@ def show_page():
                 df_items = df_items.drop(columns=['سعر الشراء الأساسي', 'متوسط التكلفة الفعلي'], errors='ignore')
                 st.info("ℹ️ ملاحظة: أعمدة التكاليف وهامش الربح محجوبة لغير الأدمن.")
 
-            st.dataframe(df_items, use_container_width=True, hide_index=True)
+            # 🌟 استخدام Pandas Styler لتلوين وتغميق خطوط جدول الأصناف باللون الأسود العريض الصريح
+            styled_df_items = df_items.style.set_properties(**{
+                'color': '#000000',
+                'font-weight': '900',
+                'font-size': '16px',
+                'text-align': 'right'
+            })
+            st.dataframe(styled_df_items, use_container_width=True, hide_index=True)
         else:
             st.info("لا توجد أصناف مسجلة في هذا الفرع.")
 
