@@ -4,25 +4,32 @@ from database import get_db_connection
 import io
 
 def show_page():
-    # 🌟 تنسيق CSS قوي للخط الأسود الداكن والعريض جداً
+    # 🌟 تنسيق CSS حصري وقوي لجداول Streamlit لضمان الخط الأسود العريض والواضح جداً
     st.markdown("""
         <style>
-        .stDataFrame, .stDataFrame *, div[data-testid="stTable"] *, th, td, 
+        /* فرض الخط الأسود الداكن والعريض والكبير على جميع خلايا ورؤوس الجداول وجميع النصوص */
+        .stDataFrame div, .stDataFrame span, .stDataFrame p, 
+        div[data-testid="stTable"] *, th, td, 
         div[data-baseweb="select"] *, span, p, label, h3, h4 {
             color: #000000 !important;
             font-family: 'Tajawal', sans-serif !important;
             font-weight: 900 !important;
         }
+        /* تنسيق رؤوس الجدول */
         th {
-            background-color: #cbd5e1 !important;
+            background-color: #94a3b8 !important;
+            color: #000000 !important;
+            font-size: 19px !important;
+            font-weight: 900 !important;
+            text-align: right !important;
+        }
+        /* تنسيق خلايا البيانات داخل الجداول */
+        td {
             color: #000000 !important;
             font-size: 18px !important;
             font-weight: 900 !important;
-        }
-        td {
-            color: #000000 !important;
-            font-size: 17px !important;
-            font-weight: 900 !important;
+            background-color: #f8fafc !important;
+            text-align: right !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -89,20 +96,15 @@ def show_page():
                     pl_data.append({
                         "اسم الفرع": b_name,
                         "نوع المنشأة": b["branch_type"],
-                        "إجمالي المبيعات (د.ل)": b_sales,
-                        "إجمالي المصروفات والرواتب والإيجارات (د.ل)": b_expenses,
-                        "صافي الربح التقديري (د.ل)": b_net_profit
+                        "إجمالي المبيعات (د.ل)": f"{b_sales:,.2f}",
+                        "إجمالي المصروفات والرواتب والإيجارات (د.ل)": f"{b_expenses:,.2f}",
+                        "صافي الربح التقديري (د.ل)": f"{b_net_profit:,.2f}"
                     })
 
                 df_pl = pd.DataFrame(pl_data)
                 
-                styled_df_pl = df_pl.style.set_properties(**{
-                    'color': '#000000',
-                    'font-weight': '900',
-                    'font-size': '16px',
-                    'text-align': 'right'
-                })
-                st.dataframe(styled_df_pl, use_container_width=True, hide_index=True)
+                # عرض الجدول بشكل طبيعي ومباشر لضمان ظهور البيانات والخطوط بوضوح تام
+                st.dataframe(df_pl, use_container_width=True, hide_index=True)
 
                 # 🌟 زر تصدير أرباح وخسائر الفروع إلى Excel للأدمن
                 output_pl = io.BytesIO()
@@ -181,13 +183,7 @@ def show_page():
                 df_items = df_items.drop(columns=['سعر الشراء الأساسي', 'متوسط التكلفة الفعلي'], errors='ignore')
                 st.info("ℹ️ ملاحظة: أعمدة التكاليف وهامش الربح محجوبة لغير الأدمن.")
 
-            styled_df_items = df_items.style.set_properties(**{
-                'color': '#000000',
-                'font-weight': '900',
-                'font-size': '16px',
-                'text-align': 'right'
-            })
-            st.dataframe(styled_df_items, use_container_width=True, hide_index=True)
+            st.dataframe(df_items, use_container_width=True, hide_index=True)
 
             # 🌟 زر تصدير تقرير الأصناف والأرباح إلى Excel للأدمن
             output_items = io.BytesIO()
