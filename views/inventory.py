@@ -1,56 +1,4 @@
-import streamlit as st
-import pandas as pd
-import os
-from database import get_db_connection
-
-def show_page():
-    st.markdown("""
-        <style>
-        .rtl-container { direction: rtl !important; text-align: right !important; }
-        .stButton > button { border-radius: 8px; font-weight: bold; }
-        </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<h2 class="rtl-container">📦 إدارة المخزن والفروع وتوزيع البضاعة (نظام القطع والكراتين والكيلو)</h2>', unsafe_allow_html=True)
-    st.markdown("---")
-    
-    conn = get_db_connection()
-    
-    tab_branches, tab_items, tab_transfer = st.tabs([
-        "🏢 إدارة الفروع والمخازن", 
-        "📋 تعريف وإدارة أصناف المخزن", 
-        "🚚 تزويد ونقل البضائع بين الفروع"
-    ])
-    
-    # ==========================================
-    # 1. إدارة الفروع والمخازن
-    # ==========================================
-    with tab_branches:
-        st.markdown("### ➕ إضافة فرع أو مخزن جديد")
-        with st.form("add_branch_form_boxes", clear_on_submit=True):
-            b_name = st.text_input("اسم الفرع أو المخزن الجديد:")
-            b_type = st.selectbox("نوع المنشأة:", ["فرع بيع (كاشير)", "مخزن رئيسي"])
-            
-            if st.form_submit_button("💾 حفظ الفرع الجديد", type="primary"):
-                if b_name.strip():
-                    try:
-                        conn.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", (b_name.strip(), b_type))
-                        conn.commit()
-                        st.success(f"✅ تم إضافة ({b_name}) بنجاح!")
-                        st.rerun()
-                    except:
-                        st.error("⚠️ هذا الفرع أو المخزن موجود مسبقاً.")
-                else:
-                    st.warning("⚠️ يرجى إدخال اسم الفرع.")
-
-        st.markdown("### 📊 الفروع والمخازن المسجلة حالياً")
-        branches_df = pd.read_sql("SELECT id AS 'رقم الفرع', branch_name AS 'اسم الفرع', branch_type AS 'النوع' FROM branches", conn)
-        if not branches_df.empty:
-            st.dataframe(branches_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("لا توجد فروع مسجلة حتى الآن.")
-
-    # ==========================================
+# ==========================================
     # 2. تعريف وإدارة أصناف المخزن (بالقطعة أو الصندوق/الكرتونة)
     # ==========================================
     with tab_items:
@@ -60,19 +8,19 @@ def show_page():
         if not b_dict:
             st.warning("⚠️ يرجى إضافة فرع أو مخزن أولاً من تبويب 'إدارة الفروع'.")
         else:
-            st.markdown("### 🏷️ إضافة صنف جديد (يدعم الكرتونة/الصندوق أو الوزن والقطعة)")
+            st.markdown("### 🏷️ إضافة صنف جديد (يدعم الكرتونة/الصندوق بسعر الجملة والتجزئة)")
             selected_branch_name = st.selectbox("اختر الفرع / المخزن لإضافة الصنف إليه:", list(b_dict.keys()), key="item_branch_sel")
             target_branch_id = b_dict[selected_branch_name]
             
-            with st.form("add_item_advanced_form", clear_on_submit=True):
+            with st.form("add_item_advanced_form_v2", clear_on_submit=True):
                 col_i1, col_i2 = st.columns(2)
                 i_code = col_i1.text_input("كود الصنف (الباركود):")
-                i_name = col_i2.text_input("اسم الصنف (مثل: قهوة حب / شوكولاتة علب):")
+                i_name = col_i2.text_input("اسم الصنف (مثل: شوكولاتة علب / قهوة):")
                 
                 st.markdown("---")
-                st.markdown("#### 📦 تفاصيل التعبئة وسعر الشراء والبيع:")
+                st.markdown("#### 📦 تفاصيل التعبئة، أسعار الشراء والبيع (مفرد وجملة):")
                 
-                unit_type = st.selectbox("طريقة البيع والتعامل الأساسية:", ["وحدة / كيلو (مفرد)", "صندوق / كرتونة (تحتوي على قطع)"])
+                unit_type = st.selectbox("طريقة الإدخال والتعامل الأساسية:", ["وحدة / كيلو (مفرد)", "صندوق / كرتونة (تحتوي على قطع)"])
                 
                 col_i3, col_i4, col_i5 = st.columns(3)
                 if unit_type == "صندوق / كرتونة (تحتوي على قطع)":
@@ -80,30 +28,39 @@ def show_page():
                     items_per_box = col_i4.number_input("عدد القطع داخل الصندوق الواحد:", min_value=1.0, value=12.0, step=1.0)
                     box_buy_price = col_i5.number_input("سعر شراء الصندوق الإجمالي (د.ل):", min_value=0.0, value=0.0, step=1.0)
                     
-                    # الحسابات التلقائية الخلفية
-                    i_qty = box_count * items_per_box  # الكمية الإجمالية بالقطع
-                    i_buy = box_buy_price / items_per_box if items_per_box > 0 else 0.0  # تكلفة القطعة المفردة
+                    # حسابات تلقائية بالخلفية
+                    i_qty = box_count * items_per_box  # إجمالي عدد القطع بالمخزن
+                    i_buy = box_buy_price / items_per_box if items_per_box > 0 else 0.0  # تكلفة القطعة الواحدة
                 else:
                     i_qty = col_i3.number_input("الكمية الأولية (بالقطعة أو الكيلو):", min_value=0.0, value=1.0, step=1.0)
                     i_buy = col_i4.number_input("سعر الشراء للوحدة/الكيلو (د.ل):", min_value=0.0, value=0.0, step=0.5)
-                    i_buy_price_box_dummy = col_i5.text_input("ملاحظة:", value="إدخال مفرد مباشر", disabled=True)
+                    box_buy_price = 0.0
                     items_per_box = 1.0
 
-                col_i6, col_i7 = st.columns(2)
-                i_sale = col_i6.number_input("سعر بيع القطعة / الكيلو الواحد (د.ل):", min_value=0.0, value=0.0, step=0.5)
-                i_fav = col_i7.selectbox("إضافة للوحة المفضلة (1-20)؟", ["لا", "نعم"])
+                st.markdown("---")
+                col_s1, col_s2, col_s3 = st.columns(3)
+                i_sale_unit = col_s1.number_input("سعر بيع القطعة / الكيلو الواحد (تجزئة):", min_value=0.0, value=0.0, step=0.5)
+                
+                if unit_type == "صندوق / كرتونة (تحتوي على قطع)":
+                    i_sale_box = col_s2.number_input("سعر بيع الصندوق كاملاً (جملة):", min_value=0.0, value=0.0, step=1.0)
+                else:
+                    i_sale_box = 0.0
+                    col_s2.text_input("سعر بيع الصندوق:", value="غير متاح للمفرد", disabled=True)
+                
+                i_fav = col_s3.selectbox("إضافة للمفضلة (1-20)؟", ["لا", "نعم"])
                 
                 uploaded_img = st.file_uploader("صورة الصنف (اختياري - JPG/PNG):", type=["jpg", "png", "jpeg"])
                 
-                if st.form_submit_button("💾 حفظ الصنف في المخزن بالحسابات الجديدة", type="primary"):
+                if st.form_submit_button("💾 حفظ الصنف بأسعار البيع والشراء الجديدة", type="primary"):
                     if i_code.strip() and i_name.strip():
                         try:
                             fav_val = 1 if i_fav == "نعم" else 0
                             cursor_item = conn.cursor()
+                            # سنعتمد سعر بيع القطعة/الوحدة كالسعر الأساسي بالنظام، ونقدر نحفظ سعر الصندوق لو احتجناه
                             cursor_item.execute("""
                                 INSERT INTO items (item_code, item_name, branch_id, quantity, buy_price, sale_price, avg_cost, favorite_rank)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (i_code.strip(), i_name.strip(), target_branch_id, i_qty, i_buy, i_sale, i_buy, fav_val))
+                            """, (i_code.strip(), i_name.strip(), target_branch_id, i_qty, i_buy, i_sale_unit, i_buy, fav_val))
                             
                             if uploaded_img is not None:
                                 os.makedirs("item_images", exist_ok=True)
@@ -112,84 +69,9 @@ def show_page():
                                     f.write(uploaded_img.getbuffer())
                                     
                             conn.commit()
-                            st.success(f"✅ تمت إضافة الصنف ({i_name}) بإجمالي كمية ({i_qty}) وتكلفة مفردة ({i_buy:.2f} د.ل) بنجاح!")
+                            st.success(f"✅ تمت إضافة الصنف ({i_name}) بنجاح! (الكمية الإجمالية بالقطع: {i_qty} | تكلفة القطعة: {i_buy:.2f} د.ل)")
                             st.rerun()
                         except Exception as e:
                             st.error(f"⚠️ حدث خطأ (ربما كود الصنف موجود مسبقاً في هذا الفرع): {e}")
                     else:
                         st.warning("⚠️ يرجى إدخال كود الصنف واسمه على الأقل.")
-
-            st.markdown("### 📋 استعراض وتعديل أصناف المخازن")
-            filter_branch = st.selectbox("فلترة العرض حسب المخزن:", ["الكل"] + list(b_dict.keys()), key="filter_branch_items")
-            
-            if filter_branch == "كل الفروع":
-                items_df = pd.read_sql("SELECT items.id, branches.branch_name AS 'الفرع', item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية الإجمالية', buy_price AS 'تكلفة الوحدة', sale_price AS 'سعر بيع الوحدة' FROM items JOIN branches ON items.branch_id = branches.id", conn)
-            else:
-                items_df = pd.read_sql("SELECT items.id, branches.branch_name AS 'الفرع', item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية الإجمالية', buy_price AS 'تكلفة الوحدة', sale_price AS 'سعر بيع الوحدة' FROM items JOIN branches ON items.branch_id = branches.id WHERE branches.branch_name = ?", conn, params=(filter_branch,))
-                
-            if not items_df.empty:
-                st.dataframe(items_df, use_container_width=True, hide_index=True)
-            else:
-                st.info("لا توجد أصناف مسجلة في هذا المخزن.")
-
-    # ==========================================
-    # 3. تزويد ونقل البضائع بين الفروع
-    # ==========================================
-    with tab_transfer:
-        st.markdown("### 🚚 تزويد ونقل بضاعة من المخزن الرئيسي إلى فرع بيع")
-        
-        branches_list = conn.execute("SELECT id, branch_name FROM branches").fetchall()
-        b_map = {b["branch_name"]: b["id"] for b in branches_list}
-        
-        if len(b_map) < 2:
-            st.warning("⚠️ يجب أن يكون لديك فرعين أو مخزن على الأقل لتمكين عملية نقل وبضائع التزويد.")
-        else:
-            col_t1, col_t2 = st.columns(2)
-            from_b = col_t1.selectbox("من مخزن (المصدر):", list(b_map.keys()), key="trans_from")
-            to_b = col_t2.selectbox("إلى فرع (المستلم):", list(b_map.keys()), key="trans_to")
-            
-            if from_b == to_b:
-                st.error("⚠️ لا يمكن النقل إلى نفس الفرع!")
-            else:
-                from_id = b_map[from_b]
-                to_id = b_map[to_b]
-                
-                source_items = conn.execute("SELECT id, item_code, item_name, quantity, buy_price, sale_price FROM items WHERE branch_id = ?", (from_id,)).fetchall()
-                s_items_dict = {f"[{i['item_code']}] {i['item_name']} (المتوفر: {i['quantity']})": i for i in source_items}
-                
-                if s_items_dict:
-                    with st.form("transfer_item_form_advanced", clear_on_submit=True):
-                        sel_trans_item_str = st.selectbox("اختر الصنف المراد نقله:", list(s_items_dict.keys()))
-                        trans_qty = st.number_input("الكمية المراد نقلها:", min_value=0.01, value=1.0, step=1.0)
-                        
-                        if st.form_submit_button("🚀 تنفيذ عملية النقل والتزويد", type="primary"):
-                            it_obj = s_items_dict[sel_trans_item_str]
-                            if trans_qty <= it_obj["quantity"]:
-                                cur_tr = conn.cursor()
-                                cur_tr.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (trans_qty, it_obj["id"]))
-                                
-                                dest_item = cur_tr.execute("SELECT id, quantity FROM items WHERE item_code = ? AND branch_id = ?", (it_obj["item_code"], to_id)).fetchone()
-                                
-                                if dest_item:
-                                    cur_tr.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (trans_qty, dest_item["id"]))
-                                else:
-                                    cur_tr.execute("""
-                                        INSERT INTO items (item_code, item_name, branch_id, quantity, buy_price, sale_price, avg_cost, favorite_rank)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-                                    """, (it_obj["item_code"], it_obj["item_name"], to_id, trans_qty, it_obj["buy_price"], it_obj["sale_price"], it_obj["buy_price"]))
-                                
-                                details_str = f"تم نقل صنف: {it_obj['item_name']} (الكمية: {trans_qty}) من {from_b} إلى {to_b}"
-                                cur_tr.execute("""
-                                    INSERT INTO transfer_logs (from_branch_id, to_branch_id, items_details, status)
-                                    VALUES (?, ?, ?, ?)
-                                """, (from_id, to_id, details_str, "معلقة بانتظار استلام الكاشير"))
-                                
-                                conn.commit()
-                                st.success(f"✅ تمت عملية التزويد بنجاح من {from_b} إلى {to_b}!")
-                                st.rerun()
-                            else:
-                                st.error("⚠️ الكمية المطلوبة غير متوفرة في المخزن المصدر!")
-                else:
-                    st.info(f"لا توجد أصناف في مخزن المصدر ({from_b}).")
-
-    conn.close()
