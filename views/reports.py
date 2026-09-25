@@ -4,37 +4,34 @@ from database import get_db_connection
 import io
 
 def show_page():
-    # 🌟 تنسيق CSS حصري وقوي لجداول Streamlit لضمان الخط الأسود العريض والواضح جداً
+    # 🌟 تنسيق CSS قوي جداً لفرض اتجاه الجدول من اليمين لليسار وتغميق الخطوط بالأسود الداكن العريض
     st.markdown("""
         <style>
-        /* فرض الخط الأسود الداكن والعريض والكبير على جميع خلايا ورؤوس الجداول وجميع النصوص */
-        .stDataFrame div, .stDataFrame span, .stDataFrame p, 
-        div[data-testid="stTable"] *, th, td, 
-        div[data-baseweb="select"] *, span, p, label, h3, h4 {
+        /* فرض الاتجاه العربي والخط الأسود العريض على كافة عناصر الجدول */
+        .stDataFrame, .stDataFrame div, .stDataFrame span, .stDataFrame p, 
+        div[data-testid="stTable"] *, th, td, div[data-baseweb="select"] * {
             color: #000000 !important;
             font-family: 'Tajawal', sans-serif !important;
             font-weight: 900 !important;
+            direction: rtl !important;
+            text-align: right !important;
         }
-        /* تنسيق رؤوس الجدول */
         th {
             background-color: #94a3b8 !important;
             color: #000000 !important;
             font-size: 19px !important;
             font-weight: 900 !important;
-            text-align: right !important;
         }
-        /* تنسيق خلايا البيانات داخل الجداول */
         td {
             color: #000000 !important;
             font-size: 18px !important;
             font-weight: 900 !important;
             background-color: #f8fafc !important;
-            text-align: right !important;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    st.markdown('<h2 style="color: #0f172a; font-weight: 900;">📊 تقارير الأرباح والخسائر وحركة الأصناف الشاملة</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 style="color: #0f172a; font-weight: 900; text-align: right;">📊 تقارير الأرباح والخسائر وحركة الأصناف الشاملة</h2>', unsafe_allow_html=True)
     st.markdown("---")
 
     conn = get_db_connection()
@@ -102,11 +99,9 @@ def show_page():
                     })
 
                 df_pl = pd.DataFrame(pl_data)
-                
-                # عرض الجدول بشكل طبيعي ومباشر لضمان ظهور البيانات والخطوط بوضوح تام
                 st.dataframe(df_pl, use_container_width=True, hide_index=True)
 
-                # 🌟 زر تصدير أرباح وخسائر الفروع إلى Excel للأدمن
+                # زر التصدير لـ Excel
                 output_pl = io.BytesIO()
                 with pd.ExcelWriter(output_pl, engine='xlsxwriter') as writer:
                     df_pl.to_excel(writer, index=False, sheet_name='Profit_Loss_Report')
@@ -185,7 +180,7 @@ def show_page():
 
             st.dataframe(df_items, use_container_width=True, hide_index=True)
 
-            # 🌟 زر تصدير تقرير الأصناف والأرباح إلى Excel للأدمن
+            # زر التصدير لـ Excel
             output_items = io.BytesIO()
             with pd.ExcelWriter(output_items, engine='xlsxwriter') as writer:
                 df_items.to_excel(writer, index=False, sheet_name='Items_Profit_Report')
