@@ -15,6 +15,7 @@ def show_page():
     st.markdown("---")
     
     conn = get_db_connection()
+    current_user_role = st.session_state.get("role", "")
     
     # 🌟 التبويبات الرئيسية لإدارة الفروع والأصناف والتزويد
     tab_branches, tab_items, tab_transfer = st.tabs([
@@ -46,8 +47,35 @@ def show_page():
 
         st.markdown("### 📊 الفروع والمخازن المسجلة حالياً")
         branches_df = pd.read_sql("SELECT id AS 'رقم الفرع', branch_name AS 'اسم الفرع', branch_type AS 'النوع' FROM branches", conn)
+        
         if not branches_df.empty:
-            st.dataframe(branches_df, use_container_width=True, hide_index=True)
+            # للأدمن: إتاحة التعديل المباشر
+            if current_user_role == "Admin":
+                st.info("💡 بصفتك أدمن، يمكنك تعديل أسماء الفروع أو أنواعها مباشرة من الجدول أدناه:")
+                edited_branches_df = st.data_editor(branches_df, use_container_width=True, hide_index=True, key="edit_branches_table")
+                
+                if st.button("💾 حفظ التعديلات على الفروع", type="primary"):
+                    try:
+                        cur_b = conn.cursor()
+                        for index, row in edited_branches_df.iterrows():
+                            cur_b.execute("UPDATE branches SET branch_name = ?, branch_type = ? WHERE id = ?", 
+                                          (row['اسم الفرع'], row['النوع'], row['رقم الفرع']))
+                        conn.commit()
+                        st.success("✅ تم تحديث بيانات الفروع بنجاح!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"⚠️ حدث خطأ أثناء التحديث: {e}")
+            else:
+                st.dataframe(branches_df, use_container_width=True, hide_index=True)
+            
+            # زر تصدير إلى Excel
+            csv_data = branches_df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 تصدير الفروع إلى Excel (CSV)",
+                data=csv_data,
+                file_name="branches_list.csv",
+                mime="text/csv"
+            )
         else:
             st.info("لا توجد فروع مسجلة حتى الآن.")
 
@@ -113,7 +141,37 @@ def show_page():
                 items_df = pd.read_sql("SELECT items.id, branches.branch_name AS 'الفرع', item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', buy_price AS 'سعر الشراء', sale_price AS 'سعر البيع' FROM items JOIN branches ON items.branch_id = branches.id WHERE branches.branch_name = ?", conn, params=(filter_branch,))
                 
             if not items_df.empty:
-                st.dataframe(items_df, use_container_width=True, hide_index=True)
+                # للأدمن: إتاحة التعديل المباشر على جدول الأصناف والكميات والأسعار
+                if current_user_role == "Admin":
+                    st.info("💡 بصفتك أدمن، يمكنك تعديل الكميات، الأسعار، أو أسماء الأصناف مباشرة من الجدول أدناه:")
+                    edited_items_df = st.data_editor(items_df, use_container_width=True, hide_index=True, key="edit_items_table")
+                    
+                    if st.button("💾 حفظ التعديلات على الأصناف", type="primary", key="save_items_btn"):
+                        try:
+                            cur_it = conn.cursor()
+                            for index, row in edited_items_df.iterrows():
+                                cur_it.execute("""
+                                    UPDATE items 
+                                    SET item_code = ?, item_name = ?, quantity = ?, buy_price = ?, sale_price = ? 
+                                    WHERE id = ?
+                                """, (row['الكود'], row['اسم الصنف'], row['الكمية'], row['سعر الشراء'], row['سعر البيع'], row['id']))
+                            conn.commit()
+                            st.success("✅ تم تحديث بيانات الأصناف والمخزون بنجاح!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"⚠️ حدث خطأ أثناء حفظ التعديلات: {e}")
+                else:
+                    st.dataframe(items_df, use_container_width=True, hide_index=True)
+                
+                # زر تصدير أصناف المخزن إلى Excel
+                csv_items = items_df.to_csv(index=False).encode('utf-8-sig')
+                st.download_button(
+                    label="📥 تصدير الأصناف إلى Excel (CSV)",
+                    data=csv_items,
+                    file_name="warehouse_items.csv",
+                    mime="text/csv",
+                    key="download_items_csv"
+                )
             else:
                 st.info("لا توجد أصناف مسجلة في هذا المخزن.")
 
