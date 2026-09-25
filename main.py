@@ -277,7 +277,11 @@ elif choice == "⚙️ الجرد والتصفير السنوي":
     st.info("⚙️ شاشة الجرد قيد التجهيز.")
 
 elif choice == "🥜 التحميص والخلط":
-    st.info("🥜 شاشة التحميص قيد التجهيز.")
+    try:
+        from views import roasting_blending
+        roasting_blending.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود داخل مجلد views.")
 
 elif choice == "📊 التقارير والأرباح":
     try:
