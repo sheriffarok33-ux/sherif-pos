@@ -15,7 +15,6 @@ def show_page():
     
     conn = get_db_connection()
     
-    # 🌟 التبويبات الرئيسية
     tab_branches, tab_items, tab_transfer = st.tabs([
         "🏢 إدارة الفروع والمخازن", 
         "📋 تعريف وإدارة أصناف المخزن والباركود", 
@@ -63,118 +62,94 @@ def show_page():
             selected_branch_name = st.selectbox("اختر الفرع / المخزن للتعامل مع الأصناف:", list(b_dict.keys()), key="item_branch_sel")
             target_branch_id = b_dict[selected_branch_name]
             
-            st.markdown("### 🏷️ قارئ الباركود وإدارة الأصناف")
+            st.markdown("### 🏷️ تسجيل صنف جديد أو تحديثه (نظام الكراتين والقطع)")
             
-            # تهيئة الذاكرة المؤقتة للباركود لتجنب ضياعه
-            if "scanned_item_code" not in st.session_state:
-                st.session_state["scanned_item_code"] = ""
-
-            # استخدام Form منفصل للبحث بالباركود لضمان ثبات الرقم عند قراءته
-            with st.form("barcode_search_form"):
-                scanned_input = st.text_input("قم بمسح الباركود بالقارئ أو اكتبه واضغط Enter:", value=st.session_state["scanned_item_code"])
-                search_btn = st.form_submit_button("🔍 بحث عن الصنف", type="primary")
+            # نموذج متكامل وثابت لمنع مسح الباركود أو تطاير الحقول
+            with st.form("stable_item_entry_form", clear_on_submit=True):
+                col_f1, col_f2 = st.columns(2)
+                i_code = col_f1.text_input("كود الصنف (الباركود):")
+                i_name = col_f2.text_input("اسم الصنف:")
                 
-                if search_btn and scanned_input.strip():
-                    st.session_state["scanned_item_code"] = scanned_input.strip()
-                    st.rerun()
-
-            current_code = st.session_state["scanned_item_code"]
-
-            if current_code:
-                st.info(f"🎯 الكود النشط حالياً: **{current_code}**")
+                col_f3, col_f4 = st.columns(2)
+                pieces_per_carton = col_f3.number_input("كم قطعه داخل الكرتون؟", min_value=1, value=1, step=1)
+                cartons_count = col_f4.number_input("عدد الكراتين المضافة (الكمية):", min_value=0.0, value=1.0, step=1.0)
                 
-                if st.button("🔄 مسح الكود الحالي والبحث عن صنف آخر"):
-                    st.session_state["scanned_item_code"] = ""
-                    st.rerun()
-
-                # التحقق هل الصنف مسجل مسبقاً في هذا الفرع؟
-                existing_item = conn.execute(
-                    "SELECT * FROM items WHERE item_code = ? AND branch_id = ?", 
-                    (current_code, target_branch_id)
-                ).fetchone()
-
-                if existing_item:
-                    st.success(f"✅ الصنف مسجل مسبقاً: **{existing_item['item_name']}**")
-                    with st.form("update_existing_item_form"):
-                        st.markdown("#### تحديث كمية أو سعر صنف موجود")
-                        add_qty = st.number_input("إضافة كراتين أو قطع جديدة للمخزون:", min_value=0.0, value=0.0, step=1.0)
-                        new_sale_price = st.number_input("تعديل سعر البيع:", min_value=0.0, value=float(existing_item['sale_price']), step=0.5)
-                        
-                        if st.form_submit_button("🔄 تحديث بيانات الصنف", type="primary"):
-                            conn.execute(
-                                "UPDATE items SET quantity = quantity + ?, sale_price = ? WHERE id = ?",
-                                (add_qty, new_sale_price, existing_item['id'])
-                            )
-                            conn.commit()
-                            st.success("✅ تم تحديث بيانات الصنف بنجاح!")
-                            st.session_state["scanned_item_code"] = ""
-                            st.rerun()
-                else:
-                    st.warning(f"⚠️ الكود ({current_code}) غير مسجل في هذا الفرع. يرجى إدخال تفاصيل الصنف الجديد:")
-                    
-                    with st.form("add_new_item_form", clear_on_submit=True):
-                        i_name = st.text_input("اسم الصنف:")
-                        
-                        col_c1, col_c2 = st.columns(2)
-                        pieces_per_carton = col_c1.number_input("كم قطعة داخل الكرتون؟", min_value=1, value=1, step=1)
-                        cartons_count = col_c2.number_input("عدد الكراتين المضافة (الكمية):", min_value=0.0, value=1.0, step=1.0)
-                        
+                col_f5, col_f6 = st.columns(2)
+                box_buy_price = col_f5.number_input("سعر شراء الكرتون (د.ل):", min_value=0.0, value=0.0, step=0.5)
+                sale_price_piece = col_f6.number_input("سعر بيع القطعة المفردة (د.ل):", min_value=0.0, value=0.0, step=0.5)
+                
+                i_fav = st.selectbox("إضافة لوحة المفضلة السريعة؟", ["لا", "نعم"])
+                uploaded_img = st.file_uploader("صورة الصنف (اختياري):", type=["jpg", "png", "jpeg"])
+                
+                submit_btn = st.form_submit_button("💾 حفظ الصنف وإضافته للمخزن", type="primary")
+                
+                if submit_btn:
+                    if i_code.strip() and i_name.strip():
                         total_pieces = cartons_count * pieces_per_carton
-                        st.info(f"📦 إجمالي عدد القطع المضافة للمخزون تلقائياً: **{total_pieces} قطعة**")
-                        
-                        col_p1, col_p2 = st.columns(2)
-                        box_buy_price = col_p1.number_input("سعر شراء الكرتون (د.ل):", min_value=0.0, value=0.0, step=0.5)
-                        sale_price_piece = col_p2.number_input("سعر بيع القطعة المفردة (د.ل):", min_value=0.0, value=0.0, step=0.5)
-                        
                         unit_buy_price = (box_buy_price / pieces_per_carton) if pieces_per_carton > 0 else 0.0
-                        st.caption(f"💡 سعر تكلفة القطعة الواحدة محسوب تلقائياً: {unit_buy_price:,.2f} د.ل")
+                        fav_val = 1 if i_fav == "نعم" else 0
                         
-                        i_fav = st.selectbox("إضافة لوحة المفضلة السريعة؟", ["لا", "نعم"])
-                        uploaded_img = st.file_uploader("صورة الصنف (اختياري - JPG/PNG):", type=["jpg", "png", "jpeg"])
-                        
-                        if st.form_submit_button("💾 حفظ الصنف الجديد في المخزن", type="primary"):
-                            if i_name.strip():
-                                try:
-                                    fav_val = 1 if i_fav == "نعم" else 0
-                                    cursor_item = conn.cursor()
-                                    cursor_item.execute("""
-                                        INSERT INTO items (item_code, item_name, branch_id, quantity, buy_price, sale_price, avg_cost, favorite_rank)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                                    """, (current_code, i_name.strip(), target_branch_id, total_pieces, unit_buy_price, sale_price_piece, unit_buy_price, fav_val))
-                                    
-                                    if uploaded_img is not None:
-                                        os.makedirs("item_images", exist_ok=True)
-                                        img_path = os.path.join("item_images", f"{current_code}.jpg")
-                                        with open(img_path, "wb") as f:
-                                            f.write(uploaded_img.getbuffer())
-                                            
-                                    conn.commit()
-                                    st.success(f"✅ تمت إضافة الصنف ({i_name}) بنجاح!")
-                                    st.session_state["scanned_item_code"] = ""
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"⚠️ حدث خطأ أثناء الحفظ: {e}")
+                        try:
+                            cursor = conn.cursor()
+                            # التحقق هل الصنف موجود مسبقاً في هذا الفرع
+                            existing = cursor.execute(
+                                "SELECT id, quantity FROM items WHERE item_code = ? AND branch_id = ?", 
+                                (i_code.strip(), target_branch_id)
+                            ).fetchone()
+                            
+                            if existing:
+                                # تحديث الكمية والسعر لو الصنف موجود
+                                cursor.execute(
+                                    "UPDATE items SET quantity = quantity + ?, sale_price = ?, buy_price = ? WHERE id = ?",
+                                    (total_pieces, sale_price_piece, unit_buy_price, existing['id'])
+                                )
+                                conn.commit()
+                                st.success(f"✅ الصنف موجود مسبقاً، وتم تحديث الكمية بإضافة {total_pieces} قطعة وسعر البيع بنجاح!")
                             else:
-                                st.warning("⚠️ يرجى إدخال اسم الصنف.")
+                                # إدراج صنف جديد كلياً
+                                cursor.execute("""
+                                    INSERT INTO items (item_code, item_name, branch_id, quantity, buy_price, sale_price, avg_cost, favorite_rank)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (
+                                    i_code.strip(), 
+                                    i_name.strip(), 
+                                    target_branch_id, 
+                                    total_pieces, 
+                                    unit_buy_price, 
+                                    sale_price_piece, 
+                                    unit_buy_price, 
+                                    fav_val
+                                ))
+                                
+                                if uploaded_img is not None:
+                                    os.makedirs("item_images", exist_ok=True)
+                                    img_path = os.path.join("item_images", f"{i_code.strip()}.jpg")
+                                    with open(img_path, "wb") as f:
+                                        f.write(uploaded_img.getbuffer())
+                                        
+                                conn.commit()
+                                st.success(f"✅ تمت إضافة الصنف الجديد ({i_name.strip()}) بنجاح بإجمالي قطع: {total_pieces}!")
+                        except Exception as e:
+                            st.error(f"⚠️ حدث خطأ أثناء الحفظ: {e}")
+                    else:
+                        st.warning("⚠️ يرجى إدخال كود الصنف واسمه على الأقل.")
 
             st.markdown("---")
-            st.markdown("### 📋 جدول الأصناف المسجلة في المخزن")
+            st.markdown("### 📋 جدول الأصناف المسجلة في هذا المخزن")
             items_df = pd.read_sql("""
-                SELECT items.id, branches.branch_name AS 'الفرع', 
-                       item_code AS 'الكود', 
+                SELECT item_code AS 'الكود', 
                        item_name AS 'اسم الصنف', 
                        quantity AS 'الكمية (قطع)', 
                        buy_price AS 'تكلفة القطعة', 
                        sale_price AS 'سعر البيع' 
                 FROM items 
-                JOIN branches ON items.branch_id = branches.id 
-                WHERE branches.id = ?
+                WHERE branch_id = ?
             """, conn, params=(target_branch_id,))
             
             if not items_df.empty:
                 st.dataframe(items_df, use_container_width=True, hide_index=True)
             else:
-                st.info("لا توجد أصناف مسجلة في هذا المخزن.")
+                st.info("لا توجد أصناف مسجلة في هذا المخزن حتى الآن.")
 
     # ==========================================
     # 3. تزويد ونقل البضائع بين الفروع
@@ -186,7 +161,7 @@ def show_page():
         b_map = {b["branch_name"]: b["id"] for b in branches_list}
         
         if len(b_map) < 2:
-            st.warning("⚠️ يجب أن يكون لديك فرعين أو مخزن على الأقل لتمكين عملية نقل وبضائع التزويد.")
+            st.warning("⚠️ يجب أن يكون لديك فرعين أو مخزن على الأقل لتمكين عملية النقل والتزويد.")
         else:
             col_t1, col_t2 = st.columns(2)
             from_b = col_t1.selectbox("من مخزن (المصدر):", list(b_map.keys()), key="trans_from")
@@ -227,7 +202,7 @@ def show_page():
                                 cur_tr.execute("""
                                     INSERT INTO transfer_logs (from_branch_id, to_branch_id, items_details, status)
                                     VALUES (?, ?, ?, ?)
-                                """, (from_id, to_id, details_str, "معلقة بانتظار استلاستلام الكاشير"))
+                                """, (from_id, to_id, details_str, "معلقة بانتظار استلام الكاشير"))
                                 
                                 conn.commit()
                                 st.success(f"✅ تمت عملية التزويد ونقل البضاعة بنجاح من {from_b} إلى {to_b}!")
