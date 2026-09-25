@@ -4,7 +4,7 @@ from database import get_db_connection
 
 def show_page():
     st.header("👥 إدارة المستخدمين والصلاحيات")
-    st.info("💡 من هنا يمكنك إضافة الموظفين، تحديد رتبهم، وربطهم بالفروع أو إعطائهم صلاحية كافة الفروع.")
+    st.info("💡 من هنا يمكنك إضافة الموظفين، تحديد رتبهم، تعديل كلمات المرور، وربطهم بالفروع.")
 
     conn = get_db_connection()
     current_user_role = st.session_state.get("role", "")
@@ -42,11 +42,9 @@ def show_page():
                     st.error("❌ عذراً، لا يمكن إضافة مشرف نظام (Admin) إلا بواسطة Admin آخر حصرياً!")
                 else:
                     try:
-                        # جلب الـ ID الحقيقي للفرع أو None إذا اختار الكل
                         assigned_b_id = b_opts_dict[sel_user_branch]
-
                         conn.execute("INSERT INTO users (username, phone, password, role, branch_id) VALUES (?, ?, ?, ?, ?)", 
-                                     (uname.strip(), uphone.strip(), upass, urole, assigned_b_id))
+                                   (uname.strip(), uphone.strip(), upass, urole, assigned_b_id))
                         conn.commit()
                         st.success(f"✅ تم إضافة المستخدم ({uname}) بنجاح!")
                         st.rerun()
@@ -59,32 +57,77 @@ def show_page():
     st.markdown("---")
     st.markdown("### 📋 قائمة المستخدمين الحاليين")
 
-    udf = pd.read_sql("""
+    # للأدمن نظهر كلمة المرور، لغيره نخفيها أو نظهرها بصلاحيات أضيق
+    query = """
         SELECT users.id AS 'المسلسل', 
                users.username AS 'اسم المستخدم', 
+               users.password AS 'كلمة المرور',
                users.role AS 'الرتبة', 
                COALESCE(branches.branch_name, '🌐 كافة الفروع (الكل)') AS 'الفرع' 
         FROM users 
         LEFT JOIN branches ON users.branch_id = branches.id
-    """, conn)
+    """
+    udf = pd.read_sql(query, conn)
 
     if not udf.empty:
-        # إذا لم يكن المستخدم أدمن، نمنعه من رؤية أو حذف حسابات الأدمن لحماية النظام
         if current_user_role != "Admin":
             selectable_users_df = udf[udf['الرتبة'] != 'Admin']
+            # إخفاء كلمة المرور لو لم يكن أدمن لحماية الخصوصية
+            udf_display = udf.drop(columns=['كلمة المرور'])
         else:
             selectable_users_df = udf
+            udf_display = udf
 
-        st.dataframe(udf, use_container_width=True, hide_index=True)
+        st.dataframe(udf_display, use_container_width=True, hide_index=True)
 
+        # --- قسم تعديل بيانات أو كلمة مرور مستخدم (خاص بالأدمن) ---
+        if current_user_role == "Admin":
+            st.markdown("---")
+            st.markdown("### ✏️ تعديل بيانات أو كلمة مرور مستخدم")
+            edit_u_id = st.selectbox("اختر المستخدم للتعديل:", udf["المسلسل"].tolist(), 
+                                    format_func=lambda x: f"رقم {x} - {udf[udf['المسلسل']==x]['اسم المستخدم'].values[0]}")
+            
+            target_user_data = conn.execute("SELECT * FROM users WHERE id = ?", (edit_u_id,)).fetchone()
+            
+            if target_user_data:
+                with st.form("edit_user_form"):
+                    e_col1, e_col2 = st.columns(2)
+                    with e_col1:
+                        new_uname = st.text_input("تعديل اسم المستخدم:", value=target_user_data["username"])
+                        new_pass = st.text_input("تعديل كلمة المرور:", value=target_user_data["password"])
+                    with e_col2:
+                        roles_list = ["Admin", "General_Supervisor", "Branch_Supervisor", "Cashier", "Viewer"]
+                        current_role_idx = roles_list.index(target_user_data["role"]) if target_user_data["role"] in roles_list else 0
+                        new_role = st.selectbox("تعديل الرتبة:", roles_list, index=current_role_idx)
+                        
+                        branch_keys = list(b_opts_dict.keys())
+                        # العثور على اسم الفرع الحالي للمستخدم
+                        curr_b_name = "🌐 كافة الفروع (الكل)"
+                        for b_name, b_id in b_opts_dict.items():
+                            if b_id == target_user_data["branch_id"]:
+                                curr_b_name = b_name
+                                break
+                        curr_b_idx = branch_keys.index(curr_b_name) if curr_b_name in branch_keys else 0
+                        new_branch_sel = st.selectbox("تعديل الفرع:", branch_keys, index=curr_b_idx)
+
+                    if st.form_submit_button("💾 تحديث وحفظ التعديلات", type="primary"):
+                        new_b_id = b_opts_dict[new_branch_sel]
+                        conn.execute("""
+                            UPDATE users SET username = ?, password = ?, role = ?, branch_id = ? WHERE id = ?
+                        """, (new_uname.strip(), new_pass.strip(), new_role, new_b_id, edit_u_id))
+                        conn.commit()
+                        st.success("✅ تم تحديث بيانات المستخدم بنجاح!")
+                        st.rerun()
+
+        # --- قسم الحذف الآمن ---
         st.markdown("---")
+        st.markdown("### 🗑️ حذف مستخدم")
         if not selectable_users_df.empty:
             del_u = st.selectbox("اختر المستخدم للحذف:", selectable_users_df["المسلسل"].tolist(), 
-                                 format_func=lambda x: f"رقم {x} - {udf[udf['المسلسل']==x]['اسم المستخدم'].values[0]} ({udf[udf['المسلسل']==x]['الرتبة'].values[0]})")
+                                   format_func=lambda x: f"رقم {x} - {udf[udf['المسلسل']==x]['اسم المستخدم'].values[0]} ({udf[udf['المسلسل']==x]['الرتبة'].values[0]})", key="del_select_box")
 
             selected_row_user = conn.execute("SELECT username, role FROM users WHERE id = ?", (del_u,)).fetchone()
 
-            # قواعد الحماية والأمان للحذف
             is_admin_target = selected_row_user and (selected_row_user["role"] == "Admin" or selected_row_user["username"].strip().lower() == "admin")
             is_self_target = selected_row_user and (selected_row_user["username"].strip().lower() == current_username.strip().lower())
 
