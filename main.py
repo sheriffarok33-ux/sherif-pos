@@ -280,4 +280,8 @@ elif choice == "🥜 التحميص والخلط":
     st.info("🥜 شاشة التحميص قيد التجهيز.")
 
 elif choice == "📊 التقارير والأرباح":
-    st.info("📊 شاشة التقارير قيد التجهيز.")
+    try:
+        from views import reports
+        reports.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود داخل مجلد views.")
