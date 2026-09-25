@@ -1,339 +1,186 @@
 import streamlit as st
 import pandas as pd
-import io
+import os
 from database import get_db_connection
 
-def to_excel(df):
-    """دالة تحويل أي جدول إلى ملف Excel جاهز للتنزيل"""
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Inventory_Report')
-    return output.getvalue()
-
 def show_page():
-    st.header("📦 إدارة المخزن والفروع والجرد وتصدير التقارير")
-    st.markdown("---")
+    st.markdown("""
+        <style>
+        .rtl-container { direction: rtl !important; text-align: right !important; }
+        .stButton > button { border-radius: 8px; font-weight: bold; }
+        </style>
+    """, unsafe_allow_html=True)
 
+    st.markdown('<h2 class="rtl-container">📦 إدارة المخزن والفروع وتوزيع البضاعة</h2>', unsafe_allow_html=True)
+    st.markdown("---")
+    
     conn = get_db_connection()
     
-    branches = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
-    if not branches:
-        st.warning("⚠️ يرجى إضافة فروع أو مخازن أولاً من لوحة الإدارة.")
-        conn.close()
-        return
-
-    branch_dict = {b["branch_name"]: b["id"] for b in branches}
-    branch_names = list(branch_dict.keys())
-
-    # القائمة المنسدلة الأساسية لاختيار الفرع
-    selected_branch = st.selectbox(
-        "📍 اختر الفرع أو المخزن المطلوب إدارته وعرضه:", 
-        branch_names, 
-        key="main_inv_branch_select"
-    )
-    current_branch_id = branch_dict[selected_branch]
-
-    st.markdown("---")
-
-    # 🎛️ تحويل الأقسام إلى أزرار اختيار أفقية (Radio) منظمة وعصرية بدلاً من الـ Tabs التقليدية
-    selected_mode = st.radio(
-        "🎯 اختر القسم المطلوب:",
-        [
-            f"📋 عرض وتعديل أرصدة ({selected_branch})",
-            "➕ إضافة صنف جديد (بالبار كود والسكانر)",
-            "📁 استيراد وتحديث عبر Excel",
-            "🔄 تحويل البضاعة بين الفروع",
-            "🌐 كشوف الجرد ومتابعة كافة الفروع"
-        ],
-        horizontal=True
-    )
-
-    st.markdown("---")
-
-    # 1. قسم: عرض وتعديل الأرصدة
-    if selected_mode.startswith("📋"):
-        st.subheader(f"📋 أصناف وأسعار فرع: ({selected_branch})")
-        
-        edit_scope = st.radio(
-            "🎯 نطاق تطبيق وحفظ التعديلات على الجدول:", 
-            [f"تحديث فرع ({selected_branch}) فقط", "🌐 تعميم وتحديث نفس التعديلات على كافة الفروع والمخازن (بالكود)"], 
-            horizontal=True,
-            key="edit_scope_radio"
-        )
-
-        items_df = pd.read_sql("""
-            SELECT id, item_code AS 'كود الصنف', item_name AS 'اسم الصنف', 
-                   quantity AS 'الكمية', buy_price AS 'سعر الشراء', 
-                   sale_price AS 'سعر البيع', avg_cost AS 'متوسط التكلفة'
-            FROM items WHERE branch_id = ?
-        """, conn, params=(current_branch_id,))
-
-        if not items_df.empty:
-            edited_df = st.data_editor(items_df, hide_index=True, use_container_width=True, key=f"edit_grid_{current_branch_id}")
+    # 🌟 التبويبات الرئيسية لإدارة الفروع والأصناف والتزويد
+    tab_branches, tab_items, tab_transfer = st.tabs([
+        "🏢 إدارة الفروع والمخازن", 
+        "📋 تعريف وإدارة أصناف المخزن", 
+        "🚚 تزويد ونقل البضائع بين الفروع"
+    ])
+    
+    # ==========================================
+    # 1. إدارة الفروع والمخازن
+    # ==========================================
+    with tab_branches:
+        st.markdown("### ➕ إضافة فرع أو مخزن جديد")
+        with st.form("add_branch_form_clean", clear_on_submit=True):
+            b_name = st.text_input("اسم الفرع أو المخزن الجديد:")
+            b_type = st.selectbox("نوع المنشأة:", ["فرع بيع (كاشير)", "مخزن رئيسي"])
             
-            c_save1, c_save2 = st.columns(2)
-            with c_save1:
-                if st.button("💾 حفظ وتطبيق التعديلات الحالية", type="primary", key="btn_save_edits", use_container_width=True):
-                    cur_up = conn.cursor()
-                    is_global_scope = "كافة الفروع والمخازن" in edit_scope
-                    
-                    for _, row in edited_df.iterrows():
-                        c_code = str(row['كود الصنف']).strip()
-                        c_name = str(row['اسم الصنف']).strip()
-                        qty_val = float(row['الكمية'])
-                        buy_val = float(row['سعر الشراء'])
-                        sale_val = float(row['سعر البيع'])
-                        item_id = int(row['id'])
+            if st.form_submit_button("💾 حفظ الفرع الجديد", type="primary"):
+                if b_name.strip():
+                    try:
+                        conn.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", (b_name.strip(), b_type))
+                        conn.commit()
+                        st.success(f"✅ تم إضافة ({b_name}) بنجاح!")
+                        st.rerun()
+                    except:
+                        st.error("⚠️ هذا الفرع أو المخزن موجود مسبقاً.")
+                else:
+                    st.warning("⚠️ يرجى إدخال اسم الفرع.")
 
-                        if is_global_scope:
-                            cur_up.execute("""
-                                UPDATE items 
-                                SET item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, avg_cost = ? 
-                                WHERE item_code = ?
-                            """, (c_name, qty_val, buy_val, sale_val, buy_val, c_code))
-                        else:
-                            cur_up.execute("""
-                                UPDATE items 
-                                SET item_code = ?, item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, avg_cost = ? 
-                                WHERE id = ?
-                            """, (c_code, c_name, qty_val, buy_val, sale_val, buy_val, item_id))
+        st.markdown("### 📊 الفروع والمخازن المسجلة حالياً")
+        branches_df = pd.read_sql("SELECT id AS 'رقم الفرع', branch_name AS 'اسم الفرع', branch_type AS 'النوع' FROM branches", conn)
+        if not branches_df.empty:
+            st.dataframe(branches_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("لا توجد فروع مسجلة حتى الآن.")
+
+    # ==========================================
+    # 2. تعريف وإدارة أصناف المخزن
+    # ==========================================
+    with tab_items:
+        branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
+        b_dict = {b["branch_name"]: b["id"] for b in branches}
+        
+        if not b_dict:
+            st.warning("⚠️ يرجى إضافة فرع أو مخزن أولاً من تبويب 'إدارة الفروع'.")
+        else:
+            st.markdown("### 🏷️ إضافة صنف جديد للمخزن")
+            selected_branch_name = st.selectbox("اختر الفرع / المخزن لإضافة الصنف إليه:", list(b_dict.keys()), key="item_branch_sel")
+            target_branch_id = b_dict[selected_branch_name]
+            
+            with st.form("add_item_form_clean", clear_on_submit=True):
+                col_i1, col_i2 = st.columns(2)
+                i_code = col_i1.text_input("كود الصنف (الباركود):")
+                i_name = col_i2.text_input("اسم الصنف:")
+                
+                col_i3, col_i4, col_i5, col_i6 = st.columns(4)
+                i_qty = col_i3.number_input("الكمية الأولية:", min_value=0.0, value=0.0, step=1.0)
+                i_buy = col_i4.number_input("سعر الشراء (د.ل):", min_value=0.0, value=0.0, step=0.5)
+                i_sale = col_i5.number_input("سعر البيع (د.ل):", min_value=0.0, value=0.0, step=0.5)
+                i_fav = col_i6.selectbox("إضافة للمفضلة؟", ["لا", "نعم"])
+                
+                # رفع صورة الصنف
+                uploaded_img = st.file_uploader("صورة الصنف (اختياري - JPG/PNG):", type=["jpg", "png", "jpeg"])
+                
+                if st.form_submit_button("💾 حفظ الصنف في المخزن", type="primary"):
+                    if i_code.strip() and i_name.strip():
+                        try:
+                            fav_val = 1 if i_fav == "نعم" else 0
+                            cursor_item = conn.cursor()
+                            cursor_item.execute("""
+                                INSERT INTO items (item_code, item_name, branch_id, quantity, buy_price, sale_price, avg_cost, favorite_rank)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (i_code.strip(), i_name.strip(), target_branch_id, i_qty, i_buy, i_sale, i_buy, fav_val))
                             
-                    conn.commit()
-                    st.success("✅ تم حفظ التعديلات وتحديث الأرصدة والأسعار بنجاح تام!")
-                    st.rerun()
-            
-            with c_save2:
-                excel_data = to_excel(items_df)
-                st.download_button(
-                    label=f"📥 تصدير أرصدة ({selected_branch}) إلى Excel",
-                    data=excel_data,
-                    file_name=f"Inventory_{selected_branch}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-        else:
-            st.info("لا توجد أصناف مسجلة في هذا الفرع.")
-
-    # 2. قسم: إضافة صنف جديد
-    elif selected_mode.startswith("➕"):
-        st.subheader("➕ إضافة صنف جديد عبر قارئ الباركود (السكانر)")
-        
-        scope = st.radio("النطاق:", [f"فرع {selected_branch} فقط", "تعميم لكافة الفروع والمخازن"], horizontal=True, key="add_scope_radio")
-
-        if "scanner_code" not in st.session_state:
-            st.session_state["scanner_code"] = ""
-
-        scanned_val = st.text_input("امسح الباركود هنا بالقارئ اليدوي:", key="scanner_input_field")
-        
-        if scanned_val:
-            st.session_state["scanner_code"] = scanned_val.strip()
-
-        active_code = st.session_state["scanner_code"]
-
-        if active_code:
-            st.info(f"📌 الكود الحالي في الذاكرة: **{active_code}**")
-            check_b = current_branch_id if "فرع" in scope else branches[0]["id"]
-            cur_s = conn.cursor()
-            found = cur_s.execute("SELECT id, item_name, quantity, buy_price, sale_price FROM items WHERE branch_id = ? AND item_code = ?", (check_b, active_code)).fetchone()
-
-            if found:
-                st.warning(f"⚠️ الصنف مسجل مسبقاً باسم: **{found['item_name']}** (الكمية الحالية: {found['quantity']})")
-                add_q = st.number_input("الكمية المضافة:", min_value=0.0, value=1.0, step=0.5, key="add_q_exist")
-                up_b = st.number_input("سعر الشراء:", min_value=0.0, value=float(found["buy_price"]), step=0.5, key="up_b_exist")
-                up_s = st.number_input("سعر البيع:", min_value=0.0, value=float(found["sale_price"]), step=0.5, key="up_s_exist")
-
-                if st.button("💾 تحديث الكمية والسعر", key="btn_update_exist"):
-                    target_ids = [current_branch_id] if "فرع" in scope else [b["id"] for b in branches]
-                    for b_id in target_ids:
-                        cur_s.execute("UPDATE items SET quantity = quantity + ?, buy_price = ?, sale_price = ? WHERE branch_id = ? AND item_code = ?", (add_q, up_b, up_s, b_id, active_code))
-                    conn.commit()
-                    st.success("✅ تم التحديث بنجاح!")
-                    st.session_state["scanner_code"] = ""
-                    st.rerun()
-            else:
-                st.success("✨ الكود غير موجود، أدخل اسم الصنف وباقي البيانات أدناه:")
-                new_n = st.text_input("اسم الصنف الجديد *:", key="new_n_input")
-                c1, c2 = st.columns(2)
-                with c1:
-                    new_q = st.number_input("الكمية:", min_value=0.0, value=1.0, step=0.5, key="new_q_input")
-                    new_bp = st.number_input("سعر الشراء:", min_value=0.0, value=0.0, step=0.5, key="new_bp_input")
-                with c2:
-                    new_sp = st.number_input("سعر البيع:", min_value=0.0, value=0.0, step=0.5, key="new_sp_input")
-                    new_ex = st.text_input("تاريخ الصلاحية:", value="", key="new_ex_input")
-
-                if st.button("🚀 حفظ الصنف الجديد نهائياً", type="primary", key="btn_save_new"):
-                    if not new_n.strip():
-                        st.warning("⚠️ أدخل اسم الصنف أولاً!")
+                            # حفظ الصورة لو وجدت
+                            if uploaded_img is not None:
+                                os.makedirs("item_images", exist_ok=True)
+                                img_path = os.path.join("item_images", f"{i_code.strip()}.jpg")
+                                with open(img_path, "wb") as f:
+                                    f.write(uploaded_img.getbuffer())
+                                    
+                            conn.commit()
+                            st.success(f"✅ تمت إضافة الصنف ({i_name}) بنجاح!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"⚠️ حدث خطأ (ربما كود الصنف موجود مسبقاً في هذا الفرع): {e}")
                     else:
-                        target_ids = [current_branch_id] if "فرع" in scope else [b["id"] for b in branches]
-                        for b_id in target_ids:
-                            cur_s.execute("""
-                                INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, avg_cost, expiry_date, no_expiry, favorite_rank)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
-                            """, (b_id, active_code, new_n.strip(), new_q, new_bp, new_sp, new_bp, new_ex))
-                        conn.commit()
-                        st.session_state["scanner_code"] = ""
-                        st.success(f"✅ تم حفظ الصنف ({new_n}) بنجاح!")
-                        st.rerun()
+                        st.warning("⚠️ يرجى إدخال كود الصنف واسمه على الأقل.")
 
-        if st.button("🔄 مسح الذاكرة وإدخال باركود جديد", key="btn_clear_scanner"):
-            st.session_state["scanner_code"] = ""
-            st.rerun()
-
-    # 3. قسم: استيراد إكسيل
-    elif selected_mode.startswith("📁"):
-        st.subheader(f"📁 استيراد ملف الأصناف (Excel / CSV) لـ ({selected_branch})")
-        st.markdown("> الأعمدة المطلوبة بالملف: `كود الصنف` | `اسم الصنف` | `سعر البيع` | `سعر الشراء` | `الكمية`")
-        
-        excel_scope = st.radio("نطاق الاستيراد:", [f"تحديث فرع {selected_branch} فقط", "تحديث وتعميم لكافة الفروع"], horizontal=True, key="excel_scope_radio")
-        uploaded_file = st.file_uploader("اختر ملف إكسيل", type=["xlsx", "csv"], key="inv_excel_uploader")
-
-        if uploaded_file is not None:
-            try:
-                df_import = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-                st.dataframe(df_import.head(), use_container_width=True)
-
-                if st.button("🚀 تنفيذ استيراد وتحديث الملف", type="primary", key="btn_exec_excel"):
-                    cur_imp = conn.cursor()
-                    target_b_ids = [current_branch_id] if "فرع" in excel_scope else [b["id"] for b in branches]
-                    
-                    up_c, ins_c = 0, 0
-                    for _, r in df_import.iterrows():
-                        if r.isna().all(): continue
-                        c_code = str(r.get("كود الصنف", "")).strip()
-                        c_name = str(r.get("اسم الصنف", "")).strip()
-                        if not c_name or c_name.lower() == "nan": continue
-
-                        q_val = float(r.get("الكمية", 0.0))
-                        b_val = float(r.get("سعر الشراء", 0.0))
-                        s_val = float(r.get("سعر البيع", 0.0))
-
-                        for b_id in target_b_ids:
-                            chk = cur_imp.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (b_id, c_code)).fetchone()
-                            if chk:
-                                cur_imp.execute("UPDATE items SET item_name = ?, quantity = ?, buy_price = ?, sale_price = ?, avg_cost = ? WHERE id = ?", (c_name, q_val, b_val, s_val, b_val, chk["id"]))
-                                up_c += 1
-                            else:
-                                cur_imp.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, avg_cost, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)", (b_id, c_code, c_name, q_val, b_val, s_val, b_val))
-                                ins_c += 1
-                    conn.commit()
-                    st.success(f"✅ تم الاستيراد بنجاح! تحديث ({up_c}) وإضافة ({ins_c}) صنفاً.")
-                    st.rerun()
-            except Exception as ex:
-                st.error(f"خطأ في معالجة الملف: {ex}")
-
-    # 4. قسم: التحويل بين الفروع
-    elif selected_mode.startswith("🔄"):
-        st.subheader("🔄 تحويل البضاعة بين الفروع")
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            from_b_name = st.selectbox("من فرع:", branch_names, key="tr_from")
-            from_b_id = branch_dict[from_b_name]
-        with col_f2:
-            to_b_name = st.selectbox("إلى فرع:", branch_names, index=1 if len(branch_names) > 1 else 0, key="tr_to")
-            to_b_id = branch_dict[to_b_name]
-
-        if from_b_id == to_b_id:
-            st.warning("⚠️ لا يمكن التحويل لنفس الفرع!")
-        else:
-            if "cart_trans" not in st.session_state: st.session_state["cart_trans"] = []
-            src_items = conn.execute("SELECT id, item_code, item_name, quantity, buy_price, sale_price FROM items WHERE branch_id = ?", (from_b_id,)).fetchall()
-            if src_items:
-                opts = {f"[{it['item_code']}] {it['item_name']} (متاح: {it['quantity']})": it for it in src_items}
-                sel_str = st.selectbox("اختر الصنف:", list(opts.keys()), key="sel_trans_item")
-                qty_val = st.number_input("الكمية المحولة:", min_value=0.01, value=1.0, step=0.5, key="num_trans_qty")
-
-                if st.button("➕ إضافة لقائمة التحويل", key="btn_add_trans_cart"):
-                    item_data = opts[sel_str]
-                    if qty_val > float(item_data["quantity"]):
-                        st.error("⚠️ الكمية المطلوبة تتجاوز المتاح في الفرع المصدر!")
-                    else:
-                        st.session_state["cart_trans"].append({
-                            "id": item_data["id"], "code": item_data["item_code"],
-                            "name": item_data["item_name"], "qty": qty_val,
-                            "buy": item_data["buy_price"], "sale": item_data["sale_price"]
-                        })
-                        st.success("تمت الإضافة بنجاح.")
-
-                if st.session_state["cart_trans"]:
-                    st.dataframe(pd.DataFrame(st.session_state["cart_trans"])[["code", "name", "qty"]], use_container_width=True, hide_index=True)
-                    if st.button("🚀 اعتماد وترحيل التحويل", type="primary", key="btn_exec_trans"):
-                        cur_t = conn.cursor()
-                        for c_row in st.session_state["cart_trans"]:
-                            cur_t.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_row["qty"], c_row["id"]))
-                            dest_chk = cur_t.execute("SELECT id FROM items WHERE branch_id = ? AND item_code = ?", (to_b_id, c_row["code"])).fetchone()
-                            if dest_chk:
-                                cur_t.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (c_row["qty"], dest_chk["id"]))
-                            else:
-                                cur_t.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price, avg_cost, no_expiry, favorite_rank) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)", (to_b_id, c_row["code"], c_row["name"], c_row["qty"], c_row["buy"], c_row["sale"], c_row["buy"]))
-                        conn.commit()
-                        st.session_state["cart_trans"] = []
-                        st.success("✅ تمت عملية التحويل بنجاح تام!")
-                        st.rerun()
-            else:
-                st.info("لا توجد أصناف في الفرع المصدر.")
-
-    # 5. قسم: كشوف الجرد ومتابعة الفروع
-    elif selected_mode.startswith("🌐"):
-        st.subheader("🌐 كشوف الجرد ومتابعة أرصدة الفروع والمخازن")
-        
-        report_mode = st.radio(
-            "اختر طريقة العرض للجرد:",
-            ["📊 عرض إجمالي الأرصدة لكل فرع على حدة", "🌍 عرض جدول كافة الفروع والمخازن مجتمعة"],
-            horizontal=True
-        )
-
-        if "فرع على حدة" in report_mode:
-            sel_report_branch = st.selectbox("اختر الفرع لإصدار كشف الجرد الخاص به:", branch_names, key="rep_branch_sel")
-            rep_b_id = branch_dict[sel_report_branch]
+            st.markdown("### 📋 استعراض وتعديل أصناف المخازن")
+            filter_branch = st.selectbox("فلترة العرض حسب المخزن:", ["الكل"] + list(b_dict.keys()), key="filter_branch_items")
             
-            branch_report_df = pd.read_sql("""
-                SELECT item_code AS 'كود الصنف', item_name AS 'اسم الصنف', 
-                       quantity AS 'الكمية المتاحة', buy_price AS 'سعر الشراء', 
-                       sale_price AS 'سعر البيع', (quantity * buy_price) AS 'إجمالي قيمة المخزون (شراء)'
-                FROM items WHERE branch_id = ?
-            """, conn, params=(rep_b_id,))
-
-            if not branch_report_df.empty:
-                total_qty = branch_report_df['الكمية المتاحة'].sum()
-                total_val = branch_report_df['إجمالي قيمة المخزون (شراء)'].sum()
-                
-                col_m1, col_m2 = st.columns(2)
-                col_m1.metric(f"إجمالي كميات الأصناف بفرع ({sel_report_branch})", f"{total_qty:,.2f}")
-                col_m2.metric(f"إجمالي القيمة الإجمالية للمخزون", f"{total_val:,.2f} د.ل")
-
-                st.dataframe(branch_report_df, use_container_width=True, hide_index=True)
-
-                excel_rep = to_excel(branch_report_df)
-                st.download_button(
-                    label=f"📥 تصدير كشف جرد ({sel_report_branch}) إلى Excel",
-                    data=excel_rep,
-                    file_name=f"Inventory_Audit_{sel_report_branch}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
+            if filter_branch == "الكل":
+                items_df = pd.read_sql("SELECT items.id, branches.branch_name AS 'الفرع', item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', buy_price AS 'سعر الشراء', sale_price AS 'سعر البيع' FROM items JOIN branches ON items.branch_id = branches.id", conn)
             else:
-                st.info(f"لا توجد أصناف مسجلة في فرع ({sel_report_branch}).")
+                items_df = pd.read_sql("SELECT items.id, branches.branch_name AS 'الفرع', item_code AS 'الكود', item_name AS 'اسم الصنف', quantity AS 'الكمية', buy_price AS 'سعر الشراء', sale_price AS 'سعر البيع' FROM items JOIN branches ON items.branch_id = branches.id WHERE branches.branch_name = ?", conn, params=(filter_branch,))
+                
+            if not items_df.empty:
+                st.dataframe(items_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("لا توجد أصناف مسجلة في هذا المخزن.")
+
+    # ==========================================
+    # 3. تزويد ونقل البضائع بين الفروع
+    # ==========================================
+    with tab_transfer:
+        st.markdown("### 🚚 تزويد ونقل بضاعة من المخزن الرئيسي إلى فرع بيع")
+        
+        branches_list = conn.execute("SELECT id, branch_name FROM branches").fetchall()
+        b_map = {b["branch_name"]: b["id"] for b in branches_list}
+        
+        if len(b_map) < 2:
+            st.warning("⚠️ يجب أن يكون لديك فرعين أو مخزن على الأقل لتمكين عملية نقل وبضائع التزويد.")
         else:
-            all_df = pd.read_sql("""
-                SELECT b.branch_name AS 'الفرع', i.item_code AS 'الكود', 
-                       i.item_name AS 'الصنف', i.quantity AS 'الكمية', 
-                       i.sale_price AS 'سعر البيع', (i.quantity * i.buy_price) AS 'القيمة'
-                FROM items i JOIN branches b ON i.branch_id = b.id
-            """, conn)
-
-            if not all_df.empty:
-                st.dataframe(all_df, use_container_width=True, hide_index=True)
-                
-                excel_all = to_excel(all_df)
-                st.download_button(
-                    label="📥 تصدير كشف جرد كافة الفروع والمخازن إلى Excel",
-                    data=excel_all,
-                    file_name="Inventory_Audit_All_Branches.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
+            col_t1, col_t2 = st.columns(2)
+            from_b = col_t1.selectbox("من مخزن (المصدر):", list(b_map.keys()), key="trans_from")
+            to_b = col_t2.selectbox("إلى فرع (المستلم):", list(b_map.keys()), key="trans_to")
+            
+            if from_b == to_b:
+                st.error("⚠️ لا يمكن النقل إلى نفس الفرع!")
             else:
-                st.info("لا توجد بيانات متاحة.")
+                from_id = b_map[from_b]
+                to_id = b_map[to_b]
+                
+                source_items = conn.execute("SELECT id, item_code, item_name, quantity, buy_price, sale_price FROM items WHERE branch_id = ?", (from_id,)).fetchall()
+                s_items_dict = {f"[{i['item_code']}] {i['item_name']} (المتوفر: {i['quantity']})": i for i in source_items}
+                
+                if s_items_dict:
+                    with st.form("transfer_item_form_clean", clear_on_submit=True):
+                        sel_trans_item_str = st.selectbox("اختر الصنف المراد نقله:", list(s_items_dict.keys()))
+                        trans_qty = st.number_input("الكمية المراد نقلها وتزويدها:", min_value=0.01, value=1.0, step=1.0)
+                        
+                        if st.form_submit_button("🚀 تنفيذ عملية النقل والتزويد", type="primary"):
+                            it_obj = s_items_dict[sel_trans_item_str]
+                            if trans_qty <= it_obj["quantity"]:
+                                cur_tr = conn.cursor()
+                                
+                                # خصم الكمية من المصدر
+                                cur_tr.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (trans_qty, it_obj["id"]))
+                                
+                                # التحقق هل الصنف موجود مسبقاً في فرع الاستلام أم لا؟
+                                dest_item = cur_tr.execute("SELECT id, quantity FROM items WHERE item_code = ? AND branch_id = ?", (it_obj["item_code"], to_id)).fetchone()
+                                
+                                if dest_item:
+                                    # تحديث الكمية في الفرع المستلم
+                                    cur_tr.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (trans_qty, dest_item["id"]))
+                                else:
+                                    # إنشاء نسخة جديدة من الصنف في الفرع المستلم
+                                    cur_tr.execute("""
+                                        INSERT INTO items (item_code, item_name, branch_id, quantity, buy_price, sale_price, avg_cost, favorite_rank)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                                    """, (it_obj["item_code"], it_obj["item_name"], to_id, trans_qty, it_obj["buy_price"], it_obj["sale_price"], it_obj["buy_price"]))
+                                
+                                # تسجيل حركة التزويد في السجل لتظهر تنبيه للكاشير في الفرع المستلم
+                                details_str = f"تم نقل صنف: {it_obj['item_name']} (الكمية: {trans_qty}) من {from_b} إلى {to_b}"
+                                cur_tr.execute("""
+                                    INSERT INTO transfer_logs (from_branch_id, to_branch_id, items_details, status)
+                                    VALUES (?, ?, ?, ?)
+                                """, (from_id, to_id, details_str, "معلقة بانتظار استلام الكاشير"))
+                                
+                                conn.commit()
+                                st.success(f"✅ تمت عملية التزويد ونقل البضاعة بنجاح من {from_b} إلى {to_b}!")
+                                st.rerun()
+                            else:
+                                st.error("⚠️ الكمية المطلوبة غير متوفرة في مخزن المصدر!")
+                else:
+                    st.info(f"لا توجد أصناف في مخزن المصدر ({from_b}).")
 
     conn.close()
