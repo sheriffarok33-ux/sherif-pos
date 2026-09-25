@@ -10,116 +10,97 @@ def show_page():
         </style>
     """, unsafe_allow_html=True)
 
-    st.markdown('<h2 class="rtl-container">📦 إدارة المخزن وإضافة الأصناف بالباركود والكراتين</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="rtl-container">📦 إدارة المخزن وإضافة الأصناف (النظام المستقر للباركود)</h2>', unsafe_allow_html=True)
     st.markdown("---")
     
     conn = get_db_connection()
     
-    # 1. تهيئة الذاكرة لحفظ الباركود وثباته
-    if "active_barcode" not in st.session_state:
-        st.session_state["active_barcode"] = ""
+    # جلب الفروع أولاً
+    branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
+    b_dict = {b["branch_name"]: b["id"] for b in branches}
+    
+    if not b_dict:
+        st.warning("⚠️ يرجى إضافة فرع أو مخزن أولاً من تبويب إدارة الفروع.")
+        conn.close()
+        return
 
-    # دالة لتثبيت الكود المقروء
-    def handle_scan():
-        scanned = st.session_state.get("scanner_input", "")
-        if scanned:
-            st.session_state["active_barcode"] = scanned.strip()
+    selected_branch_name = st.selectbox("اختر الفرع / المخزن لتسجيل الأصناف:", list(b_dict.keys()))
+    target_branch_id = b_dict[selected_branch_name]
 
-    # حقل مسح الباركود (يستقبل الإدخال من القارئ ويثبته فوراً)
-    st.text_input(
-        "🏷️ قم بمسح الباركود بالقارئ (أو اكتبه واضغط Enter):", 
-        key="scanner_input", 
-        on_change=handle_scan
-    )
+    st.markdown("### 🏷️ إضافة صنف جديد بالباركود والكراتين (نموذج مستقر)")
+    st.info("💡 نصيحة: بعد تمرير قارئ الباركود في خانة الكود، ستثبت الكتابة ولن تختفي أبداً حتى تضغط زر الحفظ.")
 
-    # إذا كان هناك باركود نشط وثابت في الذاكرة
-    current_code = st.session_state["active_barcode"]
-
-    if current_code:
-        st.success(f"🎯 الكود الحالي الثابت: **{current_code}**")
+    # استخدام نموذج (Form) واحد متكامل يمنع إعادة التحميل العشوائي ويحافظ على المدخلات
+    with st.form("stable_item_form", clear_on_submit=True):
+        col_b1, col_b2 = st.columns(2)
+        i_code = col_b1.text_input("كود الصنف (الباركود):")
+        i_name = col_b2.text_input("اسم الصنف:")
         
-        # زر لإلغاء وتغيير الكود لو أردت مسح صنف آخر
-        if st.button("🔄 مسح صنف آخر (إعادة تعيين الكود)"):
-            st.session_state["active_barcode"] = ""
-            st.session_state["scanner_input"] = ""
-            st.rerun()
-
-        # جلب الفروع
-        branches = conn.execute("SELECT id, branch_name FROM branches").fetchall()
-        b_dict = {b["branch_name"]: b["id"] for b in branches}
+        col_c1, col_c2 = st.columns(2)
+        pieces_per_carton = col_c1.number_input("كم قطعة داخل الكرتون؟", min_value=1, value=1, step=1)
+        cartons_count = col_c2.number_input("عدد الكراتين المضافة (الكمية):", min_value=0.0, value=1.0, step=1.0)
         
-        if not b_dict:
-            st.warning("⚠️ يرجى إضافة فرع أو مخزن أولاً.")
-        else:
-            selected_branch_name = st.selectbox("اختر الفرع / المخزن لتسجيل الصنف:", list(b_dict.keys()), key="branch_sel_box")
-            target_branch_id = b_dict[selected_branch_name]
-            
-            # التحقق هل الصنف مسجل مسبقاً بهذا الفرع؟
-            existing_item = conn.execute(
-                "SELECT * FROM items WHERE item_code = ? AND branch_id = ?", 
-                (current_code, target_branch_id)
-            ).fetchone()
-            
-            if existing_item:
-                st.info(f"ℹ️ الصنف مسجل مسبقاً باسم: **{existing_item['item_name']}** (الكمية الحالية: {existing_item['quantity']})")
-                with st.form("update_qty_form"):
-                    add_qty = st.number_input("إضافة كمية جديدة للمخزون:", min_value=0.0, value=1.0, step=1.0)
-                    if st.form_submit_button("➕ تحديث المخزون", type="primary"):
-                        conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (add_qty, existing_item['id']))
+        col_p1, col_p2 = st.columns(2)
+        box_buy_price = col_p1.number_input("سعر شراء الكرتون (د.ل):", min_value=0.0, value=0.0, step=0.5)
+        sale_price_piece = col_p2.number_input("سعر بيع القطعة المفردة (د.ل):", min_value=0.0, value=0.0, step=0.5)
+        
+        i_fav = st.selectbox("إضافة لوحة المفضلة السريعة؟", ["لا", "نعم"])
+        
+        submit_clicked = st.form_submit_button("💾 حفظ وإضافة الصنف للمخزن", type="primary")
+        
+        if submit_clicked:
+            if i_code.strip() and i_name.strip():
+                # حساب إجمالي القطع وتكلفة القطعة الواحدة تلقائياً
+                total_pieces = cartons_count * pieces_per_carton
+                unit_buy_price = (box_buy_price / pieces_per_carton) if pieces_per_carton > 0 else 0.0
+                fav_val = 1 if i_fav == "نعم" else 0
+                
+                try:
+                    cursor = conn.cursor()
+                    # التحقق هل الصنف موجود مسبقاً بنفس الفرع
+                    existing = cursor.execute(
+                        "SELECT id FROM items WHERE item_code = ? AND branch_id = ?", 
+                        (i_code.strip(), target_branch_id)
+                    ).fetchone()
+                    
+                    if existing:
+                        st.error(f"⚠️ كود الصنف ({i_code}) موجود مسبقاً في هذا الفرع!")
+                    else:
+                        cursor.execute("""
+                            INSERT INTO items (item_code, item_name, branch_id, quantity, buy_price, sale_price, avg_cost, favorite_rank)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            i_code.strip(), 
+                            i_name.strip(), 
+                            target_branch_id, 
+                            total_pieces, 
+                            unit_buy_price, 
+                            sale_price_piece, 
+                            unit_buy_price, 
+                            fav_val
+                        ))
                         conn.commit()
-                        st.success("✅ تم تحديث كمية المخزون بنجاح!")
-                        st.session_state["active_barcode"] = ""
-                        st.session_state["scanner_input"] = ""
-                        st.rerun()
+                        st.success(f"✅ تمت إضافة الصنف ({i_name.strip()}) بنجاح بإجمالي قطع: {total_pieces}!")
+                except Exception as e:
+                    st.error(f"⚠️ حدث خطأ أثناء الحفظ: {e}")
             else:
-                # نموذج إدخال تفاصيل الصنف الجديد بالكراتين والقطع (خارج نماذج الباركود المتطايرة لضمان الثبات التام)
-                with st.form("new_item_carton_form"):
-                    st.markdown("### 📝 تسجيل صنف جديد (دعم نظام الكراتين والقطع)")
-                    
-                    i_name = st.text_input("اسم الصنف:")
-                    
-                    col1, col2 = st.columns(2)
-                    pieces_per_carton = col1.number_input("كم قطعه داخل الكرتون؟", min_value=1, value=1, step=1)
-                    cartons_count = col2.number_input("عدد الكراتين المضافة (الكمية):", min_value=0.0, value=1.0, step=1.0)
-                    
-                    total_pieces = cartons_count * pieces_per_carton
-                    st.info(f"📦 إجمالي عدد القطع المضافة للمخزون تلقائياً: **{total_pieces} قطعة**")
-                    
-                    col3, col4 = st.columns(2)
-                    box_buy_price = col3.number_input("سعر شراء الكرتون (د.ل):", min_value=0.0, value=0.0, step=0.5)
-                    sale_price_piece = col4.number_input("سعر بيع القطعة المفردة (د.ل):", min_value=0.0, value=0.0, step=0.5)
-                    
-                    unit_buy_price = (box_buy_price / pieces_per_carton) if pieces_per_carton > 0 else 0.0
-                    st.caption(f"💡 سعر تكلفة القطعة الواحدة محسوب تلقائياً: {unit_buy_price:,.2f} د.ل")
-                    
-                    i_fav = st.selectbox("إضافة لوحة المفضلة السريعة؟", ["لا", "نعم"])
-                    
-                    submit_btn = st.form_submit_button("💾 حفظ الصنف وإضافته للمخزن", type="primary")
-                    if submit_btn:
-                        if i_name.strip():
-                            fav_val = 1 if i_fav == "نعم" else 0
-                            cursor = conn.cursor()
-                            cursor.execute("""
-                                INSERT INTO items (item_code, item_name, branch_id, quantity, buy_price, sale_price, avg_cost, favorite_rank)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (
-                                current_code, 
-                                i_name.strip(), 
-                                target_branch_id, 
-                                total_pieces, 
-                                unit_buy_price, 
-                                sale_price_piece, 
-                                unit_buy_price, 
-                                fav_val
-                            ))
-                            conn.commit()
-                            st.success(f"✅ تمت إضافة الصنف ({i_name}) بنجاح للمخزن!")
-                            st.session_state["active_barcode"] = ""
-                            st.session_state["scanner_input"] = ""
-                            st.rerun()
-                        else:
-                            st.warning("⚠️ يرجى إدخال اسم الصنف على الأقل.")
+                st.warning("⚠️ يرجى إدخال كود الصنف واسمه على الأقل.")
+
+    st.markdown("---")
+    st.markdown("### 📋 الأصناف المسجلة في هذا الفرع")
+    items_df = pd.read_sql("""
+        SELECT item_code AS 'الكود', 
+               item_name AS 'اسم الصنف', 
+               quantity AS 'الكمية (قطع)', 
+               buy_price AS 'تكلفة القطعة', 
+               sale_price AS 'سعر البيع' 
+        FROM items 
+        WHERE branch_id = ?
+    """, conn, params=(target_branch_id,))
+    
+    if not items_df.empty:
+        st.dataframe(items_df, use_container_width=True, hide_index=True)
     else:
-        st.info("💡 يرجى تمرير قارئ الباركود على المنتج أو كتابة الكود والضغط على Enter ليبدأ النظام في تسجيل الصنف.")
+        st.info("لا توجد أصناف مسجلة في هذا الفرع حتى الآن.")
 
     conn.close()
