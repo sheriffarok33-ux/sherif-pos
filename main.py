@@ -254,10 +254,10 @@ elif choice == "📥 المشتريات":
 
 elif choice == "🔄 تزويد الفروع والأرشيف":
     try:
-        from views import inventory
-        inventory.show_page()
+        from views import transfers
+        transfers.show_page()
     except ImportError:
-        st.info("🔄 شاشة تزويد الفروع قيد التجهيز.")
+        st.info("🔄 شاشة تزويد الفروع والأرشيف قيد التجهيز.")
 
 elif choice == "⭐ لوحة المفضلة (1-20)":
     try:
@@ -267,7 +267,11 @@ elif choice == "⭐ لوحة المفضلة (1-20)":
         st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
 
 elif choice == "📦 إدارة المخزن والفروع":
-    st.info("📦 شاشة إدارة المخزن والفروع قيد التجهيز.")
+    try:
+        from views import inventory
+        inventory.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
 
 elif choice == "⚙️ الجرد والتصفير السنوي":
     st.info("⚙️ شاشة الجرد قيد التجهيز.")
