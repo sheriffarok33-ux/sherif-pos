@@ -3,6 +3,25 @@ import pandas as pd
 from database import get_db_connection
 
 def show_page():
+    # 🌟 تنسيق CSS خاص لضمان ظهور كافة النصوص داخل الجداول والحقول باللون الأسود العريض والخط الواضح
+    st.markdown("""
+        <style>
+        /* فرض الخط الأسود العريض على كافة عناصر الجداول والنصوص */
+        .stDataFrame, .stDataFrame *, div[data-testid="stTable"] *, th, td {
+            color: #000000 !important;
+            font-family: 'Tajawal', sans-serif !important;
+            font-weight: 900 !important;
+            font-size: 16px !important;
+            text-align: right !important;
+        }
+        /* تنسيق عناوين الجداول باللون الأسود العريض */
+        th {
+            background-color: #e2e8f0 !important;
+            color: #000000 !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     st.header("🥜 التحميص والخلط والمكسرات (حساب التكلفة وهامش الربح)")
     st.info("💡 إدارة عمليات خلط المكسرات وعمليات التحميص مع حساب متوسط التكلفة الفعلي وهامش الربح لمواكبة تذبذب أسعار المواد الخام.")
 
@@ -52,7 +71,17 @@ def show_page():
                 st.markdown("#### 📋 خامات الخلطة الحالية:")
                 df_mix = pd.DataFrame(st.session_state["mix_list_state"])
                 df_mix['total_item_cost'] = df_mix['qty'] * df_mix['cost']
-                st.dataframe(df_mix[["code", "name", "qty", "cost", "total_item_cost"]], use_container_width=True)
+                
+                # 🌟 تعريب أسماء الأعمدة لتظهر باللغة العربية وبوضوح تام
+                df_mix_display = df_mix.rename(columns={
+                    "code": "كود الصنف",
+                    "name": "اسم الخام",
+                    "qty": "الوزن (كجم)",
+                    "cost": "تكلفة الكيلو",
+                    "total_item_cost": "إجمالي التكلفة"
+                })
+                
+                st.dataframe(df_mix_display, use_container_width=True, hide_index=True)
                 
                 # حساب الإجماليات الأولية للخلطة
                 tot_mix_cost = df_mix['total_item_cost'].sum()
@@ -62,16 +91,15 @@ def show_page():
                 st.markdown(f"""
                     <div style="background: #f1f5f9; padding: 15px; border-radius: 10px; border: 1px solid #cbd5e1; margin-bottom: 15px;">
                         <h4 style="margin:0; color: #0f172a;">📊 ملخص الخلطة قبل الاعتماد:</h4>
-                        <p style="margin: 5px 0;">⚖️ إجمالي الوزن الناتج المتوقع: <b>{tot_mix_weight:,.2f} كجم</b></p>
-                        <p style="margin: 5px 0;">💰 إجمالي تكلفة الخامات الداخلة: <b>{tot_mix_cost:,.2f} د.ل</b></p>
-                        <p style="margin: 0; color: #0284c7;">📈 متوسط تكلفة الكيلو الواحد (Avg Cost): <b>{pre_calculated_avg:,.2f} د.ل / كجم</b></p>
+                        <p style="margin: 5px 0; color: #000000; font-weight: 900;">⚖️ إجمالي الوزن الناتج المتوقع: <b>{tot_mix_weight:,.2f} كجم</b></p>
+                        <p style="margin: 5px 0; color: #000000; font-weight: 900;">💰 إجمالي تكلفة الخامات الداخلة: <b>{tot_mix_cost:,.2f} د.ل</b></p>
+                        <p style="margin: 0; color: #0284c7; font-weight: 900;">📈 متوسط تكلفة الكيلو الواحد (Avg Cost): <b>{pre_calculated_avg:,.2f} د.ل / كجم</b></p>
                     </div>
                 """, unsafe_allow_html=True)
 
                 with st.form("fin_mix_form"):
                     res_name = st.selectbox("اختر الصنف الناتج النهائي بعد الخلط (مثل: مكسرات مشكلة مسجلة):", [i['item_name'] for i in store_items])
                     
-                    # البحث عن صنف معين لمعرفة سعر بيعه الحالي
                     target_item_obj = next((i for i in store_items if i['item_name'] == res_name), None)
                     current_sale_price = target_item_obj['sale_price'] if target_item_obj else 0.0
                     
@@ -80,12 +108,10 @@ def show_page():
                     if st.form_submit_button("⚙️ اعتماد الخلطة وتحديث المخزن ومتوسط التكلفة وهامش الربح", type="primary"):
                         cur_mx = conn.cursor()
                         
-                        # خصم الخامات من المخزن
                         for m in st.session_state["mix_list_state"]:
                             cur_mx.execute("UPDATE items SET quantity = quantity - ? WHERE branch_id = ? AND item_code = ?", 
                                          (m['qty'], main_s_id, m['code']))
                         
-                        # إضافة الكمية وتحديث متوسط التكلفة وسعر البيع للصنف الناتج
                         cur_mx.execute("UPDATE items SET quantity = quantity + ?, avg_cost = ?, sale_price = ? WHERE branch_id = ? AND item_name = ?", 
                                      (tot_mix_weight, pre_calculated_avg, new_sale_price, main_s_id, res_name))
                         
@@ -125,21 +151,15 @@ def show_page():
                         if r_obj['quantity'] < raw_w:
                             st.error("❌ الكمية الخام المطلوبة للتحميص أكبر من المتوفر في المخزن!")
                         else:
-                            # المعادلة الحقيقية لتكلفة الكيلو بعد التحميص (بسبب الفقد الوزني)
-                            # إجمالي قيمة الخام المدخل = (الوزن الخام * تكلفتها)
                             total_raw_value = raw_w * base_cost
-                            # تكلفة الكيلو الفعلي بعد التحميص = إجمالي القيمة على الوزن الناتج الأقل
                             roasted_unit_cost = total_raw_value / roasted_w if roasted_w > 0 else base_cost
                             
-                            # حساب هامش الربح
                             profit_val = r_price - roasted_unit_cost
                             profit_margin_pct = (profit_val / r_price * 100) if r_price > 0 else 0
                             
                             cur_r = conn.cursor()
-                            # خصم الوزن الخام القديم
                             cur_r.execute("UPDATE items SET quantity = quantity - ?, avg_cost = ? WHERE branch_id = ? AND item_code = ?", 
                                          (raw_w, roasted_unit_cost, main_s_id, r_obj['item_code']))
-                            # إضافة الوزن المحمص الجديد وتحديث السعر ومتوسط التكلفة الناتج عن الفقد
                             cur_r.execute("UPDATE items SET quantity = quantity + ?, sale_price = ?, avg_cost = ? WHERE branch_id = ? AND item_code = ?", 
                                          (roasted_w, r_price, roasted_unit_cost, main_s_id, r_obj['item_code']))
                             conn.commit()
