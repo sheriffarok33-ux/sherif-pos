@@ -40,22 +40,32 @@ def show_page():
     ])
 
     # =========================================================================
-    # 1. تبويب أرباح وخسائر الفروع (بعد المصروفات، الرواتب، والإيجارات)
+    # 1. تبويب أرباح وخسائر الفروع (مع فلتر الفروع الدقيق)
     # =========================================================================
     with tab_pl:
         st.markdown("### 📈 الحسابات الختامية وأرباح الفروع")
-        st.markdown("تقرير يجمع إجمالي المبيعات، يخصم منها تكلفة البضاعة المباعة، المصروفات، والرواتب والإيجارات لكل فرع على حدة وإجمالاً.")
+        st.markdown("تقرير يجمع إجمالي المبيعات، يخصم منها المصروفات، والرواتب والإيجارات لكل فرع على حدة أو إجمالاً.")
 
         if not is_admin_or_supervisor:
             st.warning("🔒 عذراً، هذا التقرير المالي الشامل مخصص للمدير العام والأدمن فقط لأسباب تتعلق بسرية الأرباح والمصروفات.")
         else:
             if branches:
+                # 🌟 إضافة فلتر الفروع هنا
+                branch_filter_options = ["🌐 كافة الفروع (إجمالي الشركة)"] + list(b_dict.keys())
+                selected_pl_branch = st.selectbox("فلترة التقرير المالي حسب الفرع:", branch_filter_options, key="pl_branch_filter_box")
+
+                # تحديد الفروع المستهدفة بناءً على الفلتر
+                if selected_pl_branch == "🌐 كافة الفروع (إجمالي الشركة)":
+                    target_branches = branches
+                else:
+                    target_branches = [b for b in branches if b["branch_name"] == selected_pl_branch]
+
                 pl_data = []
                 total_global_sales = 0
                 total_global_expenses = 0
                 total_global_net = 0
 
-                for b in branches:
+                for b in target_branches:
                     b_id = b["id"]
                     b_name = b["branch_name"]
 
@@ -64,14 +74,13 @@ def show_page():
                     b_sales = sales_row["total_sales"] if sales_row and sales_row["total_sales"] else 0.0
 
                     # 2. إجمالي المصروفات المسجلة لهذا الفرع (تتضمن إيجارات، رواتب، تشغيلية.. إلخ)
-                    # نفترض جدول المصروفات يحتوي على branch_id و amount
                     try:
                         exp_row = conn.execute("SELECT SUM(amount) AS total_exp FROM expenses WHERE branch_id = ?", (b_id,)).fetchone()
                         b_expenses = exp_row["total_exp"] if exp_row and exp_row["total_exp"] else 0.0
                     except:
-                        b_expenses = 0.0 # لو جدول المصروفات غير مسمى بهذا الشكل تفاديًا لأي خطأ
+                        b_expenses = 0.0
 
-                    # صافي الربح التشغيلي للفرع (كمؤشر مبدئي قبل تفصيل تكلفة البضاعة الدقيقة)
+                    # صافي الربح التشغيلي للفرع
                     b_net_profit = b_sales - b_expenses
 
                     total_global_sales += b_sales
@@ -89,13 +98,15 @@ def show_page():
                 df_pl = pd.DataFrame(pl_data)
                 st.dataframe(df_pl, use_container_width=True, hide_index=True)
 
-                # عرض إجمالي الشركة العام
+                # عرض إجمالي النتائج المعروضة
+                label_text = "ملخص الأداء المالي العام لكل الفروع:" if selected_pl_branch == "🌐 كافة الفروع (إجمالي الشركة)" else f"ملخص الأداء المالي للفرع ({selected_pl_branch}):"
+                
                 st.markdown(f"""
                     <div style="background: #e2e8f0; padding: 15px; border-radius: 10px; border: 1px solid #94a3b8; margin-top: 15px;">
-                        <h4 style="margin:0; color: #0f172a;">🏢 ملخص الأداء المالي العام لكل الفروع:</h4>
-                        <p style="margin: 5px 0; color: #000000;">💰 إجمالي مبيعات الشركة: <b>{total_global_sales:,.2f} د.ل</b></p>
+                        <h4 style="margin:0; color: #0f172a;">🏢 {label_text}</h4>
+                        <p style="margin: 5px 0; color: #000000;">💰 إجمالي المبيعات: <b>{total_global_sales:,.2f} د.ل</b></p>
                         <p style="margin: 5px 0; color: #000000;">💸 إجمالي المصروفات والرواتب والإيجارات: <b>{total_global_expenses:,.2f} د.ل</b></p>
-                        <p style="margin: 0; color: #0284c7; font-size: 19px;">📈 صافي أرباح الشركة الإجمالي: <b>{total_global_net:,.2f} د.ل</b></p>
+                        <p style="margin: 0; color: #0284c7; font-size: 19px;">📈 صافي الربح الإجمالي: <b>{total_global_net:,.2f} د.ل</b></p>
                     </div>
                 """, unsafe_allow_html=True)
             else:
@@ -139,9 +150,7 @@ def show_page():
             df_items = pd.read_sql(query, conn, params=(b_id_sel,))
 
         if not df_items.empty:
-            # إذا كان المستخدم أدمن أو مشرف عام، نحسب له هامش الربح بدقة ونعرضه
             if is_admin_or_supervisor:
-                # حساب هامش الربح بالدينار والنسبة المئوية (%)
                 cost_col = df_items['متوسط التكلفة الفعلي'].apply(lambda x: x if x > 0 else 0)
                 df_items['هامش الربح (د.ل)'] = df_items['سعر البيع الحالي'] - cost_col
                 df_items['نسبة هامش الربح (%)'] = df_items.apply(
@@ -151,7 +160,6 @@ def show_page():
                 )
                 st.success("🔒 يتم عرض بيانات متوسط التكلفة وهامش الربح بدقة (صلاحية الأدمن مفعلة).")
             else:
-                # حجب الأعمدة المالية الحساسة عن الكاشير أو العاديين
                 df_items = df_items.drop(columns=['سعر الشراء الأساسي', 'متوسط التكلفة الفعلي'], errors='ignore')
                 st.info("ℹ️ ملاحظة: أعمدة التكاليف وهامش الربح محجوبة لغير الأدمن.")
 
