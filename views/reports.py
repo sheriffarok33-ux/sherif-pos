@@ -4,34 +4,32 @@ from database import get_db_connection
 import io
 
 def show_page():
-    # 🌟 تنسيق CSS قوي جداً لفرض اتجاه الجدول من اليمين لليسار وتغميق الخطوط بالأسود الداكن العريض
+    # 🌟 تنسيق CSS لضمان وضوح الخطوط والجداول
     st.markdown("""
         <style>
-        /* فرض الاتجاه العربي والخط الأسود العريض على كافة عناصر الجدول */
-        .stDataFrame, .stDataFrame div, .stDataFrame span, .stDataFrame p, 
-        div[data-testid="stTable"] *, th, td, div[data-baseweb="select"] * {
+        .stDataFrame div, .stDataFrame span, .stDataFrame p, 
+        div[data-testid="stTable"] *, th, td, 
+        div[data-baseweb="select"] *, span, p, label, h3, h4 {
             color: #000000 !important;
             font-family: 'Tajawal', sans-serif !important;
             font-weight: 900 !important;
-            direction: rtl !important;
-            text-align: right !important;
         }
         th {
             background-color: #94a3b8 !important;
             color: #000000 !important;
             font-size: 19px !important;
-            font-weight: 900 !important;
+            text-align: right !important;
         }
         td {
             color: #000000 !important;
             font-size: 18px !important;
-            font-weight: 900 !important;
             background-color: #f8fafc !important;
+            text-align: right !important;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    st.markdown('<h2 style="color: #0f172a; font-weight: 900; text-align: right;">📊 تقارير الأرباح والخسائر وحركة الأصناف الشاملة</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 style="color: #0f172a; font-weight: 900;">📊 تقارير الأرباح والخسائر وحركة الأصناف الشاملة</h2>', unsafe_allow_html=True)
     st.markdown("---")
 
     conn = get_db_connection()
@@ -52,10 +50,9 @@ def show_page():
     # =========================================================================
     with tab_pl:
         st.markdown("### 📈 الحسابات الختامية وأرباح الفروع")
-        st.markdown("تقرير يجمع إجمالي المبيعات، يخصم منها المصروفات، والرواتب والإيجارات لكل فرع على حدة أو إجمالاً.")
 
         if not is_admin_or_supervisor:
-            st.warning("🔒 عذراً، هذا التقرير المالي الشامل مخصص للمدير العام والأدمن فقط لأسباب تتعلق بسرية الأرباح والمصروفات.")
+            st.warning("🔒 عذراً، هذا التقرير المالي الشامل مخصص للمدير العام والأدمن فقط.")
         else:
             if branches:
                 branch_filter_options = ["🌐 كافة الفروع (إجمالي الشركة)"] + list(b_dict.keys())
@@ -101,21 +98,22 @@ def show_page():
                 df_pl = pd.DataFrame(pl_data)
                 st.dataframe(df_pl, use_container_width=True, hide_index=True)
 
-                # زر التصدير لـ Excel
-                output_pl = io.BytesIO()
-                with pd.ExcelWriter(output_pl, engine='xlsxwriter') as writer:
-                    df_pl.to_excel(writer, index=False, sheet_name='Profit_Loss_Report')
-                
-                st.download_button(
-                    label="📥 تحميل تقرير الأرباح والخسائر كملف Excel",
-                    data=output_pl.getvalue(),
-                    file_name="Profit_Loss_Report.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_pl_excel"
-                )
+                # زر تصدير أكسيل آمن
+                try:
+                    output_pl = io.BytesIO()
+                    with pd.ExcelWriter(output_pl, engine='openpyxl') as writer:
+                        df_pl.to_excel(writer, index=False, sheet_name='Profit_Loss')
+                    st.download_button(
+                        label="📥 تحميل تقرير الأرباح والخسائر كملف Excel",
+                        data=output_pl.getvalue(),
+                        file_name="Profit_Loss_Report.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="download_pl_excel"
+                    )
+                except Exception as e:
+                    st.info("💡 لتفعيل زر تحميل الإكسيل، تأكد من تثبيت مكتبة openpyxl عبر أمر: pip install openpyxl")
 
-                label_text = "ملخص الأداء المالي العام لكل الفروع:" if selected_pl_branch == "🌐 كافة الفروع (إجمالي الشركة)" else f"ملخص الأداء المالي للفرع ({selected_pl_branch}):"
-                
+                label_text = "ملخص الأداء المالي العام:" if selected_pl_branch == "🌐 كافة الفروع (إجمالي الشركة)" else f"ملخص الأداء المالي للفرع ({selected_pl_branch}):"
                 st.markdown(f"""
                     <div style="background: #e2e8f0; padding: 18px; border-radius: 10px; border: 2px solid #64748b; margin-top: 15px;">
                         <h4 style="margin:0; color: #0f172a; font-weight: 900; font-size: 20px;">🏢 {label_text}</h4>
@@ -166,32 +164,12 @@ def show_page():
 
         if not df_items.empty:
             if is_admin_or_supervisor:
-                cost_col = df_items['متوسط التكلفة الفعلي'].apply(lambda x: x if x > 0 else 0)
-                df_items['هامش الربح (د.ل)'] = df_items['سعر البيع الحالي'] - cost_col
-                df_items['نسبة هامش الربح (%)'] = df_items.apply(
-                    lambda row: f"{((row['سعر البيع الحالي'] - row['متوسط التكلفة الفعلي']) / row['سعر البيع الحالي'] * 100):.1f}%" 
-                    if row['سعر البيع الحالي'] > 0 and row['متوسط التكلفة الفعلي'] > 0 else "0.0%", 
-                    axis=1
-                )
-                st.success("🔒 يتم عرض بيانات متوسط التكلفة وهامش الربح بدقة (صلاحية الأدمن مفعلة).")
+                df_items['هامش الربح (د.ل)'] = df_items['سعر البيع الحالي'] - df_items['متوسط التكلفة الفعلي']
+                st.success("🔒 يتم عرض بيانات متوسط التكلفة وهامش الربح بدقة.")
             else:
                 df_items = df_items.drop(columns=['سعر الشراء الأساسي', 'متوسط التكلفة الفعلي'], errors='ignore')
-                st.info("ℹ️ ملاحظة: أعمدة التكاليف وهامش الربح محجوبة لغير الأدمن.")
 
             st.dataframe(df_items, use_container_width=True, hide_index=True)
-
-            # زر التصدير لـ Excel
-            output_items = io.BytesIO()
-            with pd.ExcelWriter(output_items, engine='xlsxwriter') as writer:
-                df_items.to_excel(writer, index=False, sheet_name='Items_Profit_Report')
-            
-            st.download_button(
-                label="📥 تحميل تقرير تفصيل الأصناف والأرباح كملف Excel",
-                data=output_items.getvalue(),
-                file_name="Items_Profit_Report.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="download_items_excel"
-            )
         else:
             st.info("لا توجد أصناف مسجلة في هذا الفرع.")
 
