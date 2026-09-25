@@ -3,29 +3,39 @@ import pandas as pd
 from database import get_db_connection
 
 def show_page():
-    # 🌟 تنسيق الخط الأسود العريض والواضح لكافة عناصر التقارير والجداول
+    # 🌟 تنسيق CSS شامل ومقوى لفرض الخط الأسود العريض والواضح بحجم كبير على كل الجداول والنصوص
     st.markdown("""
         <style>
-        .stDataFrame, .stDataFrame *, div[data-testid="stTable"] *, th, td {
+        /* فرض الخط الأسود العريض جداً والكبير على كافة خلايا ونصوص الجداول */
+        .stDataFrame, .stDataFrame *, div[data-testid="stTable"] *, th, td, 
+        .streamlit-expanderHeader, div[data-baseweb="select"] *, span, p, label {
             color: #000000 !important;
             font-family: 'Tajawal', sans-serif !important;
             font-weight: 900 !important;
-            font-size: 16px !important;
-            text-align: right !important;
+            font-size: 18px !important;
         }
+        /* تعبئة وتغميق رؤوس الجداول */
         th {
-            background-color: #e2e8f0 !important;
+            background-color: #cbd5e1 !important;
             color: #000000 !important;
+            font-size: 19px !important;
+            font-weight: 900 !important;
+        }
+        /* زيادة وضوح وصعوبة الخط داخل مربعات الاختيار */
+        div[data-baseweb="select"] div {
+            color: #000000 !important;
+            font-weight: 900 !important;
+            font-size: 18px !important;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    st.markdown('<h2 style="color: #0f172a;">📊 تقارير الأرباح والخسائر وحركة الأصناف الشاملة</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 style="color: #0f172a; font-weight: 900;">📊 تقارير الأرباح والخسائر وحركة الأصناف الشاملة</h2>', unsafe_allow_html=True)
     st.markdown("---")
 
     conn = get_db_connection()
     
-    # التحقق من صلاحيات المستخدم (الأدمن والمشرف العام فقط من يريان الحسابات والأرباح المالية الكبرى)
+    # التحقق من صلاحيات المستخدم
     role = st.session_state.get("role", "")
     is_admin_or_supervisor = role in ["Admin", "General_Supervisor"]
 
@@ -50,11 +60,9 @@ def show_page():
             st.warning("🔒 عذراً، هذا التقرير المالي الشامل مخصص للمدير العام والأدمن فقط لأسباب تتعلق بسرية الأرباح والمصروفات.")
         else:
             if branches:
-                # 🌟 إضافة فلتر الفروع هنا
                 branch_filter_options = ["🌐 كافة الفروع (إجمالي الشركة)"] + list(b_dict.keys())
                 selected_pl_branch = st.selectbox("فلترة التقرير المالي حسب الفرع:", branch_filter_options, key="pl_branch_filter_box")
 
-                # تحديد الفروع المستهدفة بناءً على الفلتر
                 if selected_pl_branch == "🌐 كافة الفروع (إجمالي الشركة)":
                     target_branches = branches
                 else:
@@ -69,18 +77,15 @@ def show_page():
                     b_id = b["id"]
                     b_name = b["branch_name"]
 
-                    # 1. إجمالي مبيعات الفواتير لهذا الفرع
                     sales_row = conn.execute("SELECT SUM(total_amount) AS total_sales FROM invoices WHERE branch_id = ?", (b_id,)).fetchone()
                     b_sales = sales_row["total_sales"] if sales_row and sales_row["total_sales"] else 0.0
 
-                    # 2. إجمالي المصروفات المسجلة لهذا الفرع (تتضمن إيجارات، رواتب، تشغيلية.. إلخ)
                     try:
                         exp_row = conn.execute("SELECT SUM(amount) AS total_exp FROM expenses WHERE branch_id = ?", (b_id,)).fetchone()
                         b_expenses = exp_row["total_exp"] if exp_row and exp_row["total_exp"] else 0.0
                     except:
                         b_expenses = 0.0
 
-                    # صافي الربح التشغيلي للفرع
                     b_net_profit = b_sales - b_expenses
 
                     total_global_sales += b_sales
@@ -98,15 +103,14 @@ def show_page():
                 df_pl = pd.DataFrame(pl_data)
                 st.dataframe(df_pl, use_container_width=True, hide_index=True)
 
-                # عرض إجمالي النتائج المعروضة
                 label_text = "ملخص الأداء المالي العام لكل الفروع:" if selected_pl_branch == "🌐 كافة الفروع (إجمالي الشركة)" else f"ملخص الأداء المالي للفرع ({selected_pl_branch}):"
                 
                 st.markdown(f"""
-                    <div style="background: #e2e8f0; padding: 15px; border-radius: 10px; border: 1px solid #94a3b8; margin-top: 15px;">
-                        <h4 style="margin:0; color: #0f172a;">🏢 {label_text}</h4>
-                        <p style="margin: 5px 0; color: #000000;">💰 إجمالي المبيعات: <b>{total_global_sales:,.2f} د.ل</b></p>
-                        <p style="margin: 5px 0; color: #000000;">💸 إجمالي المصروفات والرواتب والإيجارات: <b>{total_global_expenses:,.2f} د.ل</b></p>
-                        <p style="margin: 0; color: #0284c7; font-size: 19px;">📈 صافي الربح الإجمالي: <b>{total_global_net:,.2f} د.ل</b></p>
+                    <div style="background: #e2e8f0; padding: 18px; border-radius: 10px; border: 2px solid #64748b; margin-top: 15px;">
+                        <h4 style="margin:0; color: #0f172a; font-weight: 900; font-size: 20px;">🏢 {label_text}</h4>
+                        <p style="margin: 8px 0; color: #000000; font-weight: 900; font-size: 18px;">💰 إجمالي المبيعات: <b>{total_global_sales:,.2f} د.ل</b></p>
+                        <p style="margin: 8px 0; color: #000000; font-weight: 900; font-size: 18px;">💸 إجمالي المصروفات والرواتب والإيجارات: <b>{total_global_expenses:,.2f} د.ل</b></p>
+                        <p style="margin: 0; color: #0284c7; font-weight: 900; font-size: 21px;">📈 صافي الربح الإجمالي: <b>{total_global_net:,.2f} د.ل</b></p>
                     </div>
                 """, unsafe_allow_html=True)
             else:
