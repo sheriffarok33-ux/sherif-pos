@@ -26,7 +26,7 @@ if not os.path.exists("item_images"):
     os.makedirs("item_images")
 
 # ==========================================
-# 2. استدعاء قاعدة البيانات وتهيئة الجداول (الدالة الصحيحة create_tables)
+# 2. استدعاء قاعدة البيانات وتهيئة الجداول (متوافق مع database.py)
 # ==========================================
 from database import create_tables, get_db_connection
 create_tables()
