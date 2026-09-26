@@ -1,31 +1,23 @@
 import os
-import sys
-import importlib.util
+import re
+import io
 import sqlite3
 import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
+from database import initialize_database, get_db_connection
 
-# --- تحديد مسار المشروع الأساسي بدقة ليعمل على كافة المنصات و Linux ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
+# تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
+initialize_database()
 
-# --- استيراد قاعدة البيانات الأساسية ---
-try:
-    from database import initialize_database, get_db_connection
-    initialize_database()
-except Exception as e:
-    st.error(f"⚠️ خطأ في تهيئة قاعدة البيانات: {e}")
-
-# --- إعدادات الصفحة الأساسية ---
+# إعدادات الصفحة الأساسية
 st.set_page_config(
     page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# --- ستايل CSS الموحد لضمان وضوح الخطوط والأزرار ---
+# إضافة ستايل CSS مع ضبط لون الحروف داخل الأزرار الزرقاء ليصبح أبيضاً
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -39,13 +31,18 @@ st.markdown("""
     h1 { font-size: 28px !important; color: #0f172a !important; }
     h2 { font-size: 24px !important; color: #1e293b !important; }
     h3 { font-size: 20px !important; color: #334155 !important; }
-    div.stButton > button, div.stButton > button * { color: #ffffff !important; }
+    
+    div.stButton > button, div.stButton > button * { 
+        color: #ffffff !important; 
+    }
+    
     div.stButton > button { 
         border-radius: 8px; font-weight: 900 !important; transition: all 0.3s ease; height: 50px; 
         background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
         box-shadow: 0 3px 6px rgba(0,0,0,0.15); font-size: 18px !important;
     }
     div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-2px); }
+    
     [data-testid="stSidebar"] { background-color: #0f172a; }
     [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
     [data-testid="stSidebar"] .stButton>button {
@@ -57,10 +54,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# إنشاء مجلد الصور إذا لم يكن موجوداً
 if not os.path.exists("item_images"): 
     os.makedirs("item_images")
 
-# --- تهيئة متغيرات الجلسة (Session State) ---
+# تهيئة متغيرات الجلسة (Session State)
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
 if "username" not in st.session_state: st.session_state["username"] = ""
 if "role" not in st.session_state: st.session_state["role"] = ""
@@ -68,76 +66,46 @@ if "user_id" not in st.session_state: st.session_state["user_id"] = None
 if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
 if "cart" not in st.session_state: st.session_state["cart"] = []
 if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
+if "success_alert_msg" not in st.session_state: st.session_state["success_alert_msg"] = ""
 
 def set_page(page_name): 
     st.session_state["page"] = page_name
     st.rerun()
 
-# --- دالة فحص الصلاحيات ---
+# -------------------------------------------------------------
+# 🛡️ دالة فحص الصلاحيات المحمية بدقة عالية
+# -------------------------------------------------------------
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
-    if role in ["Admin", "General_Supervisor"]: return True
+    
+    if role in ["Admin", "General_Supervisor"]: 
+        return True
+        
     if role == "Cashier":
-        return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)", "🔄 تزويد الفروع والأرشيف"]
+        allowed_for_cashier = [
+            "🏠 الرئيسية واللوحة", 
+            "🛒 نقطة البيع (POS)", 
+            "⭐ لوحة المفضلة (1-20)"
+        ]
+        return menu_name in allowed_for_cashier
+
     if role == "Viewer":
-        return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
+        allowed_for_viewer = [
+            "🏠 الرئيسية واللوحة",
+            "📊 التقارير والأرباح"
+        ]
+        return menu_name in allowed_for_viewer
+        
     if role == "Branch_Supervisor":
-        return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف"]
+         allowed_for_bs = [
+            "🏠 الرئيسية واللوحة",
+            "🛒 نقطة البيع (POS)",
+            "📦 إدارة المخزن والفروع"
+         ]
+         return menu_name in allowed_for_bs
+
     return False
-
-# --- دالة التحميل الآمن للشاشات مع إظهار الخطأ الحقيقي إن وجد ---
-def load_screen_module(module_name):
-    possible_files = [f"{module_name}.py"]
-    if module_name == "pos":
-        possible_files = ["pos.py", "pos_2.py"]
-        
-    target_file = None
-    for f in possible_files:
-        full_path = os.path.join(current_dir, f)
-        if os.path.exists(full_path):
-            target_file = full_path
-            break
-            
-    if not target_file:
-        checked_files = ", ".join([f"`{file_item}`" for file_item in possible_files])
-        st.error(f"❌ خطأ: لم يتم العثور على ملف الشاشة المطلوب ({checked_files}) في مسار المشروع.")
-        return None
-        
-    try:
-        spec = importlib.util.spec_from_file_location(module_name, target_file)
-        if spec is None or spec.loader is None:
-            st.error(f"❌ خطأ: تعذر إنشاء مواصفات التحميل للملف `{os.path.basename(target_file)}`.")
-            return None
-            
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = mod
-        spec.loader.exec_module(mod)
-        
-        if not hasattr(mod, "show_page"):
-            st.error(f"❌ خطأ برمجي: الملف `{os.path.basename(target_file)}` موجود ولكن لا يحتوي على الدالة الأساسية `show_page()`.")
-            return None
-            
-        return mod
-    except Exception as e:
-        error_name = type(e).__name__
-        st.error(f"❌ فشل تحميل الشاشة `{module_name}` بسبب خطأ داخل الملف `{os.path.basename(target_file)}`.\n\n**نوع الخطأ:** `{error_name}`\n**التفاصيل:** `{str(e)}`")
-        return None
-
-# --- تحميل كافة وحدات الشاشات عبر الدالة الآمنة ---
-dashboard = load_screen_module("dashboard")
-pos = load_screen_module("pos")
-branches = load_screen_module("branches")
-users = load_screen_module("users")
-adjustments = load_screen_module("adjustments")
-items_import = load_screen_module("items_import")
-expenses = load_screen_module("expenses")
-parties = load_screen_module("parties")
-purchases = load_screen_module("purchases")
-transfers = load_screen_module("transfers")
-favorites = load_screen_module("favorites")
-inventory = load_screen_module("inventory")
-roasting_blending = load_screen_module("roasting_blending")
-reports = load_screen_module("reports")
+# -------------------------------------------------------------
 
 # --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
@@ -146,32 +114,30 @@ if not st.session_state["logged_in"]:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
         st.title("🔐 بوابة دخول نظام المحامص")
         st.subheader("مجموعة أبو زيد التجارية")
+        
         with st.form("login_form"):
             u_name = st.text_input("اسم المستخدم")
             u_pass = st.text_input("كلمة المرور", type="password")
             submit = st.form_submit_button("🚀 دخول للنظام", use_container_width=True)
             if submit:
-                try:
-                    conn = get_db_connection()
-                    user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
-                    conn.close()
-                    if user:
-                        if "is_active" in user.keys() and user["is_active"] == 0:
-                            st.error("🚫 هذا الحساب موقوف!")
-                            st.stop()
-                        st.session_state["logged_in"] = True
-                        st.session_state["username"] = user["username"]
-                        st.session_state["role"] = user["role"]
-                        st.session_state["user_id"] = user["id"]
-                        st.session_state["branch_id"] = user["branch_id"]
-                        st.rerun()
-                    else: 
-                        st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (التلقائي: admin / admin)")
-                except Exception as db_err:
-                    st.error(f"⚠️ خطأ في الاتصال بقاعدة البيانات: {db_err}")
+                conn = get_db_connection()
+                user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
+                conn.close()
+                if user:
+                    if user["is_active"] == 0:
+                        st.error("🚫 هذا الحساب موقوف!")
+                        st.stop()
+                    st.session_state["logged_in"] = True
+                    st.session_state["username"] = user["username"]
+                    st.session_state["role"] = user["role"]
+                    st.session_state["user_id"] = user["id"]
+                    st.session_state["branch_id"] = user["branch_id"]
+                    st.rerun()
+                else: 
+                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
     st.stop()
 
-# --- القائمة الجانبية ---
+# --- القائمة الجانبية (Navigation Menu) ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
@@ -179,18 +145,19 @@ st.sidebar.markdown("---")
 DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
+    "🏢 إدارة الفروع",
+    "👥 إدارة المستخدمين",
     "⭐ لوحة المفضلة (1-20)",
     "📦 إدارة المخزن والفروع",
     "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
     "🔄 تزويد الفروع والأرشيف",
-    "🏢 إدارة الفروع",
     "📁 استيراد Excel",
     "💰 المصروفات",
-    "📥 المشتريات والموردين",
+    "👥 جهات التعامل",
+    "📥 المشتريات",
     "⚙️ الجرد والتصفير السنوي",
     "🥜 التحميص والخلط",
-    "📊 التقارير والأرباح",
-    "👥 إدارة المستخدمين"
+    "📊 التقارير والأرباح"
 ]
 
 for menu_name in DEFAULT_MENUS:
@@ -206,36 +173,111 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# --- التوجيه الآمن للشاشات (Router) ---
+# --- منطقة توجيه الشاشات (Router) الآمنة ومباشرة من الجذر ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
 if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
-screens_routing = {
-    "🏠 الرئيسية واللوحة": (dashboard, "لوحة التحكم الرئيسية"),
-    "🛒 نقطة البيع (POS)": (pos, "شاشة نقطة البيع"),
-    "🏢 إدارة الفروع": (branches, "شاشة إدارة الفروع"),
-    "👥 إدارة المستخدمين": (users, "شاشة إدارة المستخدمين"),
-    "⭐ لوحة المفضلة (1-20)": (favorites, "شاشة لوحة المفضلة"),
-    "📦 إدارة المخزن والفروع": (inventory, "شاشة إدارة المخزن والفروع"),
-    "➕ الفائض والتوالف والمرتجعات وتعديل السعر": (adjustments, "شاشة الفائض والتوالف"),
-    "🔄 تزويد الفروع والأرشيف": (transfers, "شاشة تزويد الفروع والأرشيف"),
-    "📁 استيراد Excel": (items_import, "شاشة استيراد Excel"),
-    "💰 المصروفات": (expenses, "شاشة المصروفات"),
-    "📥 المشتريات والموردين": (purchases, "شاشة المشتريات"),
-    "🥜 التحميص والخلط": (roasting_blending, "شاشة التحميص والخلط"),
-    "📊 التقارير والأرباح": (reports, "شاشة التقارير والأرباح")
-}
+if choice == "🏠 الرئيسية واللوحة":
+    try:
+        import dashboard
+        dashboard.show_page()
+    except ImportError:
+        st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
+        st.info("مرحباً بك في النظام السحابي. شاشة الرئيسية غير متوفرة.")
 
-if choice in screens_routing:
-    mod_obj, screen_title = screens_routing[choice]
-    if mod_obj and hasattr(mod_obj, "show_page"):
-        mod_obj.show_page()
-    else:
-        st.warning(f"⚠️ {screen_title} غير متاحة حالياً أو جاري تجهيزها.")
+elif choice == "🛒 نقطة البيع (POS)":
+    try:
+        import pos
+        pos.show_page()
+    except ImportError:
+        st.error("🛒 شاشة نقطة البيع غير متوفرة.")
+
+elif choice == "🏢 إدارة الفروع":
+    try:
+        import branches
+        branches.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
+
+elif choice == "👥 إدارة المستخدمين":
+    try:
+        import users
+        users.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
+
+elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
+    try:
+        import adjustments
+        adjustments.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود.")
+
+elif choice == "📁 استيراد Excel":
+    try:
+        import items_import
+        items_import.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
+
+elif choice == "💰 المصروفات":
+    try:
+        import expenses
+        expenses.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
+
+elif choice == "👥 جهات التعامل":
+    try:
+        import parties
+        parties.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
+
+elif choice == "📥 المشتريات":
+    try:
+        import purchases
+        purchases.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
+
+elif choice == "🔄 تزويد الفروع والأرشيف":
+    try:
+        import transfers
+        transfers.show_page()
+    except ImportError:
+        st.info("🔄 شاشة تزويد الفروع والأرشيف قيد التجهيز.")
+
+elif choice == "⭐ لوحة المفضلة (1-20)":
+    try:
+        import favorites
+        favorites.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
+
+elif choice == "📦 إدارة المخزن والفروع":
+    try:
+        import inventory
+        inventory.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
+
 elif choice == "⚙️ الجرد والتصفير السنوي":
-    st.info("⚙️ شاشة الجرد والتصفير السنوي قيد التجهيز.")
-else:
-    st.error("❌ الشاشة غير مطلوبة أو غير معرفة.")
+    st.info("⚙️ شاشة الجرد قيد التجهيز.")
+
+elif choice == "🥜 التحميص والخلط":
+    try:
+        import roasting_blending
+        roasting_blending.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
+
+elif choice == "📊 التقارير والأرباح":
+    try:
+        import reports
+        reports.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود.")
