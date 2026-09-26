@@ -4,13 +4,13 @@ import os
 DB_NAME = 'database.db'
 
 def get_db_connection():
-    """تأسيس اتصال بقاعدة البيانات وإرجاع الكائن للتعامل معه كقاموس."""
+    """تأسيس اتصال بقاعدة البيانات وإرجاع كائن الصفوف."""
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
 def create_tables():
-    """إنشاء جميع الجداول الأساسية لبرنامج محامص أبو زيد إذا لم تكن موجودة."""
+    """إنشاء كافة جداول النظام الأساسية إذا لم تكن موجودة."""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -31,12 +31,11 @@ def create_tables():
             phone TEXT,
             password TEXT NOT NULL,
             role TEXT NOT NULL,
-            branch_id INTEGER,
-            FOREIGN KEY (branch_id) REFERENCES branches (id)
+            branch_id INTEGER
         )
     """)
 
-    # 3. جدول سجل مراقبة النظام
+    # 3. جدول سجل مراقبة النظام (User Logs)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,8 +57,7 @@ def create_tables():
             sale_price REAL DEFAULT 0.0,
             avg_cost REAL DEFAULT 0.0,
             favorite_rank INTEGER DEFAULT 0,
-            expiry_date TEXT,
-            FOREIGN KEY (branch_id) REFERENCES branches (id)
+            expiry_date TEXT
         )
     """)
 
@@ -98,9 +96,7 @@ def create_tables():
             payment_method TEXT,
             notes TEXT,
             shift_status TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (branch_id) REFERENCES branches (id),
-            FOREIGN KEY (user_id) REFERENCES users (id)
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -116,9 +112,7 @@ def create_tables():
             payment_type TEXT,
             items_details TEXT,
             invoice_date TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (branch_id) REFERENCES branches (id),
-            FOREIGN KEY (supplier_id) REFERENCES suppliers (id)
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -129,8 +123,7 @@ def create_tables():
             branch_id INTEGER,
             amount REAL,
             description TEXT,
-            expense_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (branch_id) REFERENCES branches (id)
+            expense_date DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -143,9 +136,7 @@ def create_tables():
             transfer_type TEXT,
             items_details TEXT,
             status TEXT,
-            transfer_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (from_branch_id) REFERENCES branches (id),
-            FOREIGN KEY (to_branch_id) REFERENCES branches (id)
+            transfer_date DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -162,8 +153,5 @@ def create_tables():
 
     conn.close()
 
-# 🌟 الحل الذكي: جعل initialize_database مرادفاً تماماً لـ create_tables لمنع أي خطأ استيراد
+# 🌟 ضمان التوافق التام: جعل initialize_database مرادفاً لـ create_tables لمنع أي خطأ استيراد مستقبلي
 initialize_database = create_tables
-
-# تنفيذ التهيئة عند الاستيراد
-create_tables()
