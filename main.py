@@ -60,7 +60,7 @@ if "role" not in st.session_state: st.session_state["role"] = ""
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
 if "cart" not in st.session_state: st.session_state["cart"] = []
-if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
+if "page" not in st.session_state: st.session_state["page"] = "🛒 نقطة البيع (POS)"
 
 def set_page(page_name): 
     st.session_state["page"] = page_name
@@ -71,14 +71,14 @@ def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     if role in ["Admin", "General_Supervisor"]: return True
     if role == "Cashier":
-        return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)"]
+        return menu_name in ["🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)"]
     if role == "Viewer":
-        return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
+        return menu_name in ["📊 التقارير والأرباح"]
     if role == "Branch_Supervisor":
-        return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع"]
+        return menu_name in ["🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "📥 المشتريات", "👥 جهات التعامل", "🥜 التحميص والخلط"]
     return False
 
-# --- استيراد كافة الشاشات من المجلد الرئيسي مباشرة ---
+# --- استيراد كافة الشاشات من المجلد الرئيسي مباشرة بأمان ---
 try:
     import pos
 except ImportError:
@@ -152,9 +152,6 @@ if not st.session_state["logged_in"]:
                 user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
                 conn.close()
                 if user:
-                    if "is_active" in user.keys() and user["is_active"] == 0:
-                        st.error("🚫 هذا الحساب موقوف!")
-                        st.stop()
                     st.session_state["logged_in"] = True
                     st.session_state["username"] = user["username"]
                     st.session_state["role"] = user["role"]
@@ -171,7 +168,6 @@ st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.sessio
 st.sidebar.markdown("---")
 
 DEFAULT_MENUS = [
-    "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
     "🏢 إدارة الفروع",
     "👥 إدارة المستخدمين",
@@ -187,7 +183,8 @@ DEFAULT_MENUS = [
 
 for menu_name in DEFAULT_MENUS:
     if check_user_permission(menu_name):
-        if st.sidebar.button(menu_name, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
+        btn_label = f"📍 {menu_name}" if st.session_state["page"] == menu_name else menu_name
+        if st.sidebar.button(btn_label, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
             set_page(menu_name)
 
 st.sidebar.markdown("---")
@@ -199,17 +196,13 @@ st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
 # --- موجه الشاشات (Router) الرئيسي ---
-choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
+choice = st.session_state.get("page", "🛒 نقطة البيع (POS)")
 
 if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
-if choice == "🏠 الرئيسية واللوحة":
-    st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
-    st.info("مرحباً بك في النظام السحابي لإدارة المحامص والمخازن. اختر الشاشة المطلوبة من القائمة الجانبية.")
-
-elif choice == "🛒 نقطة البيع (POS)":
+if choice == "🛒 نقطة البيع (POS)":
     if pos: pos.show_page()
     else: st.error("⚠️ شاشة نقطة البيع غير متوفرة.")
 
