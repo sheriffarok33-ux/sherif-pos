@@ -75,7 +75,7 @@ def check_user_permission(menu_name):
         return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف"]
     return False
 
-# --- استيراد الشاشات بشكل آمن ومنع انهيار التطبيق ---
+# --- استيراد كافة الشاشات مباشرة من المجلد الرئيسي بأمان تام ---
 modules_dict = {}
 screen_files = {
     "dashboard": "dashboard",
@@ -188,7 +188,7 @@ screens_routing = {
     "💰 المصروفات": ("expenses", "شاشة المصروفات"),
     "📥 المشتريات والموردين": ("purchases", "شاشة المشتريات"),
     "🥜 التحميص والخلط": ("roasting_blending", "شاشة التحميص والخلط"),
-    "📊 التقارير والأرباح": ("reports", "reports")
+    "📊 التقارير والأرباح": ("reports", "شاشة التقارير والأرباح")
 }
 
 if choice in screens_routing:
