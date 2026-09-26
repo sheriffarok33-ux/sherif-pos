@@ -5,13 +5,10 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
-from database import get_db_connection, create_tables
+from database import initialize_database, get_db_connection
 
 # تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
-try:
-    create_tables()
-except Exception:
-    pass
+initialize_database()
 
 # إعدادات الصفحة الأساسية
 st.set_page_config(
@@ -20,21 +17,17 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS مع ضبط لون الحروف داخل الأزرار الزرقاء ليصبح أبيضاً واتجاه اليمين (RTL)
+# إضافة ستايل CSS مع ضبط لون الحروف داخل الأزرار الزرقاء ليصبح أبيضاً
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
-    
     html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table, th, td { 
         font-family: 'Tajawal', sans-serif !important; 
         color: #000000 !important; 
         font-weight: 900 !important;
         font-size: 17px !important;
-        direction: rtl !important;
-        text-align: right !important;
     }
-    
-    .main { background-color: #f8fafc; direction: rtl !important; }
+    .main { background-color: #f8fafc; }
     h1 { font-size: 28px !important; color: #0f172a !important; }
     h2 { font-size: 24px !important; color: #1e293b !important; }
     h3 { font-size: 20px !important; color: #334155 !important; }
@@ -50,23 +43,12 @@ st.markdown("""
     }
     div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-2px); }
     
-    [data-testid="stSidebar"] { 
-        background-color: #0f172a; 
-        right: 0 !important; 
-        left: auto !important; 
-        direction: rtl !important;
-    }
-    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { 
-        color: #ffffff !important; 
-        font-size: 17px !important; 
-        direction: rtl !important;
-        text-align: right !important;
-    }
+    [data-testid="stSidebar"] { background-color: #0f172a; }
+    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
     [data-testid="stSidebar"] .stButton>button {
         background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
-        border-radius: 10px; padding: 12px 15px; text-align: right !important; font-weight: 900 !important;
+        border-radius: 10px; padding: 12px 15px; text-align: right; font-weight: 900 !important;
         transition: all 0.3s ease; margin-bottom: 8px; font-size: 17px !important; height: auto;
-        direction: rtl !important;
     }
     [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); }
     </style>
@@ -124,7 +106,12 @@ def check_user_permission(menu_name):
 
     return False
 
-# --- استيراد الشاشات من المجلد الرئيسي مباشرة مع تأمين كل استيراد ---
+# --- استيراد الشاشات من المجلد الرئيسي مباشرة ---
+try:
+    import dashboard
+except ImportError:
+    dashboard = None
+
 try:
     import pos
 except ImportError:
@@ -141,9 +128,19 @@ except ImportError:
     users = None
 
 try:
+    import adjustments
+except ImportError:
+    adjustments = None
+
+try:
     import items_import
 except ImportError:
     items_import = None
+
+try:
+    import expenses
+except ImportError:
+    expenses = None
 
 try:
     import parties
@@ -211,7 +208,7 @@ if not st.session_state["logged_in"]:
                     st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (التلقائي: admin / admin123)")
     st.stop()
 
-# --- القائمة الجانبية (Navigation Menu) على اليمين ---
+# --- القائمة الجانبية (Navigation Menu) ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
@@ -223,18 +220,20 @@ DEFAULT_MENUS = [
     "👥 إدارة المستخدمين",
     "⭐ لوحة المفضلة (1-20)",
     "📦 إدارة المخزن والفروع",
+    "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
     "🔄 تزويد الفروع والأرشيف",
     "📁 استيراد Excel",
+    "💰 المصروفات",
     "👥 جهات التعامل",
     "📥 المشتريات",
+    "⚙️ الجرد والتصفير السنوي",
     "🥜 التحميص والخلط",
     "📊 التقارير والأرباح"
 ]
 
 for menu_name in DEFAULT_MENUS:
     if check_user_permission(menu_name):
-        btn_label = f"📍 {menu_name}" if st.session_state["page"] == menu_name else menu_name
-        if st.sidebar.button(btn_label, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
+        if st.sidebar.button(menu_name, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
             set_page(menu_name)
 
 st.sidebar.markdown("---")
@@ -245,7 +244,7 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# --- منطقة توجيه الشاشات (Router) الآمنة التي تعالج كل زر ---
+# --- منطقة توجيه الشاشات (Router) الآمنة ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
 if not check_user_permission(choice):
@@ -253,21 +252,11 @@ if not check_user_permission(choice):
     st.stop()
 
 if choice == "🏠 الرئيسية واللوحة":
-    st.header("🌟 مجموعة أبو زيد التجارية - لوحة القيادة والتحكم الرئيسية")
-    st.info("مرحباً بك في النظام السحابي المتكامل لمجموعة أبو زيد. استعمل القائمة الجانبية للتنقل بين الشاشات بسلاسة.")
-    try:
-        conn = get_db_connection()
-        c_count = conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
-        s_count = conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0]
-        i_count = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
-        conn.close()
-        
-        col_d1, col_d2, col_d3 = st.columns(3)
-        col_d1.metric("👥 إجمالي الزبائن الآجلين", c_count)
-        col_d2.metric("🚛 إجمالي الموردين", s_count)
-        col_d3.metric("📦 إجمالي الأصناف المخزنية", i_count)
-    except Exception:
-        pass
+    if dashboard:
+        dashboard.show_page()
+    else:
+        st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
+        st.info("مرحباً بك في النظام السحابي. (ملف dashboard.py غير متوفر أو غير متاح في المسار الحالي).")
 
 elif choice == "🛒 نقطة البيع (POS)":
     if pos: pos.show_page()
@@ -281,9 +270,17 @@ elif choice == "👥 إدارة المستخدمين":
     if users: users.show_page()
     else: st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
 
+elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
+    if adjustments: adjustments.show_page()
+    else: st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود.")
+
 elif choice == "📁 استيراد Excel":
     if items_import: items_import.show_page()
     else: st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
+
+elif choice == "💰 المصروفات":
+    if expenses: expenses.show_page()
+    else: st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
 
 elif choice == "👥 جهات التعامل":
     if parties: parties.show_page()
@@ -295,7 +292,7 @@ elif choice == "📥 المشتريات":
 
 elif choice == "🔄 تزويد الفروع والأرشيف":
     if transfers: transfers.show_page()
-    else: st.warning("⚠️ ملف شاشة تزويد الفروع غير موجود.")
+    else: st.info("🔄 شاشة تزويد الفروع والأرشيف قيد التجهيز.")
 
 elif choice == "⭐ لوحة المفضلة (1-20)":
     if favorites: favorites.show_page()
@@ -303,7 +300,10 @@ elif choice == "⭐ لوحة المفضلة (1-20)":
 
 elif choice == "📦 إدارة المخزن والفروع":
     if inventory: inventory.show_page()
-    else: st.warning("⚠️ ملف شاشة إدارة المخزن غير موجود.")
+    else: st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
+
+elif choice == "⚙️ الجرد والتصفير السنوي":
+    st.info("⚙️ شاشة الجرد قيد التجهيز.")
 
 elif choice == "🥜 التحميص والخلط":
     if roasting_blending: roasting_blending.show_page()
