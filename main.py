@@ -1,9 +1,6 @@
 import os
 import streamlit as st
-from database import initialize_database, get_db_connection
-
-# تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
-initialize_database()
+from database import get_db_connection
 
 # إعدادات الصفحة الأساسية
 st.set_page_config(
@@ -78,61 +75,39 @@ def check_user_permission(menu_name):
         return menu_name in ["🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "📥 المشتريات", "👥 جهات التعامل", "🥜 التحميص والخلط"]
     return False
 
-# --- استيراد كافة الشاشات من المجلد الرئيسي مباشرة بأمان ---
-try:
-    import pos
-except ImportError:
-    pos = None
+# --- استيراد كافة الشاشات مباشرة من المجلد الرئيسي ---
+try: import pos
+except ImportError: pos = None
 
-try:
-    import branches
-except ImportError:
-    branches = None
+try: import branches
+except ImportError: branches = None
 
-try:
-    import users
-except ImportError:
-    users = None
+try: import users
+except ImportError: users = None
 
-try:
-    import items_import
-except ImportError:
-    items_import = None
+try: import items_import
+except ImportError: items_import = None
 
-try:
-    import parties
-except ImportError:
-    parties = None
+try: import parties
+except ImportError: parties = None
 
-try:
-    import purchases
-except ImportError:
-    purchases = None
+try: import purchases
+except ImportError: purchases = None
 
-try:
-    import transfers
-except ImportError:
-    transfers = None
+try: import transfers
+except ImportError: transfers = None
 
-try:
-    import favorites
-except ImportError:
-    favorites = None
+try: import favorites
+except ImportError: favorites = None
 
-try:
-    import inventory
-except ImportError:
-    inventory = None
+try: import inventory
+except ImportError: inventory = None
 
-try:
-    import roasting_blending
-except ImportError:
-    roasting_blending = None
+try: import roasting_blending
+except ImportError: roasting_blending = None
 
-try:
-    import reports
-except ImportError:
-    reports = None
+try: import reports
+except ImportError: reports = None
 
 
 # --- بوابة الدخول ---
@@ -207,8 +182,8 @@ if choice == "🛒 نقطة البيع (POS)":
     else: st.error("⚠️ شاشة نقطة البيع غير متوفرة.")
 
 elif choice == "🏢 إدارة الفروع":
-    if branches: branches.show_page()
-    else: st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
+    if branches and hasattr(branches, "show_page"): branches.show_page()
+    else: st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود أو لا يحتوي على دالة show_page.")
 
 elif choice == "👥 إدارة المستخدمين":
     if users: users.show_page()
