@@ -4,7 +4,7 @@ import os
 DB_NAME = 'database.db'
 
 def get_db_connection():
-    """تأسيس اتصال بقاعدة البيانات وإرجاع كائن الصفوف."""
+    """تأسيس اتصال بقاعدة البيانات وإرجاع كائن الصفوف كقاموس."""
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
@@ -153,5 +153,5 @@ def create_tables():
 
     conn.close()
 
-# 🌟 ضمان التوافق التام: جعل initialize_database مرادفاً لـ create_tables لمنع أي خطأ استيراد مستقبلي
+# توفير الأسماء البديلة لمنع أي خطأ استيراد مستقبلي
 initialize_database = create_tables
