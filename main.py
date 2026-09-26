@@ -19,6 +19,7 @@ st.markdown("""
     div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); }
     [data-testid="stSidebar"] { background-color: #0f172a; }
     [data-testid="stSidebar"] * { color: #ffffff !important; }
+    div[data-testid="InputInstructions"] { display: none !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -26,14 +27,18 @@ if not os.path.exists("item_images"):
     os.makedirs("item_images")
 
 # ==========================================
-# 2. استدعاء قاعدة البيانات بالدالة الصحيحة create_tables
+# 2. استدعاء قاعدة البيانات وتهيئة الجداول بأمان
 # ==========================================
 try:
-    from database import create_tables, get_db_connection
+    from database import get_db_connection, create_tables
     create_tables()
-except Exception as e:
-    st.error(f"⚠️ خطأ في الاتصال بقاعدة البيانات: {e}")
-    st.stop()
+except ImportError:
+    try:
+        from database import get_db_connection, initialize_database as create_tables
+        create_tables()
+    except Exception as e:
+        st.error(f"⚠️ خطأ في دالة تهيئة قاعدة البيانات: {e}")
+        st.stop()
 
 # ==========================================
 # 3. استدعاء كافة شاشات المشروع
