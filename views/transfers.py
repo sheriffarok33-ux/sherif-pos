@@ -126,7 +126,7 @@ def show_page():
                         for c_item in st.session_state["transfer_cart"]:
                             items_summary_list.append(f"{c_item['name']} ({c_item['qty']} كجم)")
                         
-                        items_details_str = " | ".join(items_summary_list)
+                        items_details_str = "\n".join([f"• {x}" for x in items_summary_list])
                         if transfer_notes:
                             items_details_str += f" -- ملاحظات: {transfer_notes}"
 
