@@ -6,12 +6,12 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
 
-# --- تحديد مسار المشروع الأساسي ليعمل بسلاسة على Linux و Streamlit Cloud ---
+# --- تحديد مسار المشروع الأساسي بدقة ليعمل على كافة المنصات و Linux ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-# --- استيراد قاعدة البيانات الأساسية مع الحماية ---
+# --- استيراد قاعدة البيانات الأساسية ---
 try:
     from database import initialize_database, get_db_connection
     initialize_database()
@@ -85,7 +85,7 @@ def check_user_permission(menu_name):
         return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف"]
     return False
 
-# --- دالة التحميل الآمن للشاشات ---
+# --- دالة التحميل الآمن للشاشات مع إظهار الخطأ الحقيقي إن وجد ---
 def load_screen_module(module_name):
     possible_files = [f"{module_name}.py"]
     if module_name == "pos":
