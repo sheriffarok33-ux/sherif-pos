@@ -6,12 +6,11 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
 
-# استيراد قاعدة البيانات مع معالجة الأخطاء
-try:
-    from database import initialize_database, get_db_connection
-    initialize_database()
-except Exception as e:
-    st.error(f"⚠️ خطأ في تهيئة قاعدة البيانات: {e}")
+# استيراد قاعدة البيانات الأساسية
+from database import initialize_database, get_db_connection
+
+# تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
+initialize_database()
 
 # إعدادات الصفحة الأساسية
 st.set_page_config(
@@ -106,30 +105,21 @@ def check_user_permission(menu_name):
 
     return False
 
-# --- استيراد الشاشات بشكل آمن ومنع توقف التطبيق ---
-modules_dict = {}
-screen_files = {
-    "dashboard": "dashboard",
-    "pos": "pos",
-    "branches": "branches",
-    "users": "users",
-    "adjustments": "adjustments",
-    "items_import": "items_import",
-    "expenses": "expenses",
-    "parties": "parties",
-    "purchases": "purchases",
-    "transfers": "transfers",
-    "favorites": "favorites",
-    "inventory": "inventory",
-    "roasting_blending": "roasting_blending",
-    "reports": "reports"
-}
-
-for mod_key, mod_name in screen_files.items():
-    try:
-        modules_dict[mod_key] = __import__(mod_name)
-    except Exception as e:
-        modules_dict[mod_key] = None
+# --- استيراد جميع الشاشات بشكل مباشر وثابت ---
+import dashboard
+import pos
+import branches
+import users
+import adjustments
+import items_import
+import expenses
+import parties
+import purchases
+import transfers
+import favorites
+import inventory
+import roasting_blending
+import reports
 
 # --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
@@ -200,85 +190,61 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# --- منطقة توجيه الشاشات (Router) الآمنة ---
+# --- منطقة توجيه الشاشات (Router) ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
 if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
-# توجيه الشاشات مع التحقق الديناميكي من وجود الملف ودالة show_page
+# توجيه الشاشات بناءً على الاختيار المباشر
 if choice == "🏠 الرئيسية واللوحة":
-    if modules_dict["dashboard"] and hasattr(modules_dict["dashboard"], "show_page"):
-        modules_dict["dashboard"].show_page()
-    else:
-        st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
-        st.info("مرحباً بك في النظام السحابي.")
+    dashboard.show_page()
 
 elif choice == "🛒 نقطة البيع (POS)":
-    if modules_dict["pos"] and hasattr(modules_dict["pos"], "show_page"):
-        modules_dict["pos"].show_page()
-    else: st.error("⚠️ شاشة نقطة البيع غير متوفرة.")
+    pos.show_page()
 
 elif choice == "🏢 إدارة الفروع":
-    if modules_dict["branches"] and hasattr(modules_dict["branches"], "show_page"):
-        modules_dict["branches"].show_page()
-    else: st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
+    branches.show_page()
 
 elif choice == "👥 إدارة المستخدمين":
-    if modules_dict["users"] and hasattr(modules_dict["users"], "show_page"):
-        modules_dict["users"].show_page()
-    else: st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
+    users.show_page()
 
 elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
-    if modules_dict["adjustments"] and hasattr(modules_dict["adjustments"], "show_page"):
-        modules_dict["adjustments"].show_page()
-    else: st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود.")
+    if adjustments:
+        adjustments.show_page()
+    else:
+        st.warning("⚠️ ملف شاشة الفائض والتوالف غير متوفر حالياً.")
 
 elif choice == "📁 استيراد Excel":
-    if modules_dict["items_import"] and hasattr(modules_dict["items_import"], "show_page"):
-        modules_dict["items_import"].show_page()
-    else: st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
+    items_import.show_page()
 
 elif choice == "💰 المصروفات":
-    if modules_dict["expenses"] and hasattr(modules_dict["expenses"], "show_page"):
-        modules_dict["expenses"].show_page()
-    else: st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
+    if expenses:
+        expenses.show_page()
+    else:
+        st.warning("⚠️ ملف شاشة المصروفات غير متوفر حالياً.")
 
 elif choice == "👥 جهات التعامل":
-    if modules_dict["parties"] and hasattr(modules_dict["parties"], "show_page"):
-        modules_dict["parties"].show_page()
-    else: st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
+    parties.show_page()
 
 elif choice == "📥 المشتريات":
-    if modules_dict["purchases"] and hasattr(modules_dict["purchases"], "show_page"):
-        modules_dict["purchases"].show_page()
-    else: st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
+    purchases.show_page()
 
 elif choice == "🔄 تزويد الفروع والأرشيف":
-    if modules_dict["transfers"] and hasattr(modules_dict["transfers"], "show_page"):
-        modules_dict["transfers"].show_page()
-    else: st.info("🔄 شاشة تزويد الفروع والأرشيف قيد التجهيز.")
+    transfers.show_page()
 
 elif choice == "⭐ لوحة المفضلة (1-20)":
-    if modules_dict["favorites"] and hasattr(modules_dict["favorites"], "show_page"):
-        modules_dict["favorites"].show_page()
-    else: st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
+    favorites.show_page()
 
 elif choice == "📦 إدارة المخزن والفروع":
-    if modules_dict["inventory"] and hasattr(modules_dict["inventory"], "show_page"):
-        modules_dict["inventory"].show_page()
-    else: st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
+    inventory.show_page()
 
 elif choice == "⚙️ الجرد والتصفير السنوي":
-    st.info("⚙️ شاشة الجرد قيد التجهيز.")
+    st.info("⚙️ شاشة الجرد والتصفير السنوي قيد التجهيز.")
 
 elif choice == "🥜 التحميص والخلط":
-    if modules_dict["roasting_blending"] and hasattr(modules_dict["roasting_blending"], "show_page"):
-        modules_dict["roasting_blending"].show_page()
-    else: st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
+    roasting_blending.show_page()
 
 elif choice == "📊 التقارير والأرباح":
-    if modules_dict["reports"] and hasattr(modules_dict["reports"], "show_page"):
-        modules_dict["reports"].show_page()
-    else: st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود.")
+    reports.show_page()
