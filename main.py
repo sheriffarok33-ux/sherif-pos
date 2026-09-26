@@ -1,18 +1,27 @@
 import os
 import streamlit as st
-from database import create_tables, get_db_connection
 
-# تهيئة قاعدة البيانات عند بدء التشغيل
-create_tables()
+# استيراد دوال الاتصال وتهيئة قاعدة البيانات بشكل آمن
+from database import get_db_connection, create_tables, initialize_database
 
-# إعدادات الصفحة الأساسية مع ضبط اتجاه الواجهة
+# تهيئة قاعدة البيانات عند بدء تشغيل التطبيق (مع دعم كلا الاسمين لتفادي أي خطأ)
+try:
+    initialize_database()
+except Exception:
+    try:
+        create_tables()
+    except Exception as e:
+        st.error(f"⚠️ خطأ في تهيئة قاعدة البيانات: {e}")
+        st.stop()
+
+# إعدادات الصفحة الأساسية
 st.set_page_config(
     page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS الموحد لفرض اتجاه اليمين (RTL) وتنسيق الأزرار والقائمة الجانبية
+# إضافة ستايل CSS الموحد لضمان وضوح الخطوط وتنسيق الأزرار والقائمة الجانبية (RTL)
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -27,9 +36,11 @@ st.markdown("""
     }
     
     .main { background-color: #f8fafc; direction: rtl !important; }
-    h1, h2, h3 { color: #0f172a !important; direction: rtl !important; text-align: right !important; }
+    h1 { font-size: 28px !important; color: #0f172a !important; }
+    h2 { font-size: 24px !important; color: #1e293b !important; }
+    h3 { font-size: 20px !important; color: #334155 !important; }
     
-    /* 🌟 ضبط القائمة الجانبية لتكون على اليمين بالكامل */
+    /* 🌟 ضبط القائمة الجانبية لتكون على اليمين بالكامل وتنسيق أزرارها */
     [data-testid="stSidebar"] {
         background-color: #0f172a;
         right: 0 !important;
@@ -69,10 +80,11 @@ st.markdown("""
         background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
         box-shadow: 0 3px 6px rgba(0,0,0,0.15); font-size: 18px !important;
     }
-    div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); }
+    div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-2px); }
     </style>
 """, unsafe_allow_html=True)
 
+# إنشاء مجلد الصور إذا لم يكن موجوداً
 if not os.path.exists("item_images"): 
     os.makedirs("item_images")
 
@@ -90,20 +102,41 @@ def set_page(page_name):
     st.session_state["page"] = page_name
     st.rerun()
 
-# نظام فحص الصلاحيات
+# -------------------------------------------------------------
+# 🛡️ دالة فحص الصلاحيات المحمية بدقة عالية
+# -------------------------------------------------------------
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
+    
     if role in ["Admin", "General_Supervisor"]: 
         return True
+        
     if role == "Cashier":
-        return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)"]
+        allowed_for_cashier = [
+            "🏠 الرئيسية واللوحة", 
+            "🛒 نقطة البيع (POS)", 
+            "⭐ لوحة المفضلة (1-20)"
+        ]
+        return menu_name in allowed_for_cashier
+
     if role == "Viewer":
-        return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
+        allowed_for_viewer = [
+            "🏠 الرئيسية واللوحة",
+            "📊 التقارير والأرباح"
+        ]
+        return menu_name in allowed_for_viewer
+        
     if role == "Branch_Supervisor":
-        return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع"]
+         allowed_for_bs = [
+            "🏠 الرئيسية واللوحة",
+            "🛒 نقطة البيع (POS)",
+            "📦 إدارة المخزن والفروع"
+         ]
+         return menu_name in allowed_for_bs
+
     return False
 
-# استيراد الشاشات بشكل آمن ومنفصل
+# --- استيراد الشاشات بأمان تام ---
 try: import dashboard
 except ImportError: dashboard = None
 
@@ -146,7 +179,8 @@ except ImportError: roasting_blending = None
 try: import reports
 except ImportError: reports = None
 
-# بوابة الدخول
+
+# --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -173,10 +207,10 @@ if not st.session_state["logged_in"]:
                     st.session_state["branch_id"] = user["branch_id"]
                     st.rerun()
                 else: 
-                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
+                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (التلقائي: admin / admin123)")
     st.stop()
 
-# القائمة الجانبية (يمين الشاشة)
+# --- القائمة الجانبية (Navigation Menu) على اليمين ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
@@ -212,7 +246,7 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# موجه الشاشات (Router) الرئيسي
+# --- منطقة توجيه الشاشات (Router) الآمنة ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
 if not check_user_permission(choice):
@@ -224,7 +258,20 @@ if choice == "🏠 الرئيسية واللوحة":
         dashboard.show_page()
     else:
         st.header("🌟 مجموعة أبو زيد التجارية - لوحة القيادة والتحكم الرئيسية")
-        st.info("مرحباً بك في النظام السحابي المتكامل لمجموعة أبو زيد.")
+        st.info("مرحباً بك في النظام السحابي المتكامل لمجموعة أبو زيد. استعمل القائمة الجانبية للتنقل بين الشاشات بسلاسة.")
+        try:
+            conn = get_db_connection()
+            c_count = conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
+            s_count = conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0]
+            i_count = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+            conn.close()
+            
+            col_d1, col_d2, col_d3 = st.columns(3)
+            col_d1.metric("👥 إجمالي الزبائن الآجلين", c_count)
+            col_d2.metric("🚛 إجمالي الموردين", s_count)
+            col_d3.metric("📦 إجمالي الأصناف المخزنية", i_count)
+        except Exception:
+            pass
 
 elif choice == "🛒 نقطة البيع (POS)":
     if pos: pos.show_page()
@@ -260,7 +307,7 @@ elif choice == "📥 المشتريات":
 
 elif choice == "🔄 تزويد الفروع والأرشيف":
     if transfers: transfers.show_page()
-    else: st.warning("⚠️ شاشة تزويد الفروع غير متوفرة.")
+    else: st.info("🔄 شاشة تزويد الفروع والأرشيف قيد التجهيز.")
 
 elif choice == "⭐ لوحة المفضلة (1-20)":
     if favorites: favorites.show_page()
@@ -268,7 +315,7 @@ elif choice == "⭐ لوحة المفضلة (1-20)":
 
 elif choice == "📦 إدارة المخزن والفروع":
     if inventory: inventory.show_page()
-    else: st.warning("⚠️ ملف شاشة إدارة المخزن غير موجود.")
+    else: st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
 
 elif choice == "⚙️ الجرد والتصفير السنوي":
     st.info("⚙️ شاشة الجرد قيد التجهيز.")
