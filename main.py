@@ -5,10 +5,13 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
-from database import initialize_database, get_db_connection
 
-# تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
-initialize_database()
+# استيراد قاعدة البيانات مع معالجة الأخطاء
+try:
+    from database import initialize_database, get_db_connection
+    initialize_database()
+except Exception as e:
+    st.error(f"⚠️ خطأ في تهيئة قاعدة البيانات: {e}")
 
 # إعدادات الصفحة الأساسية
 st.set_page_config(
@@ -17,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS مع ضبط لون الحروف داخل الأزرار الزرقاء ليصبح أبيضاً
+# إضافة ستايل CSS الموحد لضمان وضوح الخطوط والأزرار
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -66,7 +69,6 @@ if "user_id" not in st.session_state: st.session_state["user_id"] = None
 if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
 if "cart" not in st.session_state: st.session_state["cart"] = []
 if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
-if "success_alert_msg" not in st.session_state: st.session_state["success_alert_msg"] = ""
 
 def set_page(page_name): 
     st.session_state["page"] = page_name
@@ -104,22 +106,30 @@ def check_user_permission(menu_name):
 
     return False
 
-# --- استيراد الشاشات مباشرة لضمان ربطها بنظام التوجيه (Router) ---
-import dashboard
-import pos
-import branches
-import users
-import adjustments
-import items_import
-import expenses
-import parties
-import purchases
-import transfers
-import favorites
-import inventory
-import roasting_blending
-import reports
+# --- استيراد الشاشات الآمن مع منع توقف التطبيق بالكامل ---
+modules_dict = {}
+screen_files = {
+    "dashboard": "dashboard",
+    "pos": "pos",
+    "branches": "branches",
+    "users": "users",
+    "adjustments": "adjustments",
+    "items_import": "items_import",
+    "expenses": "expenses",
+    "parties": "parties",
+    "purchases": "purchases",
+    "transfers": "transfers",
+    "favorites": "favorites",
+    "inventory": "inventory",
+    "roasting_blending": "roasting_blending",
+    "reports": "reports"
+}
 
+for mod_key, mod_name in screen_files.items():
+    try:
+        modules_dict[mod_key] = __import__(mod_name)
+    except Exception as e:
+        modules_dict[mod_key] = None
 
 # --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
@@ -134,21 +144,24 @@ if not st.session_state["logged_in"]:
             u_pass = st.text_input("كلمة المرور", type="password")
             submit = st.form_submit_button("🚀 دخول للنظام", use_container_width=True)
             if submit:
-                conn = get_db_connection()
-                user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
-                conn.close()
-                if user:
-                    if "is_active" in user.keys() and user["is_active"] == 0:
-                        st.error("🚫 هذا الحساب موقوف!")
-                        st.stop()
-                    st.session_state["logged_in"] = True
-                    st.session_state["username"] = user["username"]
-                    st.session_state["role"] = user["role"]
-                    st.session_state["user_id"] = user["id"]
-                    st.session_state["branch_id"] = user["branch_id"]
-                    st.rerun()
-                else: 
-                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (التلقائي: admin / admin123)")
+                try:
+                    conn = get_db_connection()
+                    user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
+                    conn.close()
+                    if user:
+                        if "is_active" in user.keys() and user["is_active"] == 0:
+                            st.error("🚫 هذا الحساب موقوف!")
+                            st.stop()
+                        st.session_state["logged_in"] = True
+                        st.session_state["username"] = user["username"]
+                        st.session_state["role"] = user["role"]
+                        st.session_state["user_id"] = user["id"]
+                        st.session_state["branch_id"] = user["branch_id"]
+                        st.rerun()
+                    else: 
+                        st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (التلقائي: admin / admin123)")
+                except Exception as db_err:
+                    st.error(f"⚠️ خطأ في الاتصال بقاعدة البيانات: {db_err}")
     st.stop()
 
 # --- القائمة الجانبية (Navigation Menu) ---
@@ -194,64 +207,78 @@ if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
+# توجيه الشاشات بناءً على الاختيار
 if choice == "🏠 الرئيسية واللوحة":
-    if dashboard and hasattr(dashboard, "show_page"):
-        dashboard.show_page()
+    if modules_dict["dashboard"] and hasattr(modules_dict["dashboard"], "show_page"):
+        modules_dict["dashboard"].show_page()
     else:
         st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
-        st.info("مرحباً بك في النظام السحابي. يجدر التحقق من وجود دالة show_page داخل ملف dashboard.py")
+        st.info("مرحباً بك في النظام السحابي. جاري تحميل لوحة التحكم...")
 
 elif choice == "🛒 نقطة البيع (POS)":
-    if pos: pos.show_page()
-    else: st.error("⚠️ شاشة نقطة البيع غير متوفرة.")
+    if modules_dict["pos"] and hasattr(modules_dict["pos"], "show_page"):
+        modules_dict["pos"].show_page()
+    else: st.error("⚠️ شاشة نقطة البيع غير متوفرة أو حدث خطأ في تحميل ملف pos.py")
 
 elif choice == "🏢 إدارة الفروع":
-    if branches: branches.show_page()
-    else: st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
+    if modules_dict["branches"] and hasattr(modules_dict["branches"], "show_page"):
+        modules_dict["branches"].show_page()
+    else: st.warning("⚠️ ملف شاشة إدارة الفروع (branches.py) غير متاح.")
 
 elif choice == "👥 إدارة المستخدمين":
-    if users: users.show_page()
-    else: st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
+    if modules_dict["users"] and hasattr(modules_dict["users"], "show_page"):
+        modules_dict["users"].show_page()
+    else: st.warning("⚠️ ملف شاشة إدارة المستخدمين (users.py) غير متاح.")
 
 elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
-    if adjustments: adjustments.show_page()
-    else: st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود.")
+    if modules_dict["adjustments"] and hasattr(modules_dict["adjustments"], "show_page"):
+        modules_dict["adjustments"].show_page()
+    else: st.warning("⚠️ ملف شاشة الفائض والتوالف (adjustments.py) غير متاح.")
 
 elif choice == "📁 استيراد Excel":
-    if items_import: items_import.show_page()
-    else: st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
+    if modules_dict["items_import"] and hasattr(modules_dict["items_import"], "show_page"):
+        modules_dict["items_import"].show_page()
+    else: st.warning("⚠️ ملف شاشة الاستيراد (items_import.py) غير متاح.")
 
 elif choice == "💰 المصروفات":
-    if expenses: expenses.show_page()
-    else: st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
+    if modules_dict["expenses"] and hasattr(modules_dict["expenses"], "show_page"):
+        modules_dict["expenses"].show_page()
+    else: st.warning("⚠️ ملف شاشة المصروفات (expenses.py) غير متاح.")
 
 elif choice == "👥 جهات التعامل":
-    if parties: parties.show_page()
-    else: st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
+    if modules_dict["parties"] and hasattr(modules_dict["parties"], "show_page"):
+        modules_dict["parties"].show_page()
+    else: st.warning("⚠️ ملف شاشة جهات التعامل (parties.py) غير متاح.")
 
 elif choice == "📥 المشتريات":
-    if purchases: purchases.show_page()
-    else: st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
+    if modules_dict["purchases"] and hasattr(modules_dict["purchases"], "show_page"):
+        modules_dict["purchases"].show_page()
+    else: st.warning("⚠️ ملف شاشة المشتريات (purchases.py) غير متاح.")
 
 elif choice == "🔄 تزويد الفروع والأرشيف":
-    if transfers: transfers.show_page()
+    if modules_dict["transfers"] and hasattr(modules_dict["transfers"], "show_page"):
+        modules_dict["transfers"].show_page()
     else: st.info("🔄 شاشة تزويد الفروع والأرشيف قيد التجهيز.")
 
 elif choice == "⭐ لوحة المفضلة (1-20)":
-    if favorites: favorites.show_page()
-    else: st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
+    if modules_dict["favorites"] and hasattr(modules_dict["favorites"], "show_page"):
+        modules_dict["favorites"].show_page()
+    else: st.warning("⚠️ ملف شاشة المفضلة (favorites.py) غير متاح.")
 
 elif choice == "📦 إدارة المخزن والفروع":
-    if inventory: inventory.show_page()
-    else: st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
+    if modules_dict["inventory"] and hasattr(modules_dict["inventory"], "show_page"):
+        modules_dict["inventory"].show_page()
+    else: st.warning("⚠️ ملف شاشة إدارة المخزن والفروع (inventory.py) غير متاح.")
 
 elif choice == "⚙️ الجرد والتصفير السنوي":
-    st.info("⚙️ شاشة الجرد قيد التجهيز.")
+    st.info("⚙️ شاشة الجرد السنوي قيد التجهيز.")
 
 elif choice == "🥜 التحميص والخلط":
-    if roasting_blending: roasting_blending.show_page()
-    else: st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
+    if modules_dict["roasting_blending"] and hasattr(modules_dict["roasting_blending"], "show_page"):
+        modules_dict["roasting_blending"].show_page()
+    else: st.warning("⚠️ ملف شاشة التحميص والخلط (roasting_blending.py) غير متاح.")
 
 elif choice == "📊 التقارير والأرباح":
-    if reports: reports.show_page()
-    else: st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود.")
+    if modules_dict["reports"] and hasattr(modules_dict["reports"], "show_page"):
+        modules_dict["reports"].show_page()
+    else: st.warning("⚠️ ملف شاشة التقارير والأرباح (reports.py) غير متاح.")
