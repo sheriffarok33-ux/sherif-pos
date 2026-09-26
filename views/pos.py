@@ -96,9 +96,13 @@ def process_barcode_scan():
             item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
             
         if item:
-            unit_price = float(item["sale_price"])
-            st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": unit_price, "qty": qty_to_add, "total": unit_price * qty_to_add})
-            st.session_state["barcode_qty_input"] = 1.0 
+            # 🌟 منع البيع بالسالب حصرياً للباركود
+            if qty_to_add > float(item["quantity"]):
+                st.toast(f"❌ الكمية المتاحة ({item['quantity']}) غير كافية!", icon="🚨")
+            else:
+                unit_price = float(item["sale_price"])
+                st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": unit_price, "qty": qty_to_add, "total": unit_price * qty_to_add})
+                st.session_state["barcode_qty_input"] = 1.0 
         else:
             st.toast(f"❌ الباركود غير مسجل أو الصنف غير موجود في هذا الفرع: {code}")
         conn.close()
@@ -126,6 +130,7 @@ def show_page():
     username = st.session_state.get("username", "")
     user_branch_id = st.session_state.get("branch_id")
     current_shift_num = get_current_shift_number()
+    today_date = datetime.now().strftime("%Y-%m-%d")
 
     if role in ["Admin", "General_Supervisor"]:
         branches_data = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
@@ -144,21 +149,36 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
+    # 🌟 أزرار الإشراف (X-Read و Z-Read) تظهر فقط لغير الكاشير
+    if role != "Cashier":
+        with st.expander("📊 تقارير الوردية واليومية (صلاحية المشرفين فقط)", expanded=False):
+            st.info("💡 هذه الأزرار مخفية تماماً عن الكاشير وتستخدم لمراجعة وجرد المبيعات.")
+            c_x, c_z = st.columns(2)
+            
+            shift_sales = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id=? AND DATE(created_at)=? AND shift_status=?", (b_id, today_date, str(current_shift_num))).fetchone()[0] or 0.0
+            if c_x.button("📄 X-Read (مبيعات الوردية الحالية)", use_container_width=True):
+                st.success(f"إجمالي مبيعات الوردية رقم ({current_shift_num}) حتى الآن: **{shift_sales:,.2f} د.ل**")
+            
+            day_sales = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id=? AND DATE(created_at)=?", (b_id, today_date)).fetchone()[0] or 0.0
+            if c_z.button("📑 Z-Read (إغلاق ومبيعات اليوم الكامل)", use_container_width=True):
+                st.error(f"إجمالي المبيعات الختامية لهذا اليوم: **{day_sales:,.2f} د.ل**")
+
+    # 🌟 إشعارات الفواتير الواردة (تنسيق القائمة النظيفة وإظهار نوع الحركة)
     if b_id and b_id != "ALL":
         pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE (to_branch_id = ? OR to_branch_id IN (SELECT id FROM branches WHERE branch_name LIKE '%مصراتة%' OR id = ?)) AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id, b_id)).fetchall()
         if pending_logs:
             st.markdown(f"""
                 <div style="background-color: #f0fdf4; padding: 20px; border-radius: 10px; border: 2px solid #22c55e; margin-bottom: 20px; color: #166534; direction: rtl; text-align: right;">
                     <h3 style="margin-top:0; color:#16a34a;">👋 مرحباً بك يا {username}</h3>
-                    <p style="font-size: 17px; font-weight: bold;">📦 لقد تم تزويد فرعك ({branch_name_display}) بفاتورة بضاعة جديدة.</p>
+                    <p style="font-size: 17px; font-weight: bold;">📦 لديك حركات مخزنية قيد الانتظار في فرعك ({branch_name_display}).</p>
             """, unsafe_allow_html=True)
             
             for pt in pending_logs:
                 formatted_details = str(pt['items_details']).replace('\n', '<br>')
                 st.markdown(f"""
                 <div style="background-color: #ffffff; padding: 12px; border-radius: 6px; border: 1px solid #bbf7d0; margin-bottom: 10px; color: #1e293b; direction: rtl; text-align: right;">
-                    <p style="margin: 0; font-size: 15px;"><b>رقم الحركة:</b> #{pt['id']} | <b>التاريخ:</b> {pt['transfer_date']}</p>
-                    <p style="margin: 5px 0 0 0; font-size: 15px; line-height: 1.6;"><b>الأصناف والكميات الواردة:</b><br>{formatted_details}</p>
+                    <p style="margin: 0; font-size: 15px;"><b>رقم الحركة:</b> #{pt['id']} | <b>التاريخ:</b> {pt['transfer_date']} | <b style='color:#dc2626;'>النوع: {pt['transfer_type']}</b></p>
+                    <p style="margin: 5px 0 0 0; font-size: 15px; line-height: 1.6;"><b>الأصناف والكميات:</b><br>{formatted_details}</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -176,7 +196,6 @@ def show_page():
             conn.close()
             st.stop()
 
-    today_date = datetime.now().strftime("%Y-%m-%d")
     branch_inv_count = conn.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date)).fetchone()[0]
     daily_inv_num = branch_inv_count + 1
 
@@ -296,9 +315,13 @@ def show_page():
                                 
                             if st.button(f"{item['item_name']} ({item['sale_price']})", key=f"fav_{item['id']}", use_container_width=True):
                                 qty = float(st.session_state.get("barcode_qty_input", 1.0))
-                                st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": qty, "total": float(item["sale_price"]) * qty})
-                                st.session_state["barcode_qty_input"] = 1.0 
-                                st.rerun()
+                                # 🌟 منع البيع بالسالب في واجهة المفضلة
+                                if qty > float(item["quantity"]):
+                                    st.error(f"❌ الكمية غير كافية! المتاح: {item['quantity']}")
+                                else:
+                                    st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": qty, "total": float(item["sale_price"]) * qty})
+                                    st.session_state["barcode_qty_input"] = 1.0 
+                                    st.rerun()
             else:
                 st.info("لم تحدد أصناف مفضلة.")
 
@@ -314,10 +337,14 @@ def show_page():
             
             if st.button("➕ إضافة إلى سلة المبيعات", type="primary"):
                 qty_val = float(st.session_state["manual_qty_input"])
-                st.session_state["cart"].append({"id": selected_item_obj["id"], "name": selected_item_obj["item_name"], "code": selected_item_obj["item_code"], "price": float(selected_item_obj["sale_price"]), "qty": qty_val, "total": float(selected_item_obj["sale_price"]) * qty_val})
-                st.session_state["manual_qty_input"] = 1.0 
-                st.success(f"تمت إضافة ({selected_item_obj['item_name']}) بنجاح!")
-                st.rerun()
+                # 🌟 منع البيع بالسالب في واجهة البحث اليدوي
+                if qty_val > float(selected_item_obj["quantity"]):
+                    st.error(f"❌ الكمية غير كافية! المتاح: {selected_item_obj['quantity']}")
+                else:
+                    st.session_state["cart"].append({"id": selected_item_obj["id"], "name": selected_item_obj["item_name"], "code": selected_item_obj["item_code"], "price": float(selected_item_obj["sale_price"]), "qty": qty_val, "total": float(selected_item_obj["sale_price"]) * qty_val})
+                    st.session_state["manual_qty_input"] = 1.0 
+                    st.success(f"تمت إضافة ({selected_item_obj['item_name']}) بنجاح!")
+                    st.rerun()
                 
         st.markdown("---")
         st.markdown('<h3 class="rtl-container">🛒 بيع صنف حر (بدون كود)</h3>', unsafe_allow_html=True)
@@ -333,17 +360,17 @@ def show_page():
             else: st.warning("يرجى إدخال سعر صحيح للصنف الحر.")
 
     elif st.session_state["pos_active_view"] == "الأرشيف":
-        st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك</h3>', unsafe_allow_html=True)
-        branch_transfers = conn.execute("SELECT id AS 'رقم التزويد', items_details AS 'تفاصيل الأصناف والكميات', status AS 'حالة الاستلام', transfer_date AS 'تاريخ الإرسال' FROM transfer_logs WHERE to_branch_id = ? ORDER BY id DESC", (b_id,)).fetchall()
+        st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد والتوالف الواردة</h3>', unsafe_allow_html=True)
+        branch_transfers = conn.execute("SELECT id AS 'رقم التزويد', transfer_type AS 'نوع الحركة', items_details AS 'الأصناف والكميات', status AS 'حالة الاستلام', transfer_date AS 'تاريخ الإرسال' FROM transfer_logs WHERE to_branch_id = ? ORDER BY id DESC", (b_id,)).fetchall()
         
         if branch_transfers:
-            # 🌟 الحل الجذري: تحويل البيانات من النوع المقفل إلى قواميس قابلة للتعديل
             transfers_list = [dict(row) for row in branch_transfers]
+            # 🌟 الحفاظ على القائمة العمودية النظيفة في جدول الأرشيف
             for b_trans in transfers_list:
-                b_trans['تفاصيل الأصناف والكميات'] = str(b_trans['تفاصيل الأصناف والكميات']).replace('\n', ' | ')
+                b_trans['الأصناف والكميات'] = str(b_trans['الأصناف والكميات'])
             st.dataframe(pd.DataFrame(transfers_list), use_container_width=True, hide_index=True)
         else:
-            st.info("📭 لا توجد فواتير تزويد بضائع سابقة مسجلة لهذا الفرع.")
+            st.info("📭 لا توجد حركات سابقة مسجلة لهذا الفرع.")
 
         st.markdown("---")
         st.markdown('<h3 class="rtl-container">📋 أرشيف مبيعات الفرع وإعادة الطباعة</h3>', unsafe_allow_html=True)
