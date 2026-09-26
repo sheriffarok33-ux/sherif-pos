@@ -106,7 +106,7 @@ def check_user_permission(menu_name):
 
     return False
 
-# --- استيراد الشاشات الآمن مع منع توقف التطبيق بالكامل ---
+# --- استيراد الشاشات بشكل آمن ومنع توقف التطبيق ---
 modules_dict = {}
 screen_files = {
     "dashboard": "dashboard",
@@ -207,53 +207,53 @@ if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
-# توجيه الشاشات بناءً على الاختيار
+# توجيه الشاشات مع التحقق الديناميكي من وجود الملف ودالة show_page
 if choice == "🏠 الرئيسية واللوحة":
     if modules_dict["dashboard"] and hasattr(modules_dict["dashboard"], "show_page"):
         modules_dict["dashboard"].show_page()
     else:
         st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
-        st.info("مرحباً بك في النظام السحابي. جاري تحميل لوحة التحكم...")
+        st.info("مرحباً بك في النظام السحابي.")
 
 elif choice == "🛒 نقطة البيع (POS)":
     if modules_dict["pos"] and hasattr(modules_dict["pos"], "show_page"):
         modules_dict["pos"].show_page()
-    else: st.error("⚠️ شاشة نقطة البيع غير متوفرة أو حدث خطأ في تحميل ملف pos.py")
+    else: st.error("⚠️ شاشة نقطة البيع غير متوفرة.")
 
 elif choice == "🏢 إدارة الفروع":
     if modules_dict["branches"] and hasattr(modules_dict["branches"], "show_page"):
         modules_dict["branches"].show_page()
-    else: st.warning("⚠️ ملف شاشة إدارة الفروع (branches.py) غير متاح.")
+    else: st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
 
 elif choice == "👥 إدارة المستخدمين":
     if modules_dict["users"] and hasattr(modules_dict["users"], "show_page"):
         modules_dict["users"].show_page()
-    else: st.warning("⚠️ ملف شاشة إدارة المستخدمين (users.py) غير متاح.")
+    else: st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
 
 elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
     if modules_dict["adjustments"] and hasattr(modules_dict["adjustments"], "show_page"):
         modules_dict["adjustments"].show_page()
-    else: st.warning("⚠️ ملف شاشة الفائض والتوالف (adjustments.py) غير متاح.")
+    else: st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود.")
 
 elif choice == "📁 استيراد Excel":
     if modules_dict["items_import"] and hasattr(modules_dict["items_import"], "show_page"):
         modules_dict["items_import"].show_page()
-    else: st.warning("⚠️ ملف شاشة الاستيراد (items_import.py) غير متاح.")
+    else: st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
 
 elif choice == "💰 المصروفات":
     if modules_dict["expenses"] and hasattr(modules_dict["expenses"], "show_page"):
         modules_dict["expenses"].show_page()
-    else: st.warning("⚠️ ملف شاشة المصروفات (expenses.py) غير متاح.")
+    else: st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
 
 elif choice == "👥 جهات التعامل":
     if modules_dict["parties"] and hasattr(modules_dict["parties"], "show_page"):
         modules_dict["parties"].show_page()
-    else: st.warning("⚠️ ملف شاشة جهات التعامل (parties.py) غير متاح.")
+    else: st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
 
 elif choice == "📥 المشتريات":
     if modules_dict["purchases"] and hasattr(modules_dict["purchases"], "show_page"):
         modules_dict["purchases"].show_page()
-    else: st.warning("⚠️ ملف شاشة المشتريات (purchases.py) غير متاح.")
+    else: st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
 
 elif choice == "🔄 تزويد الفروع والأرشيف":
     if modules_dict["transfers"] and hasattr(modules_dict["transfers"], "show_page"):
@@ -263,22 +263,22 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
 elif choice == "⭐ لوحة المفضلة (1-20)":
     if modules_dict["favorites"] and hasattr(modules_dict["favorites"], "show_page"):
         modules_dict["favorites"].show_page()
-    else: st.warning("⚠️ ملف شاشة المفضلة (favorites.py) غير متاح.")
+    else: st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
 
 elif choice == "📦 إدارة المخزن والفروع":
     if modules_dict["inventory"] and hasattr(modules_dict["inventory"], "show_page"):
         modules_dict["inventory"].show_page()
-    else: st.warning("⚠️ ملف شاشة إدارة المخزن والفروع (inventory.py) غير متاح.")
+    else: st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
 
 elif choice == "⚙️ الجرد والتصفير السنوي":
-    st.info("⚙️ شاشة الجرد السنوي قيد التجهيز.")
+    st.info("⚙️ شاشة الجرد قيد التجهيز.")
 
 elif choice == "🥜 التحميص والخلط":
     if modules_dict["roasting_blending"] and hasattr(modules_dict["roasting_blending"], "show_page"):
         modules_dict["roasting_blending"].show_page()
-    else: st.warning("⚠️ ملف شاشة التحميص والخلط (roasting_blending.py) غير متاح.")
+    else: st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
 
 elif choice == "📊 التقارير والأرباح":
     if modules_dict["reports"] and hasattr(modules_dict["reports"], "show_page"):
         modules_dict["reports"].show_page()
-    else: st.warning("⚠️ ملف شاشة التقارير والأرباح (reports.py) غير متاح.")
+    else: st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود.")
