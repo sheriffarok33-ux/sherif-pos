@@ -5,15 +5,13 @@ import os
 from datetime import datetime
 from database import get_db_connection
 
-# --- تحديد رقم الوردية (الشفت) تلقائياً (1 للصَباحي، 2 للمسائي) ---
 def get_current_shift_number():
     current_hour = datetime.now().hour
     if 6 <= current_hour < 16:
-        return 1
+        return 1 
     else:
-        return 2
+        return 2 
 
-# --- دالة شاشة إتمام الدفع وإصدار الفاتورة ---
 @st.dialog("💳 إتمام الدفع وإصدار الفاتورة")
 def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shift_num, daily_inv_num):
     st.subheader(f"إجمالي الفاتورة المطلوب: {g_tot:,.2f} د.ل")
@@ -89,7 +87,6 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
             st.warning("⚠️ المبلغ المدفوع أقل من إجمالي الفاتورة.")
     conn.close()
 
-# --- معالجة الباركود ومنع البيع بالسالب ---
 def process_barcode_scan():
     code = st.session_state.barcode_scan_input.strip()
     qty_to_add = float(st.session_state.get("barcode_qty_input", 1.0))
@@ -109,9 +106,9 @@ def process_barcode_scan():
             item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
             
         if item:
-            # التحقق من رصيد المخزن للباركود
-            if qty_to_add > float(item["quantity"]):
-                st.toast(f"❌ رصيد المخزن غير كافٍ! المتاح: {item['quantity']}", icon="🚨")
+            # التحقق من الرصيد لمنع البيع بالسالب
+            if float(qty_to_add) > float(item["quantity"]):
+                st.error(f"❌ رصيد المخزن غير كافٍ للصنف! المتاح: {item['quantity']}")
             else:
                 unit_price = float(item["sale_price"])
                 st.session_state["cart"].append({
@@ -123,7 +120,6 @@ def process_barcode_scan():
         conn.close()
     st.session_state.barcode_scan_input = "" 
 
-# --- واجهة شاشة نقطة البيع الأساسية ---
 def show_page():
     st.markdown("""
         <style>
@@ -132,10 +128,7 @@ def show_page():
         .btn-green > button { background-color: #16a34a !important; }
         .btn-red > button { background-color: #dc2626 !important; }
         .rtl-container { direction: rtl !important; text-align: right !important; }
-        
-        div.stButton > button p, div.stButton > button span, div.stButton > button div {
-            color: #ffffff !important;
-        }
+        div.stButton > button p, div.stButton > button span, div.stButton > button div { color: #ffffff !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -165,7 +158,7 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
-    # إشعارات الفواتير والتزويد
+    # إشعارات الفواتير وتنسيقها بشكل عمودي لمنع التداخل
     if b_id and b_id != "ALL":
         pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE (to_branch_id = ? OR to_branch_id IN (SELECT id FROM branches WHERE branch_name LIKE '%مصراتة%' OR id = ?)) AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id, b_id)).fetchall()
         if pending_logs:
@@ -176,10 +169,12 @@ def show_page():
             """, unsafe_allow_html=True)
             
             for pt in pending_logs:
+                # استبدال السطر الجديد بـ HTML للترتيب العمودي
+                formatted_details = str(pt['items_details']).replace('\n', '<br>')
                 st.markdown(f"""
                 <div style="background-color: #ffffff; padding: 12px; border-radius: 6px; border: 1px solid #bbf7d0; margin-bottom: 10px; color: #1e293b; direction: rtl; text-align: right;">
                     <p style="margin: 0; font-size: 15px;"><b>رقم الحركة:</b> #{pt['id']} | <b>التاريخ:</b> {pt['transfer_date']}</p>
-                    <p style="margin: 5px 0 0 0; font-size: 15px;"><b>الأصناف والكميات الواردة:</b> {pt['items_details']}</p>
+                    <p style="margin: 5px 0 0 0; font-size: 15px; line-height: 1.8;"><b>الأصناف والكميات الواردة:</b><br>{formatted_details}</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -205,45 +200,6 @@ def show_page():
     branch_inv_count = conn.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date)).fetchone()[0]
     daily_inv_num = branch_inv_count + 1
 
-    # --- معالجة تداخل UI لتقارير X و Z (استبدال Expander بـ Container) ---
-    st.markdown("---")
-    with st.container():
-        st.markdown('<h3 class="rtl-container">📊 تقارير الوردية واليومية (الطباعة متاحة)</h3>', unsafe_allow_html=True)
-        c_x, c_z = st.columns(2)
-        
-        shift_sales = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id=? AND DATE(created_at)=? AND shift_status=?", (b_id, today_date, str(current_shift_num))).fetchone()[0] or 0.0
-        with c_x:
-            st.info(f"مبيعات الوردية (رقم {current_shift_num}): **{shift_sales:,.2f} د.ل**")
-            x_html = f"""
-            <html dir="rtl"><head><meta charset="utf-8"></head>
-            <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000;">
-                <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {branch_name_display}</p><hr>
-                <h3>تقرير X-Read (الوردية)</h3>
-                <p style="text-align: right;"><b>التاريخ:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
-                <b>الكاشير:</b> {username} | <b>وردية رقم:</b> {current_shift_num}</p><hr>
-                <h3>إجمالي المبيعات: {shift_sales:,.2f} د.ل</h3><hr>
-                <p style="font-size: 12px;">نهاية التقرير</p>
-            </body></html>
-            """
-            st.download_button("🖨️ طباعة تقرير X-Read", data=x_html.encode('utf-8'), file_name=f"X_Read_{today_date}_Shift{current_shift_num}.html", mime="text/html", use_container_width=True)
-
-        day_sales = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id=? AND DATE(created_at)=?", (b_id, today_date)).fetchone()[0] or 0.0
-        with c_z:
-            st.error(f"المبيعات الختامية لهذا اليوم: **{day_sales:,.2f} د.ل**")
-            z_html = f"""
-            <html dir="rtl"><head><meta charset="utf-8"></head>
-            <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000;">
-                <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {branch_name_display}</p><hr>
-                <h3>تقرير Z-Read (اليوم الكامل)</h3>
-                <p style="text-align: right;"><b>التاريخ:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
-                <b>طبع بواسطة:</b> {username}</p><hr>
-                <h3>إجمالي المبيعات: {day_sales:,.2f} د.ل</h3><hr>
-                <p style="font-size: 12px;">نهاية التقرير</p>
-            </body></html>
-            """
-            st.download_button("🖨️ طباعة تقرير Z-Read", data=z_html.encode('utf-8'), file_name=f"Z_Read_{today_date}.html", mime="text/html", use_container_width=True)
-
-    # عرض الفاتورة بعد الحفظ
     if "last_invoice" in st.session_state and st.session_state["last_invoice"]:
         inv = st.session_state["last_invoice"]
         items_html = "".join([f"<tr><td>{i['name']}</td><td>{i['qty']}</td><td>{i['price']}</td><td>{i['total']}</td></tr>" for i in inv["items"]])
@@ -287,9 +243,6 @@ def show_page():
     if t_col3.button("📋 الأرشيف وإعادة الطباعة", use_container_width=True): st.session_state["pos_active_view"] = "الأرشيف"
     st.markdown("---")
 
-    # ==========================================
-    # 1. شاشة الكاشير السريع
-    # ==========================================
     if st.session_state["pos_active_view"] == "الكاشير السريع":
         st.markdown('<div class="top-panel">', unsafe_allow_html=True)
         col_qty, col_bar, col_info = st.columns([1, 2, 2])
@@ -320,7 +273,7 @@ def show_page():
                     c_col2.write(f"كمية: {cart_item['qty']}")
                     c_col3.write(f"سعر: {cart_item['price']} د.ل")
                     c_col4.write(f"إجمالي: {cart_item['total']} د.ل")
-                    if c_col5.button("🗑️", key=f"del_cart_{index}", help="حذف هذا الصنف فقط"):
+                    if c_col5.button("🗑️", key=f"del_cart_{index}"):
                         st.session_state["cart"].pop(index)
                         st.rerun()
                 st.markdown("---")
@@ -363,20 +316,17 @@ def show_page():
                         
                     if st.button(f"{item['item_name']} ({item['sale_price']})", key=f"fav_{item['id']}", use_container_width=True):
                         qty = float(st.session_state.get("barcode_qty_input", 1.0))
-                        # التحقق من رصيد المخزن في المفضلة
-                        if qty > float(item["quantity"]):
+                        # التحقق من الرصيد في المفضلة لمنع البيع بالسالب
+                        if float(qty) > float(item["quantity"]):
                             st.error(f"❌ رصيد المخزن غير كافٍ! المتاح: {item['quantity']}")
                         else:
-                            st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": qty, "total": float(item["sale_price"]) * qty})
+                            st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(qty), "total": float(item["sale_price"]) * float(qty)})
                             st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
             else:
                 st.info("لم تحدد أصناف مفضلة.")
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # ==========================================
-    # 2. البحث اليدوي والصنف الحر
-    # ==========================================
     elif st.session_state["pos_active_view"] == "البحث اليدوي":
         st.markdown('<h3 class="rtl-container">⚡ البحث اليدوي عن الأصناف</h3>', unsafe_allow_html=True)
         all_items_db = conn.execute("SELECT * FROM items WHERE branch_id = ?", (b_id,)).fetchall()
@@ -387,7 +337,7 @@ def show_page():
             manual_qty = st.number_input("الكمية المطلوبة يدوياً:", min_value=0.01, value=1.0, step=0.1)
             
             if st.button("➕ إضافة إلى سلة المبيعات", type="primary"):
-                # التحقق من رصيد المخزن في البحث اليدوي
+                # التحقق من الرصيد في البحث اليدوي
                 if float(manual_qty) > float(selected_item_obj["quantity"]):
                     st.error(f"❌ رصيد المخزن غير كافٍ! المتاح: {selected_item_obj['quantity']}")
                 else:
@@ -407,9 +357,6 @@ def show_page():
                 st.success("تم إضافة الصنف الحر بنجاح!")
             else: st.warning("يرجى إدخال سعر صحيح للصنف الحر.")
 
-    # ==========================================
-    # 3. الأرشيف وإعادة الطباعة + أرشيف فواتير التزويد للفرع
-    # ==========================================
     elif st.session_state["pos_active_view"] == "الأرشيف":
         st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك</h3>', unsafe_allow_html=True)
         branch_transfers = conn.execute("""
@@ -418,7 +365,11 @@ def show_page():
         """, (b_id,)).fetchall()
         
         if branch_transfers:
-            st.dataframe(pd.DataFrame(branch_transfers), use_container_width=True, hide_index=True)
+            # ضمان فك التداخل وعرض التفاصيل في الجدول بشكل سليم
+            transfers_list = [dict(row) for row in branch_transfers]
+            for b_trans in transfers_list:
+                b_trans['تفاصيل الأصناف والكميات'] = str(b_trans['تفاصيل الأصناف والكميات'])
+            st.dataframe(pd.DataFrame(transfers_list), use_container_width=True, hide_index=True)
         else:
             st.info("📭 لا توجد فواتير تزويد بضائع سابقة مسجلة لهذا الفرع.")
 
