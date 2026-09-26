@@ -2,10 +2,10 @@ import os
 import sqlite3
 import pandas as pd
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime
 from database import initialize_database, get_db_connection
 
-# --- الاستيراد المباشر والصحيح للشاشات من المجلد الرئيسي ---
+# --- الاستيراد المباشر والصحيح للشاشات من المجلد الرئيسي (Root) ---
 import dashboard
 import pos
 import branches
@@ -31,7 +31,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS الموحد لضمان وضوح الخطوط والأزرار
+# ستايل CSS الموحد لضمان وضوح الخطوط والأزرار
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -45,18 +45,13 @@ st.markdown("""
     h1 { font-size: 28px !important; color: #0f172a !important; }
     h2 { font-size: 24px !important; color: #1e293b !important; }
     h3 { font-size: 20px !important; color: #334155 !important; }
-    
-    div.stButton > button, div.stButton > button * { 
-        color: #ffffff !important; 
-    }
-    
+    div.stButton > button, div.stButton > button * { color: #ffffff !important; }
     div.stButton > button { 
         border-radius: 8px; font-weight: 900 !important; transition: all 0.3s ease; height: 50px; 
         background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
         box-shadow: 0 3px 6px rgba(0,0,0,0.15); font-size: 18px !important;
     }
     div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-2px); }
-    
     [data-testid="stSidebar"] { background-color: #0f172a; }
     [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
     [data-testid="stSidebar"] .stButton>button {
@@ -68,7 +63,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# إنشاء مجلد الصور إذا لم يكن موجوداً
 if not os.path.exists("item_images"): 
     os.makedirs("item_images")
 
@@ -80,48 +74,22 @@ if "user_id" not in st.session_state: st.session_state["user_id"] = None
 if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
 if "cart" not in st.session_state: st.session_state["cart"] = []
 if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
-if "success_alert_msg" not in st.session_state: st.session_state["success_alert_msg"] = ""
 
 def set_page(page_name): 
     st.session_state["page"] = page_name
     st.rerun()
 
-# -------------------------------------------------------------
-# 🛡️ دالة فحص الصلاحيات المحمية بدقة عالية
-# -------------------------------------------------------------
+# دالة فحص الصلاحيات
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
-    
-    if role in ["Admin", "General_Supervisor"]: 
-        return True
-        
+    if role in ["Admin", "General_Supervisor"]: return True
     if role == "Cashier":
-        allowed_for_cashier = [
-            "🏠 الرئيسية واللوحة", 
-            "🛒 نقطة البيع (POS)", 
-            "⭐ لوحة المفضلة (1-20)",
-            "🔄 تزويد الفروع والأرشيف"
-        ]
-        return menu_name in allowed_for_cashier
-
+        return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)", "🔄 تزويد الفروع والأرشيف"]
     if role == "Viewer":
-        allowed_for_viewer = [
-            "🏠 الرئيسية واللوحة",
-            "📊 التقارير والأرباح"
-        ]
-        return menu_name in allowed_for_viewer
-        
+        return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
     if role == "Branch_Supervisor":
-         allowed_for_bs = [
-            "🏠 الرئيسية واللوحة",
-            "🛒 نقطة البيع (POS)",
-            "📦 إدارة المخزن والفروع",
-            "🔄 تزويد الفروع والأرشيف"
-         ]
-         return menu_name in allowed_for_bs
-
+        return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف"]
     return False
-# -------------------------------------------------------------
 
 # --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
@@ -130,30 +98,32 @@ if not st.session_state["logged_in"]:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
         st.title("🔐 بوابة دخول نظام المحامص")
         st.subheader("مجموعة أبو زيد التجارية")
-        
         with st.form("login_form"):
             u_name = st.text_input("اسم المستخدم")
             u_pass = st.text_input("كلمة المرور", type="password")
             submit = st.form_submit_button("🚀 دخول للنظام", use_container_width=True)
             if submit:
-                conn = get_db_connection()
-                user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
-                conn.close()
-                if user:
-                    if user["is_active"] == 0:
-                        st.error("🚫 هذا الحساب موقوف!")
-                        st.stop()
-                    st.session_state["logged_in"] = True
-                    st.session_state["username"] = user["username"]
-                    st.session_state["role"] = user["role"]
-                    st.session_state["user_id"] = user["id"]
-                    st.session_state["branch_id"] = user["branch_id"]
-                    st.rerun()
-                else: 
-                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
+                try:
+                    conn = get_db_connection()
+                    user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
+                    conn.close()
+                    if user:
+                        if user["is_active"] == 0:
+                            st.error("🚫 هذا الحساب موقوف!")
+                            st.stop()
+                        st.session_state["logged_in"] = True
+                        st.session_state["username"] = user["username"]
+                        st.session_state["role"] = user["role"]
+                        st.session_state["user_id"] = user["id"]
+                        st.session_state["branch_id"] = user["branch_id"]
+                        st.rerun()
+                    else: 
+                        st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (التلقائي: admin / admin)")
+                except Exception as db_err:
+                    st.error(f"⚠️ خطأ في الاتصال بقاعدة البيانات: {db_err}")
     st.stop()
 
-# --- القائمة الجانبية (Navigation Menu) ---
+# --- القائمة الجانبية ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
@@ -161,19 +131,18 @@ st.sidebar.markdown("---")
 DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة",
     "🛒 نقطة البيع (POS)",
-    "🏢 إدارة الفروع",
-    "👥 إدارة المستخدمين",
     "⭐ لوحة المفضلة (1-20)",
     "📦 إدارة المخزن والفروع",
     "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
     "🔄 تزويد الفروع والأرشيف",
+    "🏢 إدارة الفروع",
     "📁 استيراد Excel",
     "💰 المصروفات",
-    "👥 جهات التعامل",
     "📥 المشتريات والموردين",
     "⚙️ الجرد والتصفير السنوي",
     "🥜 التحميص والخلط",
-    "📊 التقارير والأرباح"
+    "📊 التقارير والأرباح",
+    "👥 إدارة المستخدمين"
 ]
 
 for menu_name in DEFAULT_MENUS:
@@ -189,13 +158,14 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# --- منطقة توجيه الشاشات (Router) المباشرة والآمنة ---
+# --- التوجيه الآمن للشاشات (Router) ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
 if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
+# توجيه الشاشات المباشر والسليم
 if choice == "🏠 الرئيسية واللوحة":
     dashboard.show_page()
 
@@ -208,8 +178,17 @@ elif choice == "🏢 إدارة الفروع":
 elif choice == "👥 إدارة المستخدمين":
     users.show_page()
 
+elif choice == "⭐ لوحة المفضلة (1-20)":
+    favorites.show_page()
+
+elif choice == "📦 إدارة المخزن والفروع":
+    inventory.show_page()
+
 elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
     adjustments.show_page()
+
+elif choice == "🔄 تزويد الفروع والأرشيف":
+    transfers.show_page()
 
 elif choice == "📁 استيراد Excel":
     items_import.show_page()
@@ -217,26 +196,17 @@ elif choice == "📁 استيراد Excel":
 elif choice == "💰 المصروفات":
     expenses.show_page()
 
-elif choice == "👥 جهات التعامل":
-    parties.show_page()
-
 elif choice == "📥 المشتريات والموردين":
     purchases.show_page()
-
-elif choice == "🔄 تزويد الفروع والأرشيف":
-    transfers.show_page()
-
-elif choice == "⭐ لوحة المفضلة (1-20)":
-    favorites.show_page()
-
-elif choice == "📦 إدارة المخزن والفروع":
-    inventory.show_page()
-
-elif choice == "⚙️ الجرد والتصفير السنوي":
-    st.info("⚙️ شاشة الجرد والتصفير السنوي قيد التجهيز.")
 
 elif choice == "🥜 التحميص والخلط":
     roasting_blending.show_page()
 
 elif choice == "📊 التقارير والأرباح":
     reports.show_page()
+
+elif choice == "⚙️ الجرد والتصفير السنوي":
+    st.info("⚙️ شاشة الجرد والتصفير السنوي قيد التجهيز.")
+
+else:
+    st.error("❌ الشاشة غير مطلوبة أو غير معرفة.")
