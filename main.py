@@ -1,240 +1,136 @@
-import os
+```python
 import streamlit as st
+import pandas as pd
+from database import get_db_connection
 
-# إعدادات الصفحة الأساسية
-st.set_page_config(
-    page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# إضافة ستايل CSS الموحد
-st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
-    html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table, th, td { 
-        font-family: 'Tajawal', sans-serif !important; 
-        color: #000000 !important; 
-        font-weight: 900 !important;
-        font-size: 17px !important;
-    }
-    .main { background-color: #f8fafc; }
-    div.stButton > button, div.stButton > button * { color: #ffffff !important; }
-    div.stButton > button { 
-        border-radius: 8px; font-weight: 900 !important; height: 50px; 
-        background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
-        box-shadow: 0 3px 6px rgba(0,0,0,0.15); font-size: 18px !important;
-    }
-    div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); }
-    [data-testid="stSidebar"] { background-color: #0f172a; }
-    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
-    [data-testid="stSidebar"] .stButton>button {
-        background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
-        border-radius: 10px; padding: 12px 15px; text-align: right; font-weight: 900 !important;
-        margin-bottom: 8px; height: auto;
-    }
-    [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; transform: translateX(-5px); }
-    </style>
-""", unsafe_allow_html=True)
-
-if not os.path.exists("item_images"): 
-    os.makedirs("item_images")
-
-# تهيئة قاعدة البيانات
-try:
-    from database import initialize_database, get_db_connection
-    initialize_database()
-except Exception as e:
-    st.error(f"⚠️ خطأ في تهيئة قاعدة البيانات: {e}")
-    st.stop()
-
-# تهيئة متغيرات الجلسة
-if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
-if "username" not in st.session_state: st.session_state["username"] = ""
-if "role" not in st.session_state: st.session_state["role"] = ""
-if "user_id" not in st.session_state: st.session_state["user_id"] = None
-if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
-if "cart" not in st.session_state: st.session_state["cart"] = []
-if "page" not in st.session_state: st.session_state["page"] = "🛒 نقطة البيع (POS)"
-
-def set_page(page_name): 
-    st.session_state["page"] = page_name
-    st.rerun()
-
-# نظام الصلاحيات
-def check_user_permission(menu_name):
-    role = st.session_state.get("role", "")
-    if role in ["Admin", "General_Supervisor"]: return True
-    if role == "Cashier":
-        return menu_name in ["🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)"]
-    if role == "Viewer":
-        return menu_name in ["📊 التقارير والأرباح"]
-    if role == "Branch_Supervisor":
-        return menu_name in ["🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع"]
-    return False
-
-# بوابة الدخول
-if not st.session_state["logged_in"]:
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
-        st.title("🔐 بوابة دخول نظام المحامص")
-        st.subheader("مجموعة أبو زيد التجارية")
-        
-        with st.form("login_form"):
-            u_name = st.text_input("اسم المستخدم")
-            u_pass = st.text_input("كلمة المرور", type="password")
-            submit = st.form_submit_button("🚀 دخول للنظام", use_container_width=True)
-            if submit:
-                conn = get_db_connection()
-                user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
+@st.dialog("🔒 تأكيد أمني لحذف الفرع أو المخزن")
+def confirm_delete_branch_dialog(branch_id, branch_name):
+    st.warning(f"⚠️ تنبيه خطير: أنت على وشك حذف الكيان (**{branch_name}**).\n\nلا يمكن التراجع عن هذه الخطوة بعد تنفيذها!")
+    
+    admin_pass = st.text_input("أدخل كلمة المرور الخاصة بك للتأكيد:", type="password", key="del_branch_pass_input")
+    
+    col_yes, col_no = st.columns(2)
+    with col_yes:
+        if st.button("✅ تأكيد الحذف", type="primary", use_container_width=True):
+            conn = get_db_connection()
+            user_id = st.session_state.get("user_id")
+            
+            user_check = conn.execute("SELECT * FROM users WHERE id = ? AND password = ?", (user_id, admin_pass)).fetchone()
+            
+            if user_check:
+                conn.execute("DELETE FROM branches WHERE id = ?", (branch_id,))
+                conn.commit()
                 conn.close()
-                if user:
-                    if "is_active" in user.keys() and user["is_active"] == 0:
-                        st.error("🚫 هذا الحساب موقوف!")
-                        st.stop()
-                    st.session_state["logged_in"] = True
-                    st.session_state["username"] = user["username"]
-                    st.session_state["role"] = user["role"]
-                    st.session_state["user_id"] = user["id"]
-                    st.session_state["branch_id"] = user["branch_id"]
-                    st.rerun()
-                else: 
-                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
-    st.stop()
+                st.success("✅ تم حذف الفرع بنجاح!")
+                st.rerun()
+            else:
+                conn.close()
+                st.error("❌ كلمة المرور غير صحيحة!")
+                
+    with col_no:
+        if st.button("❌ إلغاء", use_container_width=True):
+            st.rerun()
 
-# القائمة الجانبية
-st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
-st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
-st.sidebar.markdown("---")
+def show_page():
+    st.header("🏢 إدارة الفروع والمخازن المستقلة")
+    st.info("💡 من هنا يمكنك إضافة الفروع الجديدة للبيع اليومي أو المخازن الرئيسية، وتعديل أو حذف الفروع الحالية.")
+    
+    current_user_role = st.session_state.get("role", "")
+    
+    if current_user_role == "Admin":
+        st.caption("تلميح للإدارة: تحكم كامل في البنية التنظيمية للشركة وفروعها.")
+    
+    st.markdown("---")
+    
+    conn = get_db_connection()
+    
+    # تقسيم الشاشة إلى تبويبات واضحة ومنفصلة كلياً عن شاشة المستخدمين
+    tab_view, tab_add = st.tabs(["📋 عرض وتعديل الفروع الحالية", "➕ إضافة فرع أو مخزن جديد"])
+    
+    # --- 1. تبويب إضافة فرع جديد ---
+    with tab_add:
+        st.subheader("➕ إضافة فرع أو مخزن جديد للنظام")
+        with st.form("new_branch_form_unique", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                nb_name = st.text_input("اسم الفرع أو المخزن الجديد:")
+            with col2:
+                nb_type = st.selectbox("نوع الكيان:", ["فرع", "مخزن"])
+                
+            if st.form_submit_button("💾 حفظ الكيان الجديد", type="primary"):
+                if nb_name and nb_name.strip():
+                    try:
+                        conn.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", 
+                                     (nb_name.strip(), nb_type))
+                        conn.commit()
+                        st.success(f"✅ تم إضافة ({nb_name.strip()}) بنجاح كـ ({nb_type})!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error("⚠️ عذراً، اسم هذا الفرع أو المخزن موجود مسبقاً.")
+                else:
+                    st.warning("⚠️ يرجى إدخال اسم صحيح.")
 
-DEFAULT_MENUS = [
-    "🛒 نقطة البيع (POS)",
-    "🏢 إدارة الفروع",
-    "👥 إدارة المستخدمين",
-    "⭐ لوحة المفضلة (1-20)",
-    "📦 إدارة المخزن والفروع",
-    "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
-    "🔄 تزويد الفروع والأرشيف",
-    "📁 استيراد Excel",
-    "💰 المصروفات",
-    "👥 جهات التعامل",
-    "📥 المشتريات",
-    "⚙️ الجرد والتصفير السنوي",
-    "🥜 التحميص والخلط",
-    "📊 التقارير والأرباح"
-]
+    # --- 2. تبويب عرض وتعديل وحذف الفروع ---
+    with tab_view:
+        st.subheader("📋 الفروع والمخازن المسجلة حالياً")
+        
+        raw_branches = conn.execute("SELECT id, branch_name, branch_type FROM branches ORDER BY id ASC").fetchall()
+        
+        if raw_branches:
+            branch_rows = []
+            branch_options = {}
+            
+            for idx, row in enumerate(raw_branches, start=1):
+                branch_rows.append({
+                    "المسلسل": row["id"],
+                    "اسم الفرع أو المخزن": row["branch_name"],
+                    "النوع": row["branch_type"]
+                })
+                branch_options[f"رقم {row['id']} - {row['branch_name']} ({row['branch_type']})"] = row["id"]
 
-for menu_name in DEFAULT_MENUS:
-    if check_user_permission(menu_name):
-        if st.sidebar.button(menu_name, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
-            set_page(menu_name)
+            branches_df = pd.DataFrame(branch_rows)
+            st.dataframe(branches_df, use_container_width=True, hide_index=True)
+            
+            st.markdown("---")
+            st.markdown("### ⚙️ تعديل أو حذف فرع / مخزن معين")
+            
+            selected_branch_label = st.selectbox("اختر الفرع أو المخزن للتحكم به:", list(branch_options.keys()))
+            selected_b_id = branch_options[selected_branch_label]
+            
+            b_data = conn.execute("SELECT branch_name, branch_type FROM branches WHERE id = ?", (selected_b_id,)).fetchone()
+            
+            if b_data:
+                with st.form("edit_branch_form_unique"):
+                    e_name = st.text_input("تعديل الاسم:", value=b_data["branch_name"])
+                    e_type = st.selectbox("تعديل النوع:", ["فرع", "مخزن"], index=0 if b_data["branch_type"] == "فرع" else 1)
+                    
+                    col_save, col_del = st.columns(2)
+                    with col_save:
+                        save_clicked = st.form_submit_button("💾 حفظ التعديلات", type="primary")
+                    with col_del:
+                        del_clicked = st.form_submit_button("🗑️ حذف هذا الكيان")
+                        
+                    if save_clicked:
+                        if e_name.strip():
+                            try:
+                                conn.execute("UPDATE branches SET branch_name = ?, branch_type = ? WHERE id = ?", 
+                                           (e_name.strip(), e_type, selected_b_id))
+                                conn.commit()
+                                st.success("✅ تم تحديث بيانات الكيان بنجاح!")
+                                st.rerun()
+                            except:
+                                st.error("⚠️ خطأ في التعديل، قد يكون الاسم مستخدماً لفرع آخر.")
+                        else:
+                            st.warning("⚠️ لا يمكن ترك الاسم فارغاً.")
+                            
+                    if del_clicked:
+                        if current_user_role != "Admin":
+                            st.error("❌ عذراً، عملية حذف الفروع مقتصرة على الأدمن (Admin) فقط لأسباب أمنية!")
+                        else:
+                            confirm_delete_branch_dialog(selected_b_id, b_data["branch_name"])
+        else:
+            st.info("لا توجد فروع أو مخازن مسجلة حالياً.")
+            
+    conn.close()
 
-st.sidebar.markdown("---")
-if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
-    st.session_state.clear()
-    st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.text("ENG: SHERIF M. FAROK")
-
-# موجه الشاشات (Router)
-choice = st.session_state.get("page", "🛒 نقطة البيع (POS)")
-
-if not check_user_permission(choice):
-    st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
-    st.stop()
-
-if choice == "🛒 نقطة البيع (POS)":
-    try:
-        from views import pos
-        pos.show_page()
-    except Exception as e:
-        st.error(f"❌ خطأ في تحميل شاشة نقطة البيع: {e}")
-
-elif choice == "🏢 إدارة الفروع":
-    try:
-        from views import branches
-        branches.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود داخل مجلد views.")
-
-elif choice == "👥 إدارة المستخدمين":
-    try:
-        from views import users
-        users.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود داخل مجلد views.")
-
-elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
-    try:
-        from views import adjustments
-        adjustments.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود داخل مجلد views.")
-
-elif choice == "📁 استيراد Excel":
-    try:
-        from views import items_import
-        items_import.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة الاستيراد غير موجود داخل مجلد views.")
-
-elif choice == "💰 المصروفات":
-    try:
-        from views import expenses
-        expenses.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة المصروفات غير موجود داخل مجلد views.")
-
-elif choice == "👥 جهات التعامل":
-    try:
-        from views import parties
-        parties.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة جهات التعامل غير موجود داخل مجلد views.")
-
-elif choice == "📥 المشتريات":
-    try:
-        from views import purchases
-        purchases.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة المشتريات غير موجود داخل مجلد views.")
-
-elif choice == "🔄 تزويد الفروع والأرشيف":
-    try:
-        from views import transfers
-        transfers.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة تزويد الفروع غير موجود داخل مجلد views.")
-
-elif choice == "⭐ لوحة المفضلة (1-20)":
-    try:
-        from views import favorites
-        favorites.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة المفضلة غير موجود داخل مجلد views.")
-
-elif choice == "📦 إدارة المخزن والفروع":
-    try:
-        from views import inventory
-        inventory.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة إدارة المخزن غير موجود داخل مجلد views.")
-
-elif choice == "⚙️ الجرد والتصفير السنوي":
-    st.info("⚙️ شاشة الجرد قيد التجهيز.")
-
-elif choice == "🥜 التحميص والخلط":
-    try:
-        from views import roasting_blending
-        roasting_blending.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود داخل مجلد views.")
-
-elif choice == "📊 التقارير والأرباح":
-    try:
-        from views import reports
-        reports.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود داخل مجلد views.")
+```
