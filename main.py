@@ -1,11 +1,16 @@
 import os
+import sys
 import sqlite3
 import pandas as pd
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
+
+# إضافة المجلد الحالي لمسار بايثون لضمان رؤية كافة ملفات الشاشات فوراً
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from database import initialize_database, get_db_connection
 
-# --- الاستيراد المباشر والصحيح للشاشات من المجلد الرئيسي (Root) ---
+# --- استيراد مباشر وآمن لكافة الشاشات الموجودة في المشروع ---
 import dashboard
 import pos
 import branches
@@ -108,7 +113,7 @@ if not st.session_state["logged_in"]:
                     user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
                     conn.close()
                     if user:
-                        if user["is_active"] == 0:
+                        if "is_active" in user.keys() and user["is_active"] == 0:
                             st.error("🚫 هذا الحساب موقوف!")
                             st.stop()
                         st.session_state["logged_in"] = True
@@ -165,7 +170,7 @@ if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
-# توجيه الشاشات المباشر والسليم
+# توجيه الشاشات المباشر والسليم تماماً
 if choice == "🏠 الرئيسية واللوحة":
     dashboard.show_page()
 
