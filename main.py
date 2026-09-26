@@ -3,15 +3,19 @@ import sys
 import sqlite3
 import pandas as pd
 import streamlit as st
+import importlib.util
 from datetime import datetime, timedelta
 
-# ضبط مسار الجذر لضمان رؤية كافة الملفات البرمجية فوراً
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# ضبط مسار الجذر وضمان رؤية الملفات
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
 
-from database import initialize_database, get_db_connection
-
-# تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
-initialize_database()
+# استيراد قاعدة البيانات الأساسية مع الحماية
+try:
+    from database import initialize_database, get_db_connection
+    initialize_database()
+except Exception as e:
+    st.error(f"⚠️ خطأ في تهيئة قاعدة البيانات: {e}")
 
 # إعدادات الصفحة الأساسية
 st.set_page_config(
@@ -80,30 +84,48 @@ def check_user_permission(menu_name):
         return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف"]
     return False
 
-# --- استيراد آمن تماماً لكل الشاشات لمنع الانهيار ---
-modules_dict = {}
-screen_files = {
-    "dashboard": "dashboard",
-    "pos": "pos",
-    "branches": "branches",
-    "users": "users",
-    "adjustments": "adjustments",
-    "items_import": "items_import",
-    "expenses": "expenses",
-    "parties": "parties",
-    "purchases": "purchases",
-    "transfers": "transfers",
-    "favorites": "favorites",
-    "inventory": "inventory",
-    "roasting_blending": "roasting_blending",
-    "reports": "reports"
-}
-
-for mod_key, mod_name in screen_files.items():
+# --- دالة تحميل الشاشات بمرونة تامة (تمنع انهيار التطبيق كلياً) ---
+def load_screen_module(module_name):
+    # محاولة البحث عن الملف بالاسم العادي أو بلاحقة _2
+    possible_files = [f"{module_name}.py", f"{module_name}_2.py"]
+    target_file = None
+    
+    for f in possible_files:
+        full_path = os.path.join(current_dir, f)
+        if os.path.exists(full_path):
+            target_file = full_path
+            break
+            
+    if not target_file:
+        return None
+        
     try:
-        modules_dict[mod_key] = __import__(mod_name)
+        spec = importlib.util.spec_from_file_location(module_name, target_file)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = mod
+        spec.loader.exec_module(mod)
+        return mod
     except Exception as e:
-        modules_dict[mod_key] = None
+        st.error(f"⚠️ خطأ أثناء تحميل شاشة ({module_name}): {e}")
+        return None
+
+# تحميل كافة وحدات الشاشات
+screens_mapping = {
+    "dashboard": load_screen_module("dashboard"),
+    "pos": load_screen_module("pos"),
+    "branches": load_screen_module("branches"),
+    "users": load_screen_module("users"),
+    "adjustments": load_screen_module("adjustments"),
+    "items_import": load_screen_module("items_import"),
+    "expenses": load_screen_module("expenses"),
+    "parties": load_screen_module("parties"),
+    "purchases": load_screen_module("purchases"),
+    "transfers": load_screen_module("transfers"),
+    "favorites": load_screen_module("favorites"),
+    "inventory": load_screen_module("inventory"),
+    "roasting_blending": load_screen_module("roasting_blending"),
+    "reports": load_screen_module("reports")
+}
 
 # --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
@@ -179,7 +201,7 @@ if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
-# خريطة توجيه الشاشات المطابقة لملفاتك تماماً
+# ربط القوائم بالوحدات المحملة بأمان
 screens_routing = {
     "🏠 الرئيسية واللوحة": ("dashboard", "لوحة التحكم الرئيسية"),
     "🛒 نقطة البيع (POS)": ("pos", "شاشة نقطة البيع"),
@@ -198,8 +220,9 @@ screens_routing = {
 
 if choice in screens_routing:
     mod_key, screen_title = screens_routing[choice]
-    if modules_dict.get(mod_key) and hasattr(modules_dict[mod_key], "show_page"):
-        modules_dict[mod_key].show_page()
+    mod_obj = screens_mapping.get(mod_key)
+    if mod_obj and hasattr(mod_obj, "show_page"):
+        mod_obj.show_page()
     else:
         st.warning(f"⚠️ {screen_title} (`{mod_key}.py`) غير متاحة حالياً أو جاري تجهيزها.")
 elif choice == "⚙️ الجرد والتصفير السنوي":
