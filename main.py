@@ -1,9 +1,6 @@
 import os
 import streamlit as st
-from database import get_db_connection, create_tables
-
-# تهيئة قاعدة البيانات والجداول عند بدء التشغيل
-create_tables()
+import importlib
 
 # إعدادات الصفحة الأساسية
 st.set_page_config(
@@ -12,7 +9,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ستايل CSS الموحد لضمان وضوح وتناسق الواجهة وتلوين الأزرار
+# تنسيق الواجهة والأزرار
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -23,35 +20,49 @@ st.markdown("""
         font-size: 17px !important;
     }
     .main { background-color: #f8fafc; }
-    h1 { font-size: 28px !important; color: #0f172a !important; }
-    h2 { font-size: 24px !important; color: #1e293b !important; }
-    h3 { font-size: 20px !important; color: #334155 !important; }
-    
-    div.stButton > button, div.stButton > button * { 
-        color: #ffffff !important; 
-    }
-    
+    div.stButton > button, div.stButton > button * { color: #ffffff !important; }
     div.stButton > button { 
-        border-radius: 8px; font-weight: 900 !important; transition: all 0.3s ease; height: 50px; 
+        border-radius: 8px; font-weight: 900 !important; height: 50px; 
         background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
         box-shadow: 0 3px 6px rgba(0,0,0,0.15); font-size: 18px !important;
     }
-    div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-2px); }
-    
     [data-testid="stSidebar"] { background-color: #0f172a; }
-    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
+    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; }
     [data-testid="stSidebar"] .stButton>button {
         background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
         border-radius: 10px; padding: 12px 15px; text-align: right; font-weight: 900 !important;
-        transition: all 0.3s ease; margin-bottom: 8px; font-size: 17px !important; height: auto;
+        margin-bottom: 8px; height: auto;
     }
-    [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); }
-    div[data-testid="InputInstructions"] { display: none !important; }
     </style>
 """, unsafe_allow_html=True)
 
 if not os.path.exists("item_images"): 
     os.makedirs("item_images")
+
+# تهيئة قاعدة البيانات بأمان تام
+try:
+    from database import get_db_connection, create_tables
+    create_tables()
+except Exception as e:
+    st.error(f"⚠️ خطأ في قاعدة البيانات: {e}")
+
+# تحميل آمن للشاشات لمنع انهيار التطبيق نهائياً
+def load_module(mod_name):
+    try:
+        return importlib.import_module(mod_name)
+    except Exception:
+        return None
+
+pos = load_module("pos")
+users = load_module("users")
+inventory = load_module("inventory")
+purchases = load_module("purchases")
+parties = load_module("parties")
+reports = load_module("reports")
+transfers = load_module("transfers")
+roasting_blending = load_module("roasting_blending")
+items_import = load_module("items_import")
+favorites = load_module("favorites")
 
 # تهيئة متغيرات الجلسة
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
@@ -66,31 +77,16 @@ def set_page(page_name):
     st.session_state["page"] = page_name
     st.rerun()
 
-# نظام الصلاحيات الآمن
+# نظام الصلاحيات
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     if role in ["Admin", "General_Supervisor"]: return True
-    if role == "Cashier":
-        return menu_name in ["🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)"]
-    if role == "Viewer":
-        return menu_name in ["📊 التقارير والأرباح"]
-    if role == "Branch_Supervisor":
-        return menu_name in ["🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "📥 المشتريات", "👥 جهات التعامل", "🥜 التحميص والخلط"]
+    if role == "Cashier": return menu_name in ["🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)"]
+    if role == "Viewer": return menu_name in ["📊 التقارير والأرباح"]
+    if role == "Branch_Supervisor": return menu_name in ["🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "📥 المشتريات", "👥 جهات التعامل", "🥜 التحميص والخلط"]
     return False
 
-# --- استيراد الشاشات الموجودة فعلياً في المشروع ---
-import pos
-import users
-import inventory
-import purchases
-import parties
-import reports
-import transfers
-import roasting_blending
-import items_import
-import favorites
-
-# --- بوابة الدخول ---
+# بوابة الدخول
 if not st.session_state["logged_in"]:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -103,21 +99,24 @@ if not st.session_state["logged_in"]:
             u_pass = st.text_input("كلمة المرور", type="password")
             submit = st.form_submit_button("🚀 دخول للنظام", use_container_width=True)
             if submit:
-                conn = get_db_connection()
-                user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
-                conn.close()
-                if user:
-                    st.session_state["logged_in"] = True
-                    st.session_state["username"] = user["username"]
-                    st.session_state["role"] = user["role"]
-                    st.session_state["user_id"] = user["id"]
-                    st.session_state["branch_id"] = user["branch_id"]
-                    st.rerun()
-                else: 
-                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (الافتراضي: admin / admin123)")
+                try:
+                    conn = get_db_connection()
+                    user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
+                    conn.close()
+                    if user:
+                        st.session_state["logged_in"] = True
+                        st.session_state["username"] = user["username"]
+                        st.session_state["role"] = user["role"]
+                        st.session_state["user_id"] = user["id"]
+                        st.session_state["branch_id"] = user["branch_id"]
+                        st.rerun()
+                    else: 
+                        st.error("🎭 اسم المستخدم أو كلمة المرور غير صحيحة! (الافتراضي: admin / admin123)")
+                except Exception as ex:
+                    st.error(f"خطأ في تسجيل الدخول: {ex}")
     st.stop()
 
-# --- القائمة الجانبية (Navigation Menu) ---
+# القائمة الجانبية
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
@@ -149,32 +148,38 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# --- موجه الشاشات (Router) الرئيسي ---
+# موجه الشاشات الآمن
 choice = st.session_state.get("page", "🛒 نقطة البيع (POS)")
 
-if not check_user_permission(choice):
-    st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
-    st.stop()
-
 if choice == "🛒 نقطة البيع (POS)":
-    pos.show_page()
+    if pos and hasattr(pos, "show_page"): pos.show_page()
+    else: st.error("⚠️ شاشة نقطة البيع قيد التحميل أو الملف غير موجود.")
 elif choice == "👥 إدارة المستخدمين":
-    users.show_page()
+    if users and hasattr(users, "show_page"): users.show_page()
+    else: st.error("⚠️ شاشة إدارة المستخدمين غير متوفرة.")
 elif choice == "📦 إدارة المخزن والفروع":
-    inventory.show_page()
+    if inventory and hasattr(inventory, "show_page"): inventory.show_page()
+    else: st.error("⚠️ شاشة إدارة المخزن غير متوفرة.")
 elif choice == "📥 المشتريات":
-    purchases.show_page()
+    if purchases and hasattr(purchases, "show_page"): purchases.show_page()
+    else: st.error("⚠️ شاشة المشتريات غير متوفرة.")
 elif choice == "👥 جهات التعامل":
-    parties.show_page()
+    if parties and hasattr(parties, "show_page"): parties.show_page()
+    else: st.error("⚠️ شاشة جهات التعامل غير متوفرة.")
 elif choice == "📊 التقارير والأرباح":
-    reports.show_page()
+    if reports and hasattr(reports, "show_page"): reports.show_page()
+    else: st.error("⚠️ شاشة التقارير غير متوفرة.")
 elif choice == "🔄 تزويد الفروع والأرشيف":
-    transfers.show_page()
+    if transfers and hasattr(transfers, "show_page"): transfers.show_page()
+    else: st.error("⚠️ شاشة التزويد غير متوفرة.")
 elif choice == "🥜 التحميص والخلط":
-    roasting_blending.show_page()
+    if roasting_blending and hasattr(roasting_blending, "show_page"): roasting_blending.show_page()
+    else: st.error("⚠️ شاشة التحميص غير متوفرة.")
 elif choice == "📁 استيراد Excel":
-    items_import.show_page()
+    if items_import and hasattr(items_import, "show_page"): items_import.show_page()
+    else: st.error("⚠️ شاشة الاستيراد غير متوفرة.")
 elif choice == "⭐ لوحة المفضلة (1-20)":
-    favorites.show_page()
+    if favorites and hasattr(favorites, "show_page"): favorites.show_page()
+    else: st.error("⚠️ شاشة المفضلة غير متوفرة.")
 else:
     st.info("يرجى اختيار شاشة صحيحة من القائمة الجانبية.")
