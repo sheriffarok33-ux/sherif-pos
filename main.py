@@ -26,7 +26,7 @@ if not os.path.exists("item_images"):
     os.makedirs("item_images")
 
 # ==========================================
-# 2. استدعاء قاعدة البيانات وتهيئة الجداول (متوافق مع database.py)
+# 2. استدعاء قاعدة البيانات وتهيئة الجداول
 # ==========================================
 from database import create_tables, get_db_connection
 create_tables()
@@ -60,6 +60,7 @@ if "role" not in st.session_state: st.session_state["role"] = ""
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
 if "page" not in st.session_state: st.session_state["page"] = "🛒 نقطة البيع (POS)"
+if "cart" not in st.session_state: st.session_state["cart"] = []
 
 def set_page(page_name):
     st.session_state["page"] = page_name
