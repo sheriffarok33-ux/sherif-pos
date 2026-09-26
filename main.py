@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 
-# إعداد الصفحة وتكوين الواجهة (يجب أن يكون أول أمر في الملف)
+# 1. إعداد الصفحة وتكوين الواجهة (يجب أن يكون أول أمر في الملف)
 st.set_page_config(
     page_title="برنامج محامص أبو زيد",
     page_icon="🥜",
@@ -13,7 +13,7 @@ st.set_page_config(
 if not os.path.exists("item_images"):
     os.makedirs("item_images")
 
-# تنسيق CSS لضبط الاتجاه والألوان
+# 2. تنسيق CSS لضبط الاتجاه والألوان
 st.markdown("""
     <style>
     * { font-family: 'Tajawal', sans-serif !important; direction: rtl !important; text-align: right !important; }
@@ -24,11 +24,23 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 🌟 الاستدعاء الصحيح للدوال من ملف database.py الأحدث
+# 3. الاستدعاء الصحيح للدوال من ملف database.py الأحدث
 from database import create_tables, get_db_connection
-import branches, users, pos, purchases, inventory, transfers, items_import, reports, favorites, parties, roasting_blending
 
-# التأكد من إنشاء الجداول عند التشغيل
+# 4. استدعاء الملفات بشكل منفصل لتفادي أخطاء الاستيراد (ModuleNotFoundError)
+import branches
+import users
+import pos
+import purchases
+import inventory
+import transfers
+import items_import
+import reports
+import favorites
+import parties
+import roasting_blending
+
+# 5. التأكد من إنشاء الجداول عند التشغيل
 create_tables()
 
 # ==========================================
@@ -38,6 +50,7 @@ if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
 if "username" not in st.session_state: st.session_state["username"] = ""
 if "role" not in st.session_state: st.session_state["role"] = ""
 if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
+if "user_id" not in st.session_state: st.session_state["user_id"] = None
 
 def login():
     st.markdown('<div style="text-align: center; margin-bottom: 30px;"><h1 style="color: #0f172a;">🥜 محامص أبو زيد السحابي</h1><p style="color: #64748b; font-size: 18px;">تسجيل الدخول للموظفين والمدراء</p></div>', unsafe_allow_html=True)
@@ -52,6 +65,7 @@ def login():
                 conn = get_db_connection()
                 user = conn.execute("SELECT id, username, role, branch_id FROM users WHERE username = ? AND password = ?", (username, password)).fetchone()
                 conn.close()
+                
                 if user:
                     st.session_state["logged_in"] = True
                     st.session_state["username"] = user["username"]
@@ -67,6 +81,9 @@ def logout():
     st.session_state.clear()
     st.rerun()
 
+# ==========================================
+# التوجيه والقائمة الجانبية (Sidebar)
+# ==========================================
 if not st.session_state["logged_in"]:
     login()
 else:
@@ -75,18 +92,28 @@ else:
         
         role = st.session_state["role"]
         menu_options = []
+        
+        # تحديد الصلاحيات بناءً على الرتبة المحددة في النظام
         if role in ["Admin", "General_Supervisor"]:
-            menu_options = ["🛒 نقطة البيع (POS)", "📊 التقارير والأرباح", "🏢 إدارة الفروع", "👥 إدارة المستخدمين", "📦 الجرد والمخازن", "🔄 نظام التزويد (الفواتير)", "📥 المشتريات (تجار الجملة)", "🤝 جهات التعامل (الموردين والديون)", "🥜 التحميص والخلط", "📁 استيراد الأصناف", "⭐ المفضلة والصور"]
+            menu_options = [
+                "🛒 نقطة البيع (POS)", "📊 التقارير والأرباح", "🏢 إدارة الفروع", 
+                "👥 إدارة المستخدمين", "📦 الجرد والمخازن", "🔄 نظام التزويد (الفواتير)", 
+                "📥 المشتريات (تجار الجملة)", "🤝 جهات التعامل (الموردين والديون)", 
+                "🥜 التحميص والخلط", "📁 استيراد الأصناف", "⭐ المفضلة والصور"
+            ]
         elif role == "Branch_Supervisor":
-            menu_options = ["🛒 نقطة البيع (POS)", "📦 الجرد والمخازن", "📥 المشتريات (تجار الجملة)", "🤝 جهات التعامل (الموردين والديون)", "🥜 التحميص والخلط", "⭐ المفضلة والصور"]
-        else:
+            menu_options = [
+                "🛒 نقطة البيع (POS)", "📦 الجرد والمخازن", "📥 المشتريات (تجار الجملة)", 
+                "🤝 جهات التعامل (الموردين والديون)", "🥜 التحميص والخلط", "⭐ المفضلة والصور"
+            ]
+        else: # Cashier or Viewer
             menu_options = ["🛒 نقطة البيع (POS)", "⭐ المفضلة والصور"]
             
         selected_page = st.radio("القائمة الرئيسية:", menu_options, label_visibility="collapsed")
         st.markdown("---")
         if st.button("🚪 تسجيل الخروج", use_container_width=True): logout()
 
-    # التوجيه للصفحات
+    # التوجيه للصفحات واستدعاء دالة العرض المناسبة
     if selected_page == "🛒 نقطة البيع (POS)": pos.show_page()
     elif selected_page == "📊 التقارير والأرباح": reports.show_page()
     elif selected_page == "🏢 إدارة الفروع": branches.show_page()
