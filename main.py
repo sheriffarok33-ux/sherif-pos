@@ -41,7 +41,7 @@ except ImportError:
         st.stop()
 
 # ==========================================
-# 3. استدعاء كافة شاشات المشروع
+# 3. استدعاء كافة شاشات المشروع برمجياً
 # ==========================================
 import users
 import pos
@@ -58,11 +58,6 @@ try:
     import branches
 except ImportError:
     branches = None
-
-try:
-    import dashboard
-except ImportError:
-    dashboard = None
 
 # ==========================================
 # 4. إدارة الجلسات (Session State)
