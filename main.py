@@ -104,48 +104,21 @@ def check_user_permission(menu_name):
 
     return False
 
-# --- استيراد الشاشات مع معالجة الأخطاء لضمان عدم توقف التطبيق ---
-try: import dashboard
-except ImportError: dashboard = None
-
-try: import pos
-except ImportError: pos = None
-
-try: import branches
-except ImportError: branches = None
-
-try: import users
-except ImportError: users = None
-
-try: import adjustments
-except ImportError: adjustments = None
-
-try: import items_import
-except ImportError: items_import = None
-
-try: import expenses
-except ImportError: expenses = None
-
-try: import parties
-except ImportError: parties = None
-
-try: import purchases
-except ImportError: purchases = None
-
-try: import transfers
-except ImportError: transfers = None
-
-try: import favorites
-except ImportError: favorites = None
-
-try: import inventory
-except ImportError: inventory = None
-
-try: import roasting_blending
-except ImportError: roasting_blending = None
-
-try: import reports
-except ImportError: reports = None
+# --- استيراد الشاشات مباشرة لضمان ربطها بنظام التوجيه (Router) ---
+import dashboard
+import pos
+import branches
+import users
+import adjustments
+import items_import
+import expenses
+import parties
+import purchases
+import transfers
+import favorites
+import inventory
+import roasting_blending
+import reports
 
 
 # --- بوابة الدخول ---
