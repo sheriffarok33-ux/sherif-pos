@@ -1,60 +1,78 @@
 import os
-import re
-import io
-import sqlite3
-import pandas as pd
 import streamlit as st
-from datetime import datetime, timedelta
-from database import initialize_database, get_db_connection
+from database import create_tables, get_db_connection
 
-# تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
-initialize_database()
+# تهيئة قاعدة البيانات عند بدء التشغيل
+create_tables()
 
-# إعدادات الصفحة الأساسية
+# إعدادات الصفحة الأساسية مع ضبط اتجاه الواجهة
 st.set_page_config(
     page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS مع ضبط لون الحروف داخل الأزرار الزرقاء ليصبح أبيضاً
+# إضافة ستايل CSS الموحد لفرض اتجاه اليمين (RTL) وتنسيق الأزرار والقائمة الجانبية
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
+    
     html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table, th, td { 
         font-family: 'Tajawal', sans-serif !important; 
         color: #000000 !important; 
         font-weight: 900 !important;
         font-size: 17px !important;
+        direction: rtl !important;
+        text-align: right !important;
     }
-    .main { background-color: #f8fafc; }
-    h1 { font-size: 28px !important; color: #0f172a !important; }
-    h2 { font-size: 24px !important; color: #1e293b !important; }
-    h3 { font-size: 20px !important; color: #334155 !important; }
     
-    div.stButton > button, div.stButton > button * { 
+    .main { background-color: #f8fafc; direction: rtl !important; }
+    h1, h2, h3 { color: #0f172a !important; direction: rtl !important; text-align: right !important; }
+    
+    /* 🌟 ضبط القائمة الجانبية لتكون على اليمين بالكامل */
+    [data-testid="stSidebar"] {
+        background-color: #0f172a;
+        right: 0 !important;
+        left: auto !important;
+        direction: rtl !important;
+    }
+    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p, [data-testid="stSidebar"] h2 { 
         color: #ffffff !important; 
+        font-size: 17px !important; 
+        direction: rtl !important;
+        text-align: right !important;
     }
     
+    [data-testid="stSidebar"] .stButton>button {
+        background-color: #1e293b; 
+        color: #ffffff !important; 
+        border: 1px solid #334155;
+        border-radius: 10px; 
+        padding: 12px 15px; 
+        text-align: right !important; 
+        font-weight: 900 !important;
+        transition: all 0.3s ease; 
+        margin-bottom: 8px; 
+        font-size: 17px !important; 
+        height: auto;
+        direction: rtl !important;
+    }
+    [data-testid="stSidebar"] .stButton>button:hover { 
+        background-color: #0284c7; 
+        color: white !important; 
+        border-color: #0284c7; 
+    }
+
+    div.stButton > button, div.stButton > button * { color: #ffffff !important; }
     div.stButton > button { 
-        border-radius: 8px; font-weight: 900 !important; transition: all 0.3s ease; height: 50px; 
+        border-radius: 8px; font-weight: 900 !important; height: 50px; 
         background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
         box-shadow: 0 3px 6px rgba(0,0,0,0.15); font-size: 18px !important;
     }
-    div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-2px); }
-    
-    [data-testid="stSidebar"] { background-color: #0f172a; }
-    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
-    [data-testid="stSidebar"] .stButton>button {
-        background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
-        border-radius: 10px; padding: 12px 15px; text-align: right; font-weight: 900 !important;
-        transition: all 0.3s ease; margin-bottom: 8px; font-size: 17px !important; height: auto;
-    }
-    [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); }
+    div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); }
     </style>
 """, unsafe_allow_html=True)
 
-# إنشاء مجلد الصور إذا لم يكن موجوداً
 if not os.path.exists("item_images"): 
     os.makedirs("item_images")
 
@@ -72,113 +90,63 @@ def set_page(page_name):
     st.session_state["page"] = page_name
     st.rerun()
 
-# -------------------------------------------------------------
-# 🛡️ دالة فحص الصلاحيات المحمية بدقة عالية
-# -------------------------------------------------------------
+# نظام فحص الصلاحيات
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
-    
     if role in ["Admin", "General_Supervisor"]: 
         return True
-        
     if role == "Cashier":
-        allowed_for_cashier = [
-            "🏠 الرئيسية واللوحة", 
-            "🛒 نقطة البيع (POS)", 
-            "⭐ لوحة المفضلة (1-20)"
-        ]
-        return menu_name in allowed_for_cashier
-
+        return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)"]
     if role == "Viewer":
-        allowed_for_viewer = [
-            "🏠 الرئيسية واللوحة",
-            "📊 التقارير والأرباح"
-        ]
-        return menu_name in allowed_for_viewer
-        
+        return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
     if role == "Branch_Supervisor":
-         allowed_for_bs = [
-            "🏠 الرئيسية واللوحة",
-            "🛒 نقطة البيع (POS)",
-            "📦 إدارة المخزن والفروع"
-         ]
-         return menu_name in allowed_for_bs
-
+        return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع"]
     return False
 
-# --- استيراد الشاشات من المجلد الرئيسي مباشرة ---
-try:
-    import dashboard
-except ImportError:
-    dashboard = None
+# استيراد الشاشات بشكل آمن ومنفصل
+try: import dashboard
+except ImportError: dashboard = None
 
-try:
-    import pos
-except ImportError:
-    pos = None
+try: import pos
+except ImportError: pos = None
 
-try:
-    import branches
-except ImportError:
-    branches = None
+try: import branches
+except ImportError: branches = None
 
-try:
-    import users
-except ImportError:
-    users = None
+try: import users
+except ImportError: users = None
 
-try:
-    import adjustments
-except ImportError:
-    adjustments = None
+try: import adjustments
+except ImportError: adjustments = None
 
-try:
-    import items_import
-except ImportError:
-    items_import = None
+try: import items_import
+except ImportError: items_import = None
 
-try:
-    import expenses
-except ImportError:
-    expenses = None
+try: import expenses
+except ImportError: expenses = None
 
-try:
-    import parties
-except ImportError:
-    parties = None
+try: import parties
+except ImportError: parties = None
 
-try:
-    import purchases
-except ImportError:
-    purchases = None
+try: import purchases
+except ImportError: purchases = None
 
-try:
-    import transfers
-except ImportError:
-    transfers = None
+try: import transfers
+except ImportError: transfers = None
 
-try:
-    import favorites
-except ImportError:
-    favorites = None
+try: import favorites
+except ImportError: favorites = None
 
-try:
-    import inventory
-except ImportError:
-    inventory = None
+try: import inventory
+except ImportError: inventory = None
 
-try:
-    import roasting_blending
-except ImportError:
-    roasting_blending = None
+try: import roasting_blending
+except ImportError: roasting_blending = None
 
-try:
-    import reports
-except ImportError:
-    reports = None
+try: import reports
+except ImportError: reports = None
 
-
-# --- بوابة الدخول ---
+# بوابة الدخول
 if not st.session_state["logged_in"]:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -205,10 +173,10 @@ if not st.session_state["logged_in"]:
                     st.session_state["branch_id"] = user["branch_id"]
                     st.rerun()
                 else: 
-                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (التلقائي: admin / admin123)")
+                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
     st.stop()
 
-# --- القائمة الجانبية (Navigation Menu) ---
+# القائمة الجانبية (يمين الشاشة)
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
@@ -244,7 +212,7 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# --- منطقة توجيه الشاشات (Router) الآمنة ---
+# موجه الشاشات (Router) الرئيسي
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
 if not check_user_permission(choice):
@@ -255,86 +223,60 @@ if choice == "🏠 الرئيسية واللوحة":
     if dashboard:
         dashboard.show_page()
     else:
-        st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
-        st.info("مرحباً بك في النظام السحابي.")
+        st.header("🌟 مجموعة أبو زيد التجارية - لوحة القيادة والتحكم الرئيسية")
+        st.info("مرحباً بك في النظام السحابي المتكامل لمجموعة أبو زيد.")
 
 elif choice == "🛒 نقطة البيع (POS)":
-    if pos:
-        pos.show_page()
-    else:
-        st.error("⚠️ شاشة نقطة البيع غير متوفرة.")
+    if pos: pos.show_page()
+    else: st.error("⚠️ شاشة نقطة البيع غير متوفرة.")
 
 elif choice == "🏢 إدارة الفروع":
-    if branches:
-        branches.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
+    if branches: branches.show_page()
+    else: st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
 
 elif choice == "👥 إدارة المستخدمين":
-    if users:
-        users.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
+    if users: users.show_page()
+    else: st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
 
 elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
-    if adjustments:
-        adjustments.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود.")
+    if adjustments: adjustments.show_page()
+    else: st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود.")
 
 elif choice == "📁 استيراد Excel":
-    if items_import:
-        items_import.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
+    if items_import: items_import.show_page()
+    else: st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
 
 elif choice == "💰 المصروفات":
-    if expenses:
-        expenses.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
+    if expenses: expenses.show_page()
+    else: st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
 
 elif choice == "👥 جهات التعامل":
-    if parties:
-        parties.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
+    if parties: parties.show_page()
+    else: st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
 
 elif choice == "📥 المشتريات":
-    if purchases:
-        purchases.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
+    if purchases: purchases.show_page()
+    else: st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
 
 elif choice == "🔄 تزويد الفروع والأرشيف":
-    if transfers:
-        transfers.show_page()
-    else:
-        st.info("🔄 شاشة تزويد الفروع والأرشيف قيد التجهيز.")
+    if transfers: transfers.show_page()
+    else: st.warning("⚠️ شاشة تزويد الفروع غير متوفرة.")
 
 elif choice == "⭐ لوحة المفضلة (1-20)":
-    if favorites:
-        favorites.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
+    if favorites: favorites.show_page()
+    else: st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
 
 elif choice == "📦 إدارة المخزن والفروع":
-    if inventory:
-        inventory.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
+    if inventory: inventory.show_page()
+    else: st.warning("⚠️ ملف شاشة إدارة المخزن غير موجود.")
 
 elif choice == "⚙️ الجرد والتصفير السنوي":
     st.info("⚙️ شاشة الجرد قيد التجهيز.")
 
 elif choice == "🥜 التحميص والخلط":
-    if roasting_blending:
-        roasting_blending.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
+    if roasting_blending: roasting_blending.show_page()
+    else: st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
 
 elif choice == "📊 التقارير والأرباح":
-    if reports:
-        reports.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود.")
+    if reports: reports.show_page()
+    else: st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود.")
