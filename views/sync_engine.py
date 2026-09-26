@@ -1,77 +1,114 @@
 import sqlite3
 import time
 import socket
-# import psycopg2  # سيتم استخدامه لاحقاً للاتصال بقاعدة البيانات السحابية (PostgreSQL)
+import logging
+# import psycopg2 # سيتم تفعيله عند ربط قاعدة البيانات السحابية الفعلية
 
-# 1. دالة للتحقق من وجود اتصال بالإنترنت
-def is_connected():
+# إعداد نظام تسجيل الأحداث (Logging) لمراقبة عمل المحرك في الخلفية
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [SYNC ENGINE] - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+LOCAL_DB_PATH = "mahamis.db" # اسم قاعدة البيانات المحلية
+
+def check_internet_connection(host="8.8.8.8", port=53, timeout=3):
+    """فحص توفر اتصال حقيقي بالإنترنت"""
     try:
-        # محاولة الاتصال بخادم موثوق (مثل DNS جوجل)
-        socket.create_connection(("8.8.8.8", 53), timeout=3)
+        socket.setdefaulttimeout(timeout)
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
         return True
-    except OSError:
+    except socket.error:
         return False
 
-# 2. إعداد الاتصال بقواعد البيانات
-def get_local_conn():
-    # الاتصال بقاعدة البيانات المحلية المستخدمة في فروع المحمصة
-    return sqlite3.connect("local_mahamis.db")
+def get_local_connection():
+    """إنشاء اتصال بقاعدة البيانات المحلية للفرع"""
+    conn = sqlite3.connect(LOCAL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def get_cloud_conn():
-    # هنا سيتم وضع تفاصيل الاتصال بقاعدة البيانات السحابية المركزية
-    # return psycopg2.connect(host="cloud_host", user="user", password="password", dbname="cloud_db")
-    pass 
+def get_cloud_connection():
+    """
+    إنشاء اتصال بقاعدة البيانات السحابية المركزية.
+    يرجى استبدال بيانات الاتصال لاحقاً ببيانات السيرفر السحابي الخاص بك.
+    """
+    # return psycopg2.connect(
+    #     host="your_cloud_host",
+    #     database="mahamis_cloud",
+    #     user="your_user",
+    #     password="your_password"
+    # )
+    pass
 
-# 3. دالة رفع الفواتير المحلية غير المتزامنة إلى السحابة
-def push_local_invoices_to_cloud():
-    local_conn = get_local_conn()
+def sync_local_invoices_to_cloud():
+    """استخراج الفواتير غير المتزامنة ورفعها للسحابة"""
+    local_conn = get_local_connection()
     local_cur = local_conn.cursor()
     
-    # جلب الفواتير التي لم تتم مزامنتها بعد (sync_status = 0)
-    local_cur.execute("SELECT id, branch_id, total_amount, payment_method, notes FROM invoices WHERE sync_status = 0")
-    unsynced_invoices = local_cur.fetchall()
-    
-    if not unsynced_invoices:
-        local_conn.close()
-        return
-
     try:
-        # cloud_conn = get_cloud_conn()
+        # جلب الفواتير التي لم يتم رفعها بعد (sync_status = 0)
+        local_cur.execute("""
+            SELECT id, branch_id, user_id, customer_name, customer_phone, 
+                   total_amount, payment_method, notes, shift_status, created_at 
+            FROM invoices 
+            WHERE sync_status = 0
+        """)
+        unsynced_invoices = local_cur.fetchall()
+        
+        if not unsynced_invoices:
+            return # لا توجد بيانات جديدة للرفع
+            
+        logging.info(f"تم العثور على {len(unsynced_invoices)} فاتورة محلية تحتاج للمزامنة. جاري الرفع...")
+        
+        # الاتصال بالسحابة (محاكاة حالياً)
+        # cloud_conn = get_cloud_connection()
         # cloud_cur = cloud_conn.cursor()
         
         for inv in unsynced_invoices:
-            inv_id = inv[0]
-            # محاكاة إدراج الفاتورة في السحابة
-            print(f"🔄 جاري رفع الفاتورة رقم {inv_id} إلى السحابة...")
-            # cloud_cur.execute("INSERT INTO invoices (...) VALUES (...)", inv)
+            inv_id = inv['id']
             
-            # بعد نجاح الرفع، يتم تحديث حالة الفاتورة محلياً لتجنب رفعها مجدداً
+            # --- كود الرفع للسحابة الفعلي سيكون هنا ---
+            # cloud_cur.execute("""
+            #     INSERT INTO cloud_invoices (local_id, branch_id, user_id, customer_name, 
+            #                                 customer_phone, total_amount, payment_method, 
+            #                                 notes, shift_status, created_at)
+            #     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            # """, (inv['id'], inv['branch_id'], inv['user_id'], inv['customer_name'], 
+            #       inv['customer_phone'], inv['total_amount'], inv['payment_method'], 
+            #       inv['notes'], inv['shift_status'], inv['created_at']))
+            
+            # تحديث حالة الفاتورة محلياً لتأكيد نجاح المزامنة
             local_cur.execute("UPDATE invoices SET sync_status = 1 WHERE id = ?", (inv_id,))
             
         # cloud_conn.commit()
         local_conn.commit()
-        print("✅ تمت مزامنة الفواتير بنجاح.")
+        logging.info("✅ تمت مزامنة جميع الفواتير بنجاح وتحديث حالتها محلياً.")
         
     except Exception as e:
-        print(f"⚠️ حدث خطأ أثناء المزامنة: {e}")
+        logging.error(f"❌ حدث خطأ أثناء مزامنة الفواتير: {e}")
     finally:
         local_conn.close()
-        # cloud_conn.close()
+        # if 'cloud_conn' in locals(): cloud_conn.close()
 
-# 4. محرك العمل المستمر (Background Worker)
-def run_sync_engine():
-    print("🚀 بدء تشغيل محرك مزامنة محامص أبو زيد...")
+def run_sync_worker():
+    """دالة التشغيل المستمرة لمحرك المزامنة"""
+    logging.info("🚀 بدء تشغيل محرك المزامنة لمحامص أبو زيد...")
+    
     while True:
-        if is_connected():
-            print("🌐 الإنترنت متصل. جاري بدء المزامنة...")
-            push_local_invoices_to_cloud()
-            # يمكن إضافة دوال أخرى هنا مثل:
-            # pull_new_items_from_cloud() لتحديث الأسعار من الإدارة
-        else:
-            print("🔌 لا يوجد اتصال بالإنترنت. النظام يعمل محلياً بسلاسة.")
+        try:
+            if check_internet_connection():
+                sync_local_invoices_to_cloud()
+                # مستقبلاً: يمكن إضافة دالة لسحب تحديثات الأسعار من السحابة إلى الفرع
+                # sync_cloud_updates_to_local()
+            else:
+                logging.warning("🔌 انقطاع في الاتصال. النظام المحلي يعمل بشكل مستقل لتسجيل المبيعات.")
+                
+        except Exception as e:
+            logging.error(f"⚠️ خطأ غير متوقع في محرك المزامنة: {e}")
             
-        # الانتظار لمدة 30 ثانية قبل الفحص التالي (يمكن تعديل المدة)
-        time.sleep(30)
+        # الانتظار لمدة 15 ثانية بين كل محاولة مزامنة لتخفيف الحمل على السيرفر
+        time.sleep(15)
 
 if __name__ == "__main__":
-    run_sync_engine()
+    run_sync_worker()
