@@ -5,15 +5,11 @@ import os
 from datetime import datetime
 from database import get_db_connection
 
-# --- تحديد رقم الوردية (الشفت) تلقائياً (1 للصَباحي، 2 للمسائي) ---
 def get_current_shift_number():
     current_hour = datetime.now().hour
-    if 6 <= current_hour < 16:
-        return 1  # وردية 1 (صباحي)
-    else:
-        return 2  # وردية 2 (مسائي)
+    if 6 <= current_hour < 16: return 1
+    else: return 2
 
-# --- دالة شاشة إتمام الدفع وإصدار الفاتورة ---
 @st.dialog("💳 إتمام الدفع وإصدار الفاتورة")
 def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shift_num, daily_inv_num):
     st.subheader(f"إجمالي الفاتورة المطلوب: {g_tot:,.2f} د.ل")
@@ -71,16 +67,9 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
             conn.close()
 
             st.session_state["last_invoice"] = {
-                "inv_id": inv_id,
-                "daily_inv_num": daily_inv_num,
-                "branch": branch_name_str,
-                "cashier": cashier_name_str,
-                "shift": shift_num,
-                "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "customer": cust_name,
-                "items": st.session_state["cart"].copy(),
-                "total": final_tot,
-                "method": pay_method
+                "inv_id": inv_id, "daily_inv_num": daily_inv_num, "branch": branch_name_str,
+                "cashier": cashier_name_str, "shift": shift_num, "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "customer": cust_name, "items": st.session_state["cart"].copy(), "total": final_tot, "method": pay_method
             }
             st.session_state["cart"] = []
             st.success("✅ تم إصدار الفاتورة بنجاح!")
@@ -89,7 +78,6 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
             st.warning("⚠️ المبلغ المدفوع أقل من إجمالي الفاتورة.")
     conn.close()
 
-# --- معالجة الباركود ---
 def process_barcode_scan():
     code = st.session_state.barcode_scan_input.strip()
     qty_to_add = st.session_state.get("barcode_qty_input", 1.0)
@@ -109,17 +97,22 @@ def process_barcode_scan():
             item = conn.execute("SELECT * FROM items WHERE item_code = ? AND branch_id = ?", (code, b_id)).fetchone()
             
         if item:
-            unit_price = float(item["sale_price"])
-            st.session_state["cart"].append({
-                "id": item["id"], "code": item["item_code"], "name": item["item_name"], 
-                "price": unit_price, "qty": float(qty_to_add), "total": unit_price * qty_to_add
-            })
+            # 🛑 حماية المبيعات بالسالب
+            if float(qty_to_add) > float(item["quantity"]):
+                st.toast(f"❌ الكمية المتاحة ({item['quantity']}) غير كافية!", icon="🚨")
+            else:
+                unit_price = float(item["sale_price"])
+                st.session_state["cart"].append({
+                    "id": item["id"], "code": item["item_code"], "name": item["item_name"], 
+                    "price": unit_price, "qty": float(qty_to_add), "total": unit_price * float(qty_to_add)
+                })
+                # 🔄 تصفير الكمية برمجياً
+                st.session_state["barcode_qty_input"] = 1.0
         else:
             st.toast(f"❌ الباركود غير مسجل أو الصنف غير موجود في هذا الفرع: {code}")
         conn.close()
     st.session_state.barcode_scan_input = "" 
 
-# --- واجهة شاشة نقطة البيع الأساسية ---
 def show_page():
     st.markdown("""
         <style>
@@ -128,11 +121,7 @@ def show_page():
         .btn-green > button { background-color: #16a34a !important; }
         .btn-red > button { background-color: #dc2626 !important; }
         .rtl-container { direction: rtl !important; text-align: right !important; }
-        
-        /* 🌟 جعل النصوص داخل أزرار الواجهة باللون الأبيض الناصع دائماً */
-        div.stButton > button p, div.stButton > button span, div.stButton > button div {
-            color: #ffffff !important;
-        }
+        div.stButton > button p, div.stButton > button span, div.stButton > button div { color: #ffffff !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -143,6 +132,9 @@ def show_page():
     username = st.session_state.get("username", "")
     user_branch_id = st.session_state.get("branch_id")
     current_shift_num = get_current_shift_number()
+    
+    if "barcode_qty_input" not in st.session_state:
+        st.session_state["barcode_qty_input"] = 1.0
 
     if role in ["Admin", "General_Supervisor"]:
         branches_data = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
@@ -150,8 +142,7 @@ def show_page():
         default_index = 0
         for idx, b in enumerate(branches_data):
             if b["branch_type"] == "مخزن":
-                default_index = idx
-                break
+                default_index = idx; break
         sel_pos = st.selectbox("اختر الفرع الحالي للبيع:", list(b_dict.keys()), index=default_index)
         b_id = b_dict[sel_pos]
         branch_name_display = sel_pos
@@ -162,7 +153,6 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
-    # 🌟 رسالة الترحيب وتأكيد استلام التزويد للكاشير مباشرة بدون الحاجة لدخول شاشات أخرى
     if b_id and b_id != "ALL":
         pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE (to_branch_id = ? OR to_branch_id IN (SELECT id FROM branches WHERE branch_name LIKE '%مصراتة%' OR id = ?)) AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id, b_id)).fetchall()
         if pending_logs:
@@ -173,10 +163,12 @@ def show_page():
             """, unsafe_allow_html=True)
             
             for pt in pending_logs:
+                # 📝 تحويل الفاصل العمودي إلى قائمة نقاط لسهولة القراءة
+                formatted_details = pt['items_details'].replace('\n', '<br>')
                 st.markdown(f"""
                 <div style="background-color: #ffffff; padding: 12px; border-radius: 6px; border: 1px solid #bbf7d0; margin-bottom: 10px; color: #1e293b; direction: rtl; text-align: right;">
                     <p style="margin: 0; font-size: 15px;"><b>رقم الحركة:</b> #{pt['id']} | <b>التاريخ:</b> {pt['transfer_date']}</p>
-                    <p style="margin: 5px 0 0 0; font-size: 15px;"><b>الأصناف والكميات الواردة:</b> {pt['items_details']}</p>
+                    <p style="margin: 5px 0 0 0; font-size: 15px; line-height: 1.6;"><b>الأصناف الواردة:</b><br>{formatted_details}</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -185,11 +177,7 @@ def show_page():
             if st.button("✅ اضغط للموافقة وتأكيد استلام البضاعة وبدء العمل", type="primary", use_container_width=True):
                 cur_pt = conn.cursor()
                 for pt in pending_logs:
-                    cur_pt.execute("""
-                        UPDATE transfer_logs 
-                        SET status = ? 
-                        WHERE id = ?
-                    """, (f"مكتملة ومستلمة بواسطة الكاشير: {username}", pt['id']))
+                    cur_pt.execute("UPDATE transfer_logs SET status = ? WHERE id = ?", (f"مكتملة ومستلمة بواسطة الكاشير: {username}", pt['id']))
                 conn.commit()
                 conn.close()
                 st.success("✅ تم تأكيد استلام البضاعة بنجاح! جاري فتح نقطة البيع...")
@@ -202,7 +190,6 @@ def show_page():
     branch_inv_count = conn.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date)).fetchone()[0]
     daily_inv_num = branch_inv_count + 1
 
-    # عرض الفاتورة بعد الحفظ
     if "last_invoice" in st.session_state and st.session_state["last_invoice"]:
         inv = st.session_state["last_invoice"]
         items_html = "".join([f"<tr><td>{i['name']}</td><td>{i['qty']}</td><td>{i['price']}</td><td>{i['total']}</td></tr>" for i in inv["items"]])
@@ -246,15 +233,12 @@ def show_page():
     if t_col3.button("📋 الأرشيف وإعادة الطباعة", use_container_width=True): st.session_state["pos_active_view"] = "الأرشيف"
     st.markdown("---")
 
-    # ==========================================
-    # 1. شاشة الكاشير السريع
-    # ==========================================
     if st.session_state["pos_active_view"] == "الكاشير السريع":
         st.markdown('<div class="top-panel">', unsafe_allow_html=True)
         col_qty, col_bar, col_info = st.columns([1, 2, 2])
         
         with col_qty:
-            st.number_input("الكمية (كجم/وحدة):", min_value=0.01, value=1.00, step=0.5, key="barcode_qty_input")
+            st.number_input("الكمية (كجم/وحدة):", min_value=0.01, step=0.5, key="barcode_qty_input")
         with col_bar:
             st.text_input("🔍 مسح الباركود الفوري (Enter):", key="barcode_scan_input", on_change=process_barcode_scan)
         with col_info:
@@ -305,33 +289,33 @@ def show_page():
             st.markdown('<h3 class="rtl-container">⭐ المفضلة</h3>', unsafe_allow_html=True)
             fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 12", (b_id,)).fetchall()
             
-            st.markdown("<div style='background-color:#f1f5f9; padding:6px; border-radius:8px; height:360px; overflow-y:auto; border:1px solid #cbd5e1; direction: rtl;'>", unsafe_allow_html=True)
             if fav_items:
+                # 🖼️ إزالة التغليف بـ HTML واستخدام الحاوية الخاصة بـ Streamlit لمنع ظهور المربعات الفارغة
                 for item in fav_items:
-                    st.markdown("<div style='background:white; padding:4px; border-radius:6px; margin-bottom:6px; border:1px solid #e2e8f0; text-align:center;'>", unsafe_allow_html=True)
-                    img_path = os.path.join("item_images", f"{item['item_code']}.jpg")
-                    if os.path.exists(img_path):
-                        try:
-                            with open(img_path, "rb") as f:
-                                img_bytes = f.read()
-                                st.image(img_bytes, use_container_width=True)
-                        except:
-                            st.markdown("🥜")
-                    else:
-                        st.markdown("<div style='font-size:20px;'>🥜</div>", unsafe_allow_html=True)
-                        
-                    if st.button(f"{item['item_name']} ({item['sale_price']})", key=f"fav_{item['id']}", use_container_width=True):
-                        qty = st.session_state.get("barcode_qty_input", 1.0)
-                        st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(qty), "total": float(item["sale_price"]) * float(qty)})
-                        st.rerun()
-                    st.markdown("</div>", unsafe_allow_html=True)
+                    with st.container(border=True):
+                        img_path = os.path.join("item_images", f"{item['item_code']}.jpg")
+                        if os.path.exists(img_path):
+                            try:
+                                with open(img_path, "rb") as f:
+                                    img_bytes = f.read()
+                                    st.image(img_bytes, use_container_width=True)
+                            except:
+                                st.markdown("<h1 style='text-align: center;'>🥜</h1>", unsafe_allow_html=True)
+                        else:
+                            st.markdown("<h1 style='text-align: center;'>🥜</h1>", unsafe_allow_html=True)
+                            
+                        if st.button(f"{item['item_name']} ({item['sale_price']})", key=f"fav_{item['id']}", use_container_width=True):
+                            qty = st.session_state.get("barcode_qty_input", 1.0)
+                            # 🛑 حماية المبيعات بالسالب من المفضلة
+                            if float(qty) > float(item["quantity"]):
+                                st.error(f"❌ الكمية غير كافية! المتاح: {item['quantity']}")
+                            else:
+                                st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(qty), "total": float(item["sale_price"]) * float(qty)})
+                                st.session_state["barcode_qty_input"] = 1.0 # 🔄 تصفير الكمية
+                                st.rerun()
             else:
                 st.info("لم تحدد أصناف مفضلة.")
-            st.markdown("</div>", unsafe_allow_html=True)
 
-    # ==========================================
-    # 2. البحث اليدوي والصنف الحر
-    # ==========================================
     elif st.session_state["pos_active_view"] == "البحث اليدوي":
         st.markdown('<h3 class="rtl-container">⚡ البحث اليدوي عن الأصناف</h3>', unsafe_allow_html=True)
         all_items_db = conn.execute("SELECT * FROM items WHERE branch_id = ?", (b_id,)).fetchall()
@@ -342,8 +326,12 @@ def show_page():
             manual_qty = st.number_input("الكمية المطلوبة يدوياً:", min_value=0.01, value=1.0, step=0.1)
             
             if st.button("➕ إضافة إلى سلة المبيعات", type="primary"):
-                st.session_state["cart"].append({"id": selected_item_obj["id"], "name": selected_item_obj["item_name"], "code": selected_item_obj["item_code"], "price": float(selected_item_obj["sale_price"]), "qty": float(manual_qty), "total": float(selected_item_obj["sale_price"]) * float(manual_qty)})
-                st.success(f"تمت إضافة ({selected_item_obj['item_name']}) بنجاح!")
+                # 🛑 حماية المبيعات بالسالب من الإدخال اليدوي
+                if float(manual_qty) > float(selected_item_obj["quantity"]):
+                    st.error(f"❌ الكمية المتاحة في المخزن ({selected_item_obj['quantity']}) غير كافية!")
+                else:
+                    st.session_state["cart"].append({"id": selected_item_obj["id"], "name": selected_item_obj["item_name"], "code": selected_item_obj["item_code"], "price": float(selected_item_obj["sale_price"]), "qty": float(manual_qty), "total": float(selected_item_obj["sale_price"]) * float(manual_qty)})
+                    st.success(f"تمت إضافة ({selected_item_obj['item_name']}) بنجاح!")
                 
         st.markdown("---")
         st.markdown('<h3 class="rtl-container">🛒 بيع صنف حر (بدون كود)</h3>', unsafe_allow_html=True)
@@ -358,9 +346,6 @@ def show_page():
                 st.success("تم إضافة الصنف الحر بنجاح!")
             else: st.warning("يرجى إدخال سعر صحيح للصنف الحر.")
 
-    # ==========================================
-    # 3. الأرشيف وإعادة الطباعة + أرشيف فواتير التزويد للفرع
-    # ==========================================
     elif st.session_state["pos_active_view"] == "الأرشيف":
         st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك</h3>', unsafe_allow_html=True)
         branch_transfers = conn.execute("""
@@ -369,6 +354,9 @@ def show_page():
         """, (b_id,)).fetchall()
         
         if branch_transfers:
+            # 📝 معالجة الفواصل لتظهر في الأرشيف كقائمة عمودية
+            for b_trans in branch_transfers:
+                b_trans['تفاصيل الأصناف والكميات'] = b_trans['تفاصيل الأصناف والكميات'].replace('\n', ' | ')
             st.dataframe(pd.DataFrame(branch_transfers), use_container_width=True, hide_index=True)
         else:
             st.info("📭 لا توجد فواتير تزويد بضائع سابقة مسجلة لهذا الفرع.")
