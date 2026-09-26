@@ -2,17 +2,6 @@ import streamlit as st
 import pandas as pd
 from database import get_db_connection
 
-def log_action(conn, current_username, action_description):
-    """دالة لتسجيل حركة المستخدم في قاعدة البيانات"""
-    try:
-        conn.execute(
-            "INSERT INTO user_logs (username, action) VALUES (?, ?)", 
-            (current_username, action_description)
-        )
-        conn.commit()
-    except Exception:
-        pass # لتجنب توقف البرنامج إذا لم يتم إنشاء الجدول بعد
-
 def show_page():
     st.header("👥 إدارة المستخدمين والصلاحيات")
     st.info("💡 من هنا يمكنك إضافة الموظفين، تحديد رتبهم، تعديل كلمات المرور، وربطهم بالفروع.")
@@ -58,8 +47,6 @@ def show_page():
                                    (uname.strip(), uphone.strip(), upass, urole, assigned_b_id))
                         conn.commit()
                         st.success(f"✅ تم إضافة المستخدم ({uname}) بنجاح!")
-                        # تتبع الحركة
-                        log_action(conn, current_username, f"إضافة مستخدم جديد باسم: {uname} برتبة: {urole}")
                         st.rerun()
                     except Exception as e: 
                         st.error(f"⚠️ حدث خطأ، ربما اسم المستخدم موجود مسبقاً.")
@@ -130,8 +117,6 @@ def show_page():
                         """, (new_uname.strip(), new_pass.strip(), new_role, new_b_id, edit_u_id))
                         conn.commit()
                         st.success("✅ تم تحديث بيانات المستخدم بنجاح!")
-                        # تتبع الحركة
-                        log_action(conn, current_username, f"تعديل بيانات المستخدم: {new_uname} وتغيير رتبته إلى: {new_role}")
                         st.rerun()
 
         # --- قسم الحذف الآمن ---
@@ -166,36 +151,11 @@ def show_page():
                 st.warning(delete_error_msg)
 
             if st.button("🗑️ حذف المستخدم المختار", type="primary", disabled=not can_delete): 
-                deleted_name = selected_row_user["username"]
                 conn.execute("DELETE FROM users WHERE id = ?", (del_u,))
                 conn.commit()
                 st.toast("✅ تم حذف المستخدم بنجاح!")
-                # تتبع الحركة
-                log_action(conn, current_username, f"حذف المستخدم: {deleted_name}")
                 st.rerun()
         else:
             st.info("لا توجد حسابات أخرى متاحة للحذف.")
-            
-    # --- قسم سجل حركات النظام (خاص بالأدمن) ---
-    if current_user_role == "Admin":
-        st.markdown("---")
-        st.markdown("### 🕵️ سجل مراقبة النظام (User Logs)")
-        st.info("هذا السجل سري ويظهر لمدير النظام (Admin) فقط.")
-        
-        try:
-            logs_df = pd.read_sql("""
-                SELECT username AS 'المستخدم (الفاعل)', 
-                       action AS 'نوع الحركة', 
-                       DATETIME(timestamp, 'localtime') AS 'وقت وتاريخ الحركة' 
-                FROM user_logs 
-                ORDER BY id DESC
-            """, conn)
-            
-            if not logs_df.empty:
-                st.dataframe(logs_df, use_container_width=True, hide_index=True)
-            else:
-                st.info("لا توجد حركات مسجلة حتى الآن.")
-        except Exception:
-            st.warning("⚠️ جدول السجلات غير مفعل بعد.")
 
     conn.close()
