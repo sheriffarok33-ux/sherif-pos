@@ -234,7 +234,7 @@ def show_page():
             c_btn1, c_btn3 = st.columns([2, 1])
             with c_btn1:
                 st.markdown('<div class="pos-btn btn-green">', unsafe_allow_html=True)
-                if st.button("💰 دفع واعتماد الفاتورة (F12)", use_container_width=True) and st.session_state["cart"]: 
+                if st.button("💰 دفع واعتماد الفاتورة ", use_container_width=True) and st.session_state["cart"]: 
                     checkout_payment_dialog(b_id, g_tot, branch_name_display, username, current_shift_num, daily_inv_num)
                 st.markdown('</div>', unsafe_allow_html=True)
             with c_btn3:
