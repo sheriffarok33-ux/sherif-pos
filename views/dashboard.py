@@ -3,7 +3,7 @@ import pandas as pd
 from database import get_db_connection
 
 def show_page():
-    # ستايل CSS الخاص بالمربعات الإحصائية الرئيسية
+    # تنسيق الخطوط والألوان العامة للوحة التحكم
     st.markdown("""
         <style>
         .dash-card {
@@ -50,7 +50,7 @@ def show_page():
     except:
         users_count = 0
 
-    # عرض المربعات الإحصائية الأربعة (Cards)
+    # عرض المربعات الإحصائية (Cards)
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.markdown(f'<div class="dash-card"><h3>💰 إجمالي المبيعات العامة</h3><h2>{total_sales:,.2f} د.ل</h2></div>', unsafe_allow_html=True)
