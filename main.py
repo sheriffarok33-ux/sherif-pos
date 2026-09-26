@@ -17,25 +17,41 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS مع ضبط لون الحروف داخل الأزرار الزرقاء ليصبح أبيضاً
+# إضافة ستايل CSS المتقدم لنقل القائمة الجانبية لليمين وضبط الألوان
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
+    
+    /* 1. عكس هيكل التطبيق بالكامل لنقل القائمة الجانبية لليمين */
+    [data-testid="stAppViewContainer"] {
+        flex-direction: row-reverse;
+    }
+    
+    /* ضبط موضع زر طي وفتح القائمة الجانبية ليكون يميناً */
+    [data-testid="collapsedControl"] {
+        right: 0 !important;
+        left: auto !important;
+    }
+
+    /* 2. فرض الخط العربي والاتجاه على كافة العناصر */
     html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table, th, td { 
         font-family: 'Tajawal', sans-serif !important; 
         color: #000000 !important; 
         font-weight: 900 !important;
         font-size: 17px !important;
+        text-align: right !important; 
+        direction: rtl !important;
     }
+    
     .main { background-color: #f8fafc; }
     h1 { font-size: 28px !important; color: #0f172a !important; }
     h2 { font-size: 24px !important; color: #1e293b !important; }
     h3 { font-size: 20px !important; color: #334155 !important; }
     
+    /* 3. تنسيق أزرار الشاشة الرئيسية */
     div.stButton > button, div.stButton > button * { 
         color: #ffffff !important; 
     }
-    
     div.stButton > button { 
         border-radius: 8px; font-weight: 900 !important; transition: all 0.3s ease; height: 50px; 
         background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
@@ -43,14 +59,24 @@ st.markdown("""
     }
     div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-2px); }
     
-    [data-testid="stSidebar"] { background-color: #0f172a; }
-    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
+    /* 4. تنسيق القائمة الجانبية (الآن في اليمين) */
+    [data-testid="stSidebar"] { 
+        background-color: #0f172a; 
+        border-left: 1px solid #334155 !important; /* حد فاصل من اليسار لأنها أصبحت يمين الشاشة */
+        border-right: none !important;
+    }
+    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { 
+        color: #ffffff !important; font-size: 17px !important; 
+    }
     [data-testid="stSidebar"] .stButton>button {
         background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
         border-radius: 10px; padding: 12px 15px; text-align: right; font-weight: 900 !important;
         transition: all 0.3s ease; margin-bottom: 8px; font-size: 17px !important; height: auto;
     }
-    [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); }
+    [data-testid="stSidebar"] .stButton>button:hover { 
+        background-color: #0284c7; color: white !important; border-color: #0284c7; 
+        transform: translateX(-5px); /* حركة الأزرار في القائمة الجانبية */
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -75,9 +101,9 @@ def set_page(page_name):
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     if role in ["Admin", "General_Supervisor"]: return True
-    if role == "Cashier": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)"]
+    if role == "Cashier": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)", "🔄 تزويد الفروع والأرشيف"]
     if role == "Viewer": return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
-    if role == "Branch_Supervisor": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع"]
+    if role == "Branch_Supervisor": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف"]
     return False
 
 # --- بوابة الدخول ---
