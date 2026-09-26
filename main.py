@@ -1,105 +1,132 @@
 import os
+import re
+import io
+import sqlite3
+import pandas as pd
 import streamlit as st
+from datetime import datetime, timedelta
+from database import initialize_database, get_db_connection
 
-# ==========================================
-# 1. إعداد الصفحة وتكوين الواجهة
-# ==========================================
+# تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
+initialize_database()
+
+# إعدادات الصفحة الأساسية
 st.set_page_config(
     page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
-    page_icon="🥜",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+# إضافة ستايل CSS مع ضبط لون الحروف داخل الأزرار الزرقاء ليصبح أبيضاً
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
-    * { font-family: 'Tajawal', sans-serif !important; direction: rtl !important; text-align: right !important; }
-    div.stButton > button { border-radius: 8px; font-weight: 900 !important; height: 50px; background: linear-gradient(135deg, #0284c7, #0369a1); color: #ffffff !important; border: none; }
-    div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); }
+    html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table, th, td { 
+        font-family: 'Tajawal', sans-serif !important; 
+        color: #000000 !important; 
+        font-weight: 900 !important;
+        font-size: 17px !important;
+    }
+    .main { background-color: #f8fafc; }
+    h1 { font-size: 28px !important; color: #0f172a !important; }
+    h2 { font-size: 24px !important; color: #1e293b !important; }
+    h3 { font-size: 20px !important; color: #334155 !important; }
+    
+    div.stButton > button, div.stButton > button * { 
+        color: #ffffff !important; 
+    }
+    
+    div.stButton > button { 
+        border-radius: 8px; font-weight: 900 !important; transition: all 0.3s ease; height: 50px; 
+        background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
+        box-shadow: 0 3px 6px rgba(0,0,0,0.15); font-size: 18px !important;
+    }
+    div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-2px); }
+    
     [data-testid="stSidebar"] { background-color: #0f172a; }
-    [data-testid="stSidebar"] * { color: #ffffff !important; }
+    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
+    [data-testid="stSidebar"] .stButton>button {
+        background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
+        border-radius: 10px; padding: 12px 15px; text-align: right; font-weight: 900 !important;
+        transition: all 0.3s ease; margin-bottom: 8px; font-size: 17px !important; height: auto;
+    }
+    [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); }
     </style>
 """, unsafe_allow_html=True)
 
-if not os.path.exists("item_images"):
+# إنشاء مجلد الصور إذا لم يكن موجوداً
+if not os.path.exists("item_images"): 
     os.makedirs("item_images")
 
-# ==========================================
-# 2. استدعاء قاعدة البيانات وتهيئة الجداول
-# ==========================================
-from database import create_tables, get_db_connection
-create_tables()
-
-# ==========================================
-# 3. استدعاء كافة شاشات المشروع الموجودة
-# ==========================================
-import users
-import pos
-import transfers
-import roasting_blending
-import reports
-import purchases
-import parties
-import items_import
-import inventory
-import favorites
-
-# محاولة استدعاء ملف الفروع إن وجد
-try:
-    import branches
-except ImportError:
-    branches = None
-
-# ==========================================
-# 4. إدارة الجلسات (Session State)
-# ==========================================
+# تهيئة متغيرات الجلسة (Session State)
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
 if "username" not in st.session_state: st.session_state["username"] = ""
 if "role" not in st.session_state: st.session_state["role"] = ""
 if "user_id" not in st.session_state: st.session_state["user_id"] = None
 if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
-if "page" not in st.session_state: st.session_state["page"] = "🛒 نقطة البيع (POS)"
+if "cart" not in st.session_state: st.session_state["cart"] = []
+if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
+if "success_alert_msg" not in st.session_state: st.session_state["success_alert_msg"] = ""
 
-def set_page(page_name):
+def set_page(page_name): 
     st.session_state["page"] = page_name
     st.rerun()
 
-# ==========================================
-# 5. نظام الصلاحيات الأمني
-# ==========================================
+# -------------------------------------------------------------
+# 🛡️ دالة فحص الصلاحيات المحمية بدقة عالية
+# -------------------------------------------------------------
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
+    
     if role in ["Admin", "General_Supervisor"]: 
         return True
-    if role == "Cashier": 
-        return menu_name in ["🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)"]
-    if role == "Viewer": 
-        return menu_name in ["📊 التقارير والأرباح"]
-    if role == "Branch_Supervisor": 
-        return menu_name in ["🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "📥 المشتريات", "👥 جهات التعامل", "🥜 التحميص والخلط", "⭐ لوحة المفضلة (1-20)"]
-    return False
+        
+    if role == "Cashier":
+        allowed_for_cashier = [
+            "🏠 الرئيسية واللوحة", 
+            "🛒 نقطة البيع (POS)", 
+            "⭐ لوحة المفضلة (1-20)"
+        ]
+        return menu_name in allowed_for_cashier
 
-# ==========================================
-# 6. بوابة الدخول (Login)
-# ==========================================
+    if role == "Viewer":
+        allowed_for_viewer = [
+            "🏠 الرئيسية واللوحة",
+            "📊 التقارير والأرباح"
+        ]
+        return menu_name in allowed_for_viewer
+        
+    if role == "Branch_Supervisor":
+         allowed_for_bs = [
+            "🏠 الرئيسية واللوحة",
+            "🛒 نقطة البيع (POS)",
+            "📦 إدارة المخزن والفروع"
+         ]
+         return menu_name in allowed_for_bs
+
+    return False
+# -------------------------------------------------------------
+
+# --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        st.markdown('<h1 style="text-align: center; color: #0f172a;">🔐 بوابة دخول نظام محامص أبو زيد</h1>', unsafe_allow_html=True)
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        st.title("🔐 بوابة دخول نظام المحامص")
+        st.subheader("مجموعة أبو زيد التجارية")
         
         with st.form("login_form"):
             u_name = st.text_input("اسم المستخدم")
             u_pass = st.text_input("كلمة المرور", type="password")
             submit = st.form_submit_button("🚀 دخول للنظام", use_container_width=True)
-            
             if submit:
                 conn = get_db_connection()
-                user = conn.execute("SELECT id, username, role, branch_id FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
+                user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
                 conn.close()
-                
                 if user:
+                    if user["is_active"] == 0:
+                        st.error("🚫 هذا الحساب موقوف!")
+                        st.stop()
                     st.session_state["logged_in"] = True
                     st.session_state["username"] = user["username"]
                     st.session_state["role"] = user["role"]
@@ -110,72 +137,147 @@ if not st.session_state["logged_in"]:
                     st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
     st.stop()
 
-# ==========================================
-# 7. القائمة الجانبية (Sidebar)
-# ==========================================
-with st.sidebar:
-    st.markdown("<h2 style='text-align: center; color: #38bdf8;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align: center; font-size:14px;'>المستخدم: <b>{st.session_state['username']}</b> | الصلاحية: <b>{st.session_state['role']}</b></p>", unsafe_allow_html=True)
-    st.markdown("---")
+# --- القائمة الجانبية (Navigation Menu) ---
+st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
+st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
+st.sidebar.markdown("---")
 
-    menus_map = {
-        "🛒 نقطة البيع (POS)": pos,
-        "🏢 إدارة الفروع": branches,
-        "👥 إدارة المستخدمين": users,
-        "⭐ لوحة المفضلة (1-20)": favorites,
-        "📦 إدارة المخزن والفروع": inventory,
-        "🔄 تزويد الفروع والأرشيف": transfers,
-        "📁 استيراد Excel": items_import,
-        "👥 جهات التعامل": parties,
-        "📥 المشتريات": purchases,
-        "🥜 التحميص والخلط": roasting_blending,
-        "📊 التقارير والأرباح": reports
-    }
+DEFAULT_MENUS = [
+    "🏠 الرئيسية واللوحة",
+    "🛒 نقطة البيع (POS)",
+    "🏢 إدارة الفروع",
+    "👥 إدارة المستخدمين",
+    "⭐ لوحة المفضلة (1-20)",
+    "📦 إدارة المخزن والفروع",
+    "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
+    "🔄 تزويد الفروع والأرشيف",
+    "📁 استيراد Excel",
+    "💰 المصروفات",
+    "👥 جهات التعامل",
+    "📥 المشتريات",
+    "⚙️ الجرد والتصفير السنوي",
+    "🥜 التحميص والخلط",
+    "📊 التقارير والأرباح"
+]
 
-    for menu_name, mod_obj in menus_map.items():
-        if mod_obj is not None and check_user_permission(menu_name):
-            btn_label = f"📍 {menu_name}" if st.session_state["page"] == menu_name else menu_name
-            if st.button(btn_label, use_container_width=True, key=f"btn_{menu_name}"):
-                set_page(menu_name)
+for menu_name in DEFAULT_MENUS:
+    if check_user_permission(menu_name):
+        if st.sidebar.button(menu_name, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
+            set_page(menu_name)
 
-    st.markdown("---")
-    if st.button("🚪 تسجيل الخروج", use_container_width=True):
-        st.session_state.clear()
-        st.rerun()
+st.sidebar.markdown("---")
+if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
+    st.session_state.clear()
+    st.rerun()
 
-    st.markdown("---")
-    st.markdown("<p style='text-align: center; font-size:12px; color: #94a3b8;'>ENG: SHERIF M. FAROK</p>", unsafe_allow_html=True)
+st.sidebar.markdown("---")
+st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# ==========================================
-# 8. موجه الشاشات (Router)
-# ==========================================
-choice = st.session_state.get("page", "🛒 نقطة البيع (POS)")
+# --- منطقة توجيه الشاشات (Router) الآمنة ---
+choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
 if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
-if choice == "🛒 نقطة البيع (POS)":
-    pos.show_page()
-elif choice == "🏢 إدارة الفروع" and branches:
-    branches.show_page()
+if choice == "🏠 الرئيسية واللوحة":
+    try:
+        from views import dashboard
+        dashboard.show_page()
+    except ImportError:
+        st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
+        st.info("مرحباً بك في النظام السحابي. شاشة الرئيسية قيد التجهيز.")
+
+elif choice == "🛒 نقطة البيع (POS)":
+    try:
+        from views import pos
+        pos.show_page()
+    except ImportError:
+        st.info("🛒 شاشة نقطة البيع قيد الترتيب وفق الهيكل الجديد...")
+
+elif choice == "🏢 إدارة الفروع":
+    try:
+        from views import branches
+        branches.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
+
 elif choice == "👥 إدارة المستخدمين":
-    users.show_page()
+    try:
+        from views import users
+        users.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
+
+elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
+    try:
+        from views import adjustments
+        adjustments.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود.")
+
 elif choice == "📁 استيراد Excel":
-    items_import.show_page()
+    try:
+        from views import items_import
+        items_import.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
+
+elif choice == "💰 المصروفات":
+    try:
+        from views import expenses
+        expenses.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
+
 elif choice == "👥 جهات التعامل":
-    parties.show_page()
+    try:
+        from views import parties
+        parties.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
+
 elif choice == "📥 المشتريات":
-    purchases.show_page()
+    try:
+        from views import purchases
+        purchases.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
+
 elif choice == "🔄 تزويد الفروع والأرشيف":
-    transfers.show_page()
+    try:
+        from views import transfers
+        transfers.show_page()
+    except ImportError:
+        st.info("🔄 شاشة تزويد الفروع والأرشيف قيد التجهيز.")
+
 elif choice == "⭐ لوحة المفضلة (1-20)":
-    favorites.show_page()
+    try:
+        from views import favorites
+        favorites.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
+
 elif choice == "📦 إدارة المخزن والفروع":
-    inventory.show_page()
+    try:
+        from views import inventory
+        inventory.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
+
+elif choice == "⚙️ الجرد والتصفير السنوي":
+    st.info("⚙️ شاشة الجرد قيد التجهيز.")
+
 elif choice == "🥜 التحميص والخلط":
-    roasting_blending.show_page()
+    try:
+        from views import roasting_blending
+        roasting_blending.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود داخل مجلد views.")
+
 elif choice == "📊 التقارير والأرباح":
-    reports.show_page()
-else:
-    st.info("يرجى اختيار شاشة صحيحة من القائمة الجانبية.")
+    try:
+        from views import reports
+        reports.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود داخل مجلد views.")
