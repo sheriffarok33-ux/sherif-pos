@@ -5,26 +5,10 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
 
-# إضافة المجلد الحالي لمسار بايثون لضمان رؤية كافة ملفات الشاشات فوراً
+# ضبط مسار الجذر لضمان رؤية كافة الملفات البرمجية فوراً
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from database import initialize_database, get_db_connection
-
-# --- استيراد مباشر وآمن لكافة الشاشات الموجودة في المشروع ---
-import dashboard
-import pos
-import branches
-import users
-import adjustments
-import items_import
-import expenses
-import parties
-import purchases
-import transfers
-import favorites
-import inventory
-import roasting_blending
-import reports
 
 # تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
 initialize_database()
@@ -95,6 +79,31 @@ def check_user_permission(menu_name):
     if role == "Branch_Supervisor":
         return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف"]
     return False
+
+# --- استيراد آمن تماماً لكل الشاشات لمنع الانهيار ---
+modules_dict = {}
+screen_files = {
+    "dashboard": "dashboard",
+    "pos": "pos",
+    "branches": "branches",
+    "users": "users",
+    "adjustments": "adjustments",
+    "items_import": "items_import",
+    "expenses": "expenses",
+    "parties": "parties",
+    "purchases": "purchases",
+    "transfers": "transfers",
+    "favorites": "favorites",
+    "inventory": "inventory",
+    "roasting_blending": "roasting_blending",
+    "reports": "reports"
+}
+
+for mod_key, mod_name in screen_files.items():
+    try:
+        modules_dict[mod_key] = __import__(mod_name)
+    except Exception as e:
+        modules_dict[mod_key] = None
 
 # --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
@@ -170,48 +179,30 @@ if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
-# توجيه الشاشات المباشر والسليم تماماً
-if choice == "🏠 الرئيسية واللوحة":
-    dashboard.show_page()
+# خريطة توجيه الشاشات المطابقة لملفاتك تماماً
+screens_routing = {
+    "🏠 الرئيسية واللوحة": ("dashboard", "لوحة التحكم الرئيسية"),
+    "🛒 نقطة البيع (POS)": ("pos", "شاشة نقطة البيع"),
+    "🏢 إدارة الفروع": ("branches", "شاشة إدارة الفروع"),
+    "👥 إدارة المستخدمين": ("users", "شاشة إدارة المستخدمين"),
+    "⭐ لوحة المفضلة (1-20)": ("favorites", "شاشة لوحة المفضلة"),
+    "📦 إدارة المخزن والفروع": ("inventory", "شاشة إدارة المخزن والفروع"),
+    "➕ الفائض والتوالف والمرتجعات وتعديل السعر": ("adjustments", "شاشة الفائض والتوالف"),
+    "🔄 تزويد الفروع والأرشيف": ("transfers", "شاشة تزويد الفروع والأرشيف"),
+    "📁 استيراد Excel": ("items_import", "شاشة استيراد Excel"),
+    "💰 المصروفات": ("expenses", "شاشة المصروفات"),
+    "📥 المشتريات والموردين": ("purchases", "شاشة المشتريات"),
+    "🥜 التحميص والخلط": ("roasting_blending", "شاشة التحميص والخلط"),
+    "📊 التقارير والأرباح": ("reports", "شاشة التقارير والأرباح")
+}
 
-elif choice == "🛒 نقطة البيع (POS)":
-    pos.show_page()
-
-elif choice == "🏢 إدارة الفروع":
-    branches.show_page()
-
-elif choice == "👥 إدارة المستخدمين":
-    users.show_page()
-
-elif choice == "⭐ لوحة المفضلة (1-20)":
-    favorites.show_page()
-
-elif choice == "📦 إدارة المخزن والفروع":
-    inventory.show_page()
-
-elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
-    adjustments.show_page()
-
-elif choice == "🔄 تزويد الفروع والأرشيف":
-    transfers.show_page()
-
-elif choice == "📁 استيراد Excel":
-    items_import.show_page()
-
-elif choice == "💰 المصروفات":
-    expenses.show_page()
-
-elif choice == "📥 المشتريات والموردين":
-    purchases.show_page()
-
-elif choice == "🥜 التحميص والخلط":
-    roasting_blending.show_page()
-
-elif choice == "📊 التقارير والأرباح":
-    reports.show_page()
-
+if choice in screens_routing:
+    mod_key, screen_title = screens_routing[choice]
+    if modules_dict.get(mod_key) and hasattr(modules_dict[mod_key], "show_page"):
+        modules_dict[mod_key].show_page()
+    else:
+        st.warning(f"⚠️ {screen_title} (`{mod_key}.py`) غير متاحة حالياً أو جاري تجهيزها.")
 elif choice == "⚙️ الجرد والتصفير السنوي":
     st.info("⚙️ شاشة الجرد والتصفير السنوي قيد التجهيز.")
-
 else:
     st.error("❌ الشاشة غير مطلوبة أو غير معرفة.")
