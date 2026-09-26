@@ -1,17 +1,24 @@
 import sqlite3
 import os
+import logging
 
-# اسم ملف قاعدة البيانات المحلي
-DB_NAME = 'database.db'
+# إعداد ملف قاعدة البيانات المحلية للفرع
+LOCAL_DB_PATH = "mahamis.db"
 
 def get_db_connection():
-    """تأسيس اتصال بقاعدة البيانات وإرجاع الكائن للتعامل معه كقاموس (Dictionary)."""
-    conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+    """
+    إنشاء وإرجاع اتصال بقاعدة البيانات المحلية SQLite.
+    تم تفعيل check_same_thread=False لضمان التوافق مع Streamlit.
+    """
+    conn = sqlite3.connect(LOCAL_DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
-def create_tables():
-    """إنشاء جميع الجداول الأساسية لبرنامج محامص أبو زيد إذا لم تكن موجودة."""
+def init_db():
+    """
+    تهيئة وإنشاء كافة جداول النظام الأساسية إذا لم تكن موجودة.
+    يتم تنفيذ هذه الدالة مرة واحدة عند تشغيل النظام.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -20,7 +27,7 @@ def create_tables():
         CREATE TABLE IF NOT EXISTS branches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             branch_name TEXT NOT NULL,
-            branch_type TEXT
+            branch_type TEXT NOT NULL
         )
     """)
 
@@ -33,38 +40,38 @@ def create_tables():
             password TEXT NOT NULL,
             role TEXT NOT NULL,
             branch_id INTEGER,
-            FOREIGN KEY (branch_id) REFERENCES branches (id)
+            FOREIGN KEY (branch_id) REFERENCES branches(id)
         )
     """)
 
-    # 3. جدول سجل مراقبة النظام (لتتبع حركات الإضافة والتعديل والحذف)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS user_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
-            action TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # 4. جدول الأصناف والمخزون
+    # 3. جدول الأصناف والمخزون
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch_id INTEGER,
             item_code TEXT,
             item_name TEXT NOT NULL,
-            branch_id INTEGER,
             quantity REAL DEFAULT 0.0,
             buy_price REAL DEFAULT 0.0,
             sale_price REAL DEFAULT 0.0,
             avg_cost REAL DEFAULT 0.0,
             favorite_rank INTEGER DEFAULT 0,
             expiry_date TEXT,
-            FOREIGN KEY (branch_id) REFERENCES branches (id)
+            FOREIGN KEY (branch_id) REFERENCES branches(id)
         )
     """)
 
-    # 5. جدول الزبائن (المعتمدين للبيع الآجل والولاء)
+    # 4. جدول الموردين (تجار الجملة)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS suppliers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            supplier_name TEXT UNIQUE NOT NULL,
+            phone TEXT,
+            balance REAL DEFAULT 0.0
+        )
+    """)
+
+    # 5. جدول الزبائن الآجلين والولاء
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS customers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,22 +79,11 @@ def create_tables():
             phone TEXT,
             total_purchases REAL DEFAULT 0.0,
             balance REAL DEFAULT 0.0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
-    # 6. جدول الموردين (تجار الجملة)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS suppliers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            supplier_name TEXT UNIQUE NOT NULL,
-            phone TEXT,
-            balance REAL DEFAULT 0.0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # 7. جدول فواتير المبيعات (نقطة البيع)
+    # 6. جدول مبيعات نقطة البيع (الكاشير)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS invoices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,17 +91,16 @@ def create_tables():
             user_id INTEGER,
             customer_name TEXT,
             customer_phone TEXT,
-            total_amount REAL,
+            total_amount REAL DEFAULT 0.0,
             payment_method TEXT,
             notes TEXT,
             shift_status TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (branch_id) REFERENCES branches (id),
-            FOREIGN KEY (user_id) REFERENCES users (id)
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            sync_status INTEGER DEFAULT 0
         )
     """)
 
-    # 8. جدول المشتريات (فواتير البضاعة الواردة)
+    # 7. جدول المشتريات والتوريد
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS purchases (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,29 +108,28 @@ def create_tables():
             supplier_id INTEGER,
             supplier_name TEXT,
             invoice_number TEXT,
-            total_cost REAL,
+            total_cost REAL DEFAULT 0.0,
             payment_type TEXT,
             items_details TEXT,
             invoice_date TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (branch_id) REFERENCES branches (id),
-            FOREIGN KEY (supplier_id) REFERENCES suppliers (id)
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            sync_status INTEGER DEFAULT 0
         )
     """)
 
-    # 9. جدول المصروفات (للرواتب والإيجارات والمنصرفات اليومية)
+    # 8. جدول المصروفات (للتقارير المالية)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS expenses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             branch_id INTEGER,
-            amount REAL,
+            amount REAL DEFAULT 0.0,
             description TEXT,
-            expense_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (branch_id) REFERENCES branches (id)
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            sync_status INTEGER DEFAULT 0
         )
     """)
 
-    # 10. جدول سجلات التزويد والتحويل بين الفروع
+    # 9. جدول حركات النقل وتزويد الفروع
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS transfer_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,24 +138,32 @@ def create_tables():
             transfer_type TEXT,
             items_details TEXT,
             status TEXT,
-            transfer_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (from_branch_id) REFERENCES branches (id),
-            FOREIGN KEY (to_branch_id) REFERENCES branches (id)
+            transfer_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            sync_status INTEGER DEFAULT 0
         )
     """)
 
     conn.commit()
 
-    # إنشاء حساب افتراضي لمدير النظام لتفادي إغلاق البرنامج عند التشغيل لأول مرة
-    cursor.execute("SELECT COUNT(*) FROM users")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("""
-            INSERT INTO users (username, password, role)
-            VALUES ('admin', 'admin123', 'Admin')
-        """)
-        conn.commit()
+    # ==========================================
+    # سكريبت ترقية قواعد البيانات الحالية (Migration)
+    # لإضافة عمود sync_status برمجياً دون حذف البيانات
+    # ==========================================
+    tables_to_upgrade = ["invoices", "purchases", "expenses", "transfer_logs"]
+    
+    for table in tables_to_upgrade:
+        try:
+            # محاولة إضافة العمود؛ إذا كان موجوداً مسبقاً سيتجاهل الخطأ ويكمل بسلاسة
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN sync_status INTEGER DEFAULT 0")
+            conn.commit()
+            logging.info(f"تمت ترقية الجدول {table} بإضافة عمود sync_status.")
+        except sqlite3.OperationalError:
+            # العمود موجود مسبقاً، لا حاجة لأي إجراء
+            pass
 
     conn.close()
 
-# يتم تنفيذ هذه الدالة تلقائياً عند استيراد الملف في أي سكريبت آخر
-create_tables()
+# تنفيذ التهيئة تلقائياً عند استدعاء الملف
+if __name__ == "__main__":
+    init_db()
+    print("✅ تمت تهيئة قاعدة بيانات محامص أبو زيد (mahamis.db) وتحديثها بنجاح!")
