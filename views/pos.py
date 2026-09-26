@@ -98,14 +98,13 @@ def process_barcode_scan():
         if item:
             unit_price = float(item["sale_price"])
             st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": unit_price, "qty": qty_to_add, "total": unit_price * qty_to_add})
-            st.session_state["barcode_qty_input"] = 1.0 # 🔄 تصفير الكمية للصنف القادم
+            st.session_state["barcode_qty_input"] = 1.0 
         else:
             st.toast(f"❌ الباركود غير مسجل أو الصنف غير موجود في هذا الفرع: {code}")
         conn.close()
     st.session_state.barcode_scan_input = "" 
 
 def show_page():
-    # 🌟 التأكد من وجود مفاتيح تصفير الكمية في الذاكرة
     if "barcode_qty_input" not in st.session_state: st.session_state["barcode_qty_input"] = 1.0
     if "manual_qty_input" not in st.session_state: st.session_state["manual_qty_input"] = 1.0
 
@@ -155,7 +154,6 @@ def show_page():
             """, unsafe_allow_html=True)
             
             for pt in pending_logs:
-                # 🌟 التعديل هنا: تحويل علامة السطر الجديد التي أضفناها في التزويد إلى HTML ليظهر كقائمة منسقة رأسياً
                 formatted_details = str(pt['items_details']).replace('\n', '<br>')
                 st.markdown(f"""
                 <div style="background-color: #ffffff; padding: 12px; border-radius: 6px; border: 1px solid #bbf7d0; margin-bottom: 10px; color: #1e293b; direction: rtl; text-align: right;">
@@ -182,6 +180,40 @@ def show_page():
     branch_inv_count = conn.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date)).fetchone()[0]
     daily_inv_num = branch_inv_count + 1
 
+    if "last_invoice" in st.session_state and st.session_state["last_invoice"]:
+        inv = st.session_state["last_invoice"]
+        items_html = "".join([f"<tr><td>{i['name']}</td><td>{i['qty']}</td><td>{i['price']}</td><td>{i['total']}</td></tr>" for i in inv["items"]])
+        html_file_content = f"""
+        <html dir="rtl">
+        <head><meta charset="utf-8"></head>
+        <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000;">
+            <h2 style="margin-bottom: 5px;">مجموعة أبو زيد التجارية</h2>
+            <p style="margin-top: 0;">فرع: {inv['branch']}</p><hr>
+            <p style="text-align: right;">
+            <b>رقم فاتورة اليوم:</b> #{inv['daily_inv_num']}<br>
+            <b>التاريخ:</b> {inv['date_time']}<br>
+            <b>الكاشير:</b> {inv['cashier']} | <b>وردية رقم:</b> {inv['shift']}<br>
+            <b>الزبون:</b> {inv['customer']} <br><b>طريقة الدفع:</b> {inv['method']}</p><hr>
+            <table style="width: 100%; text-align: right; border-collapse: collapse;">
+                <tr style="border-bottom: 1px solid #000;"><th>الصنف</th><th>الكمية</th><th>السعر</th><th>المجموع</th></tr>
+                {items_html}
+            </table><hr>
+            <h3 style="text-align: left;">الإجمالي: {inv['total']:,.2f} د.ل</h3>
+            <p style="font-size: 12px; margin-top: 20px;">شكراً لتسوقكم معنا 🥜</p>
+        </body>
+        </html>
+        """
+        st.success("✅ تمت عملية الدفع بنجاح!")
+        st.markdown("<div style='border: 2px solid #0284c7; padding: 15px; border-radius: 10px; background-color: #f0f9ff; margin-bottom: 20px; direction: rtl;'>", unsafe_allow_html=True)
+        st.components.v1.html(html_file_content, height=450, scrolling=True)
+        c_inv1, c_inv2 = st.columns(2)
+        with c_inv1: st.download_button("📥 تحميل الفاتورة (HTML)", data=html_file_content.encode('utf-8'), file_name=f"Invoice_{inv['inv_id']}.html", mime="text/html", use_container_width=True)
+        with c_inv2: 
+            if st.button("✖️ إخفاء الفاتورة ومتابعة البيع", type="primary", use_container_width=True): 
+                st.session_state["last_invoice"] = None
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
     if "pos_active_view" not in st.session_state: st.session_state["pos_active_view"] = "الكاشير السريع"
         
     st.markdown("---")
@@ -196,7 +228,6 @@ def show_page():
         col_qty, col_bar, col_info = st.columns([1, 2, 2])
         
         with col_qty:
-            # 🌟 إزالة خاصية value وترك key ليقوم st.session_state بإدارة الرقم وتصفيره برمجياً
             st.number_input("الكمية (كجم/وحدة):", min_value=0.01, step=0.5, key="barcode_qty_input")
         with col_bar:
             st.text_input("🔍 مسح الباركود الفوري (Enter):", key="barcode_scan_input", on_change=process_barcode_scan)
@@ -249,7 +280,6 @@ def show_page():
             fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 12", (b_id,)).fetchall()
             
             if fav_items:
-                # 🌟 التعديل الجذري: استخدام الحاوية الرسمية من Streamlit لترتيب المفضلة وإلغاء المربع الأبيض الضخم
                 with st.container(height=500, border=True):
                     for item in fav_items:
                         with st.container(border=True):
@@ -267,7 +297,7 @@ def show_page():
                             if st.button(f"{item['item_name']} ({item['sale_price']})", key=f"fav_{item['id']}", use_container_width=True):
                                 qty = float(st.session_state.get("barcode_qty_input", 1.0))
                                 st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": qty, "total": float(item["sale_price"]) * qty})
-                                st.session_state["barcode_qty_input"] = 1.0 # 🔄 تصفير الكمية برمجياً فور الضغط
+                                st.session_state["barcode_qty_input"] = 1.0 
                                 st.rerun()
             else:
                 st.info("لم تحدد أصناف مفضلة.")
@@ -280,13 +310,12 @@ def show_page():
             selected_manual_item_str = st.selectbox("اختر الصنف يدوياً:", list(item_names_dict.keys()))
             selected_item_obj = item_names_dict[selected_manual_item_str]
             
-            # 🌟 إزالة القيمة الثابتة ليقوم الـ session state بتصفير الرقم فوراً
             st.number_input("الكمية المطلوبة يدوياً:", min_value=0.01, step=0.1, key="manual_qty_input")
             
             if st.button("➕ إضافة إلى سلة المبيعات", type="primary"):
                 qty_val = float(st.session_state["manual_qty_input"])
                 st.session_state["cart"].append({"id": selected_item_obj["id"], "name": selected_item_obj["item_name"], "code": selected_item_obj["item_code"], "price": float(selected_item_obj["sale_price"]), "qty": qty_val, "total": float(selected_item_obj["sale_price"]) * qty_val})
-                st.session_state["manual_qty_input"] = 1.0 # 🔄 تصفير الكمية
+                st.session_state["manual_qty_input"] = 1.0 
                 st.success(f"تمت إضافة ({selected_item_obj['item_name']}) بنجاح!")
                 st.rerun()
                 
@@ -308,15 +337,49 @@ def show_page():
         branch_transfers = conn.execute("SELECT id AS 'رقم التزويد', items_details AS 'تفاصيل الأصناف والكميات', status AS 'حالة الاستلام', transfer_date AS 'تاريخ الإرسال' FROM transfer_logs WHERE to_branch_id = ? ORDER BY id DESC", (b_id,)).fetchall()
         
         if branch_transfers:
-            # معالجة النصوص داخل جدول الأرشيف لوضوحها
-            for b_trans in branch_transfers:
+            # 🌟 الحل الجذري: تحويل البيانات من النوع المقفل إلى قواميس قابلة للتعديل
+            transfers_list = [dict(row) for row in branch_transfers]
+            for b_trans in transfers_list:
                 b_trans['تفاصيل الأصناف والكميات'] = str(b_trans['تفاصيل الأصناف والكميات']).replace('\n', ' | ')
-            st.dataframe(pd.DataFrame(branch_transfers), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(transfers_list), use_container_width=True, hide_index=True)
         else:
             st.info("📭 لا توجد فواتير تزويد بضائع سابقة مسجلة لهذا الفرع.")
 
         st.markdown("---")
         st.markdown('<h3 class="rtl-container">📋 أرشيف مبيعات الفرع وإعادة الطباعة</h3>', unsafe_allow_html=True)
-        # (باقي كود الأرشيف كما هو بدون تغيير...)
+        recent_invs = conn.execute("SELECT id, customer_name, total_amount, created_at FROM invoices WHERE branch_id = ? ORDER BY id DESC LIMIT 100", (b_id,)).fetchall()
+        
+        if recent_invs:
+            inv_dict = {f"فاتورة مرجعية #{r['id']} | الزبون: {r['customer_name']} | المبلغ: {r['total_amount']} د.ل | التاريخ: {r['created_at']}": r['id'] for r in recent_invs}
+            sel_inv_str = st.selectbox("🔍 اختر الفاتورة لعرضها وإعادة طباعتها:", ["-- اختر الفاتورة --"] + list(inv_dict.keys()))
+            
+            if sel_inv_str != "-- اختر الفاتورة --":
+                target_inv_id = inv_dict[sel_inv_str]
+                inv_data = conn.execute("SELECT * FROM invoices WHERE id = ?", (target_inv_id,)).fetchone()
+                
+                if inv_data:
+                    try: saved_items = json.loads(inv_data["notes"]) if inv_data["notes"] else []
+                    except: saved_items = [{"name": "أصناف الفاتورة", "qty": "-", "price": "-", "total": inv_data["total_amount"]}]
+                    
+                    b_info = conn.execute("SELECT branch_name FROM branches WHERE id = ?", (inv_data["branch_id"],)).fetchone()
+                    u_info = conn.execute("SELECT username FROM users WHERE id = ?", (inv_data["user_id"],)).fetchone()
+                    
+                    items_html_reprint = "".join([f"<tr><td>{i['name']}</td><td>{i['qty']}</td><td>{i['price']}</td><td>{i['total']}</td></tr>" for i in saved_items])
+                    html_reprint_content = f"""
+                    <html dir="rtl"><head><meta charset="utf-8"></head>
+                    <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
+                        <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {b_info['branch_name'] if b_info else 'غير محدد'} <br><small>(نسخة مسترجعة)</small></p><hr>
+                        <p style="text-align: right;"><b>رقم الفاتورة المرجعية:</b> #{inv_data['id']}<br><b>التاريخ:</b> {inv_data['created_at']}<br>
+                        <b>الكاشير:</b> {u_info['username'] if u_info else 'غير محدد'}<br><b>الوردية:</b> رقم {inv_data['shift_status']}<br><b>طريقة الدفع:</b> {inv_data['payment_method']}</p><hr>
+                        <table style="width: 100%; text-align: right; border-collapse: collapse;">
+                            <tr style="border-bottom: 1px solid #000;"><th>الصنف</th><th>الكمية</th><th>السعر</th><th>المجموع</th></tr>
+                            {items_html_reprint}
+                        </table><hr><h3 style="text-align: left;">الإجمالي: {inv_data['total_amount']:,.2f} د.ل</h3>
+                    </body></html>
+                    """
+                    st.components.v1.html(html_reprint_content, height=350, scrolling=True)
+                    st.download_button(label="📥 تحميل الفاتورة المسترجعة (HTML)", data=html_reprint_content.encode('utf-8'), file_name=f"Invoice_Reprint_{target_inv_id}.html", mime="text/html", use_container_width=True)
+        else:
+            st.info("📭 لا توجد فواتير مبيعات سابقة مؤرشفة لهذا الفرع.")
 
     conn.close()
