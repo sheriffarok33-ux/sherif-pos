@@ -3,7 +3,14 @@ import pandas as pd
 from database import get_db_connection
 
 def show_page():
-    st.header("🏢 إدارة الفروع والمخازن")
+    # 🌟 تنسيق الصفحة والاتجاه
+    st.markdown("""
+        <style>
+        .rtl-container { direction: rtl !important; text-align: right !important; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<h2 class="rtl-container">🏢 إدارة الفروع والمخازن</h2>', unsafe_allow_html=True)
     st.info("💡 من هنا يمكنك إضافة الفروع والمخازن الجديدة الخاصة بالمؤسسة لعرضها في باقي شاشات النظام.")
 
     conn = get_db_connection()
@@ -30,7 +37,7 @@ def show_page():
                     st.success(f"✅ تم إضافة ({b_name}) بنجاح!")
                     st.rerun()
                 except Exception as e:
-                    st.error("⚠️ حدث خطأ أثناء الحفظ. تأكد من أن قاعدة البيانات تعمل بشكل سليم.")
+                    st.error(f"⚠️ حدث خطأ أثناء الحفظ: {e}")
             else:
                 st.warning("⚠️ يرجى إدخال اسم الفرع.")
 
@@ -38,17 +45,20 @@ def show_page():
     st.markdown("---")
     st.markdown("### 📋 قائمة الفروع والمخازن المسجلة")
     
-    query = """
-        SELECT id AS 'المسلسل', 
-               branch_name AS 'اسم الفرع / المخزن', 
-               branch_type AS 'النوع' 
-        FROM branches
-    """
-    branches_df = pd.read_sql(query, conn)
-    
-    if not branches_df.empty:
-        st.dataframe(branches_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("لا توجد فروع أو مخازن مسجلة حتى الآن. يرجى إضافة مخزن رئيسي أولاً لضمان عمل باقي شاشات النظام.")
+    try:
+        query = """
+            SELECT id AS 'المسلسل', 
+                   branch_name AS 'اسم الفرع / المخزن', 
+                   branch_type AS 'النوع' 
+            FROM branches
+        """
+        branches_df = pd.read_sql(query, conn)
+        
+        if not branches_df.empty:
+            st.dataframe(branches_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("لا توجد فروع أو مخازن مسجلة حتى الآن. يرجى إضافة مخزن رئيسي أولاً لضمان عمل باقي شاشات النظام.")
+    except Exception as e:
+        st.error("⚠️ لم يتم العثور على جدول الفروع. تأكد من تحديث قاعدة البيانات.")
 
     conn.close()
