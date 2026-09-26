@@ -108,7 +108,7 @@ def process_barcode_scan():
             
         if item:
             if float(qty_to_add) > float(item["quantity"]):
-                st.error(f"❌ رصيد المخزن غير كافٍ للصنف! المتاح: {item['quantity']}")
+                st.toast(f"❌ المخزون لا يكفي! المتاح: {item['quantity']}", icon="🚨")
             else:
                 unit_price = float(item["sale_price"])
                 st.session_state["cart"].append({
@@ -116,7 +116,7 @@ def process_barcode_scan():
                     "price": unit_price, "qty": float(qty_to_add), "total": unit_price * float(qty_to_add)
                 })
         else:
-            st.toast(f"❌ الباركود غير مسجل أو الصنف غير موجود في هذا الفرع: {code}")
+            st.toast(f"❌ الباركود غير مسجل أو الصنف غير موجود في هذا الفرع: {code}", icon="⚠️")
         conn.close()
     st.session_state.barcode_scan_input = "" 
 
@@ -199,47 +199,47 @@ def show_page():
     daily_inv_num = branch_inv_count + 1
 
     # ==========================================
-    # 🌟 تقارير X و Z متاحة للجميع مع ميزة الطباعة
+    # 🌟 إزالة الـ Expander لتجنب تداخل النصوص واستخدام Container مباشر
     # ==========================================
     st.markdown("---")
-    with st.expander("📊 تقارير الوردية واليومية (X-Read / Z-Read) - للطباعة", expanded=False):
-        c_x, c_z = st.columns(2)
-        
-        shift_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id=? AND DATE(created_at)=? AND shift_status=?", (b_id, today_date, str(current_shift_num))).fetchone()
-        shift_sales = shift_sales_row[0] if shift_sales_row[0] else 0.0
-        
-        with c_x:
-            st.info(f"مبيعات الوردية (رقم {current_shift_num}): **{shift_sales:,.2f} د.ل**")
-            x_html = f"""
-            <html dir="rtl"><head><meta charset="utf-8"></head>
-            <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000;">
-                <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {branch_name_display}</p><hr>
-                <h3>تقرير X-Read (الوردية)</h3>
-                <p style="text-align: right;"><b>التاريخ:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
-                <b>الكاشير:</b> {username} | <b>وردية رقم:</b> {current_shift_num}</p><hr>
-                <h3>إجمالي المبيعات: {shift_sales:,.2f} د.ل</h3><hr>
-                <p style="font-size: 12px;">نهاية التقرير</p>
-            </body></html>
-            """
-            st.download_button("🖨️ طباعة تقرير X-Read", data=x_html.encode('utf-8'), file_name=f"X_Read_{today_date}_Shift{current_shift_num}.html", mime="text/html", use_container_width=True)
+    st.markdown('<h3 class="rtl-container" style="color: #0f172a;">📊 تقارير الوردية واليومية (X-Read / Z-Read) - للطباعة</h3>', unsafe_allow_html=True)
+    c_x, c_z = st.columns(2)
+    
+    shift_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id=? AND DATE(created_at)=? AND shift_status=?", (b_id, today_date, str(current_shift_num))).fetchone()
+    shift_sales = shift_sales_row[0] if shift_sales_row[0] else 0.0
+    
+    with c_x:
+        st.info(f"مبيعات الوردية (رقم {current_shift_num}): **{shift_sales:,.2f} د.ل**")
+        x_html = f"""
+        <html dir="rtl"><head><meta charset="utf-8"></head>
+        <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000;">
+            <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {branch_name_display}</p><hr>
+            <h3>تقرير X-Read (الوردية)</h3>
+            <p style="text-align: right;"><b>التاريخ:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
+            <b>الكاشير:</b> {username} | <b>وردية رقم:</b> {current_shift_num}</p><hr>
+            <h3>إجمالي المبيعات: {shift_sales:,.2f} د.ل</h3><hr>
+            <p style="font-size: 12px;">نهاية التقرير</p>
+        </body></html>
+        """
+        st.download_button("🖨️ طباعة تقرير X-Read", data=x_html.encode('utf-8'), file_name=f"X_Read_{today_date}_Shift{current_shift_num}.html", mime="text/html", use_container_width=True)
 
-        day_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id=? AND DATE(created_at)=?", (b_id, today_date)).fetchone()
-        day_sales = day_sales_row[0] if day_sales_row[0] else 0.0
-        
-        with c_z:
-            st.error(f"المبيعات الختامية لهذا اليوم: **{day_sales:,.2f} د.ل**")
-            z_html = f"""
-            <html dir="rtl"><head><meta charset="utf-8"></head>
-            <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000;">
-                <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {branch_name_display}</p><hr>
-                <h3>تقرير Z-Read (اليوم الكامل)</h3>
-                <p style="text-align: right;"><b>التاريخ:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
-                <b>طبع بواسطة:</b> {username}</p><hr>
-                <h3>إجمالي المبيعات: {day_sales:,.2f} د.ل</h3><hr>
-                <p style="font-size: 12px;">نهاية التقرير</p>
-            </body></html>
-            """
-            st.download_button("🖨️ طباعة تقرير Z-Read", data=z_html.encode('utf-8'), file_name=f"Z_Read_{today_date}.html", mime="text/html", use_container_width=True)
+    day_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id=? AND DATE(created_at)=?", (b_id, today_date)).fetchone()
+    day_sales = day_sales_row[0] if day_sales_row[0] else 0.0
+    
+    with c_z:
+        st.error(f"المبيعات الختامية لهذا اليوم: **{day_sales:,.2f} د.ل**")
+        z_html = f"""
+        <html dir="rtl"><head><meta charset="utf-8"></head>
+        <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000;">
+            <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {branch_name_display}</p><hr>
+            <h3>تقرير Z-Read (اليوم الكامل)</h3>
+            <p style="text-align: right;"><b>التاريخ:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
+            <b>طبع بواسطة:</b> {username}</p><hr>
+            <h3>إجمالي المبيعات: {day_sales:,.2f} د.ل</h3><hr>
+            <p style="font-size: 12px;">نهاية التقرير</p>
+        </body></html>
+        """
+        st.download_button("🖨️ طباعة تقرير Z-Read", data=z_html.encode('utf-8'), file_name=f"Z_Read_{today_date}.html", mime="text/html", use_container_width=True)
 
     if "last_invoice" in st.session_state and st.session_state["last_invoice"]:
         inv = st.session_state["last_invoice"]
@@ -314,7 +314,7 @@ def show_page():
                     c_col2.write(f"كمية: {cart_item['qty']}")
                     c_col3.write(f"سعر: {cart_item['price']} د.ل")
                     c_col4.write(f"إجمالي: {cart_item['total']} د.ل")
-                    if c_col5.button("🗑️", key=f"del_cart_{index}", help="حذف هذا الصنف فقط"):
+                    if c_col5.button("🗑️", key=f"del_cart_{index}"):
                         st.session_state["cart"].pop(index)
                         st.rerun()
                 st.markdown("---")
@@ -336,28 +336,34 @@ def show_page():
                     st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
 
+        # 🌟 قسم المفضلة وإرجاع عرض الصور بشكل سليم باستخدام حاويات Streamlit الصحيحة
         with col_fav:
             st.markdown('<h3 class="rtl-container">⭐ المفضلة</h3>', unsafe_allow_html=True)
             fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 12", (b_id,)).fetchall()
             
-            # 🌟 إزالة الكود الخاص بالصور والمربعات الزائدة والاكتفاء بالأزرار المباشرة لمنع استهلاك المساحة
-            st.markdown("<div style='background-color:#f1f5f9; padding:10px; border-radius:8px; height:360px; overflow-y:auto; border:1px solid #cbd5e1; direction: rtl;'>", unsafe_allow_html=True)
             if fav_items:
-                for item in fav_items:
-                    # زر نظيف فقط بدون أي مساحات للصور
-                    if st.button(f"✨ {item['item_name']} ({item['sale_price']} د.ل)", key=f"fav_{item['id']}", use_container_width=True):
-                        qty = st.session_state.get("barcode_qty_input", 1.0)
-                        if float(qty) > float(item["quantity"]):
-                            st.error(f"❌ رصيد المخزن غير كافٍ! المتاح: {item['quantity']}")
-                        else:
-                            st.session_state["cart"].append({
-                                "id": item["id"], "code": item["item_code"], "name": item["item_name"], 
-                                "price": float(item["sale_price"]), "qty": float(qty), "total": float(item["sale_price"]) * float(qty)
-                            })
-                            st.rerun()
+                with st.container(height=500, border=True):
+                    for item in fav_items:
+                        with st.container(border=True):
+                            img_path = os.path.join("item_images", f"{item['item_code']}.jpg")
+                            if os.path.exists(img_path):
+                                try:
+                                    with open(img_path, "rb") as f:
+                                        st.image(f.read(), use_container_width=True)
+                                except:
+                                    st.markdown("<h2 style='text-align:center;'>🥜</h2>", unsafe_allow_html=True)
+                            else:
+                                st.markdown("<h2 style='text-align:center;'>🥜</h2>", unsafe_allow_html=True)
+                                
+                            if st.button(f"{item['item_name']} ({item['sale_price']})", key=f"fav_{item['id']}", use_container_width=True):
+                                qty = st.session_state.get("barcode_qty_input", 1.0)
+                                if float(qty) > float(item["quantity"]):
+                                    st.error(f"❌ المخزون لا يكفي! المتاح: {item['quantity']}")
+                                else:
+                                    st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(qty), "total": float(item["sale_price"]) * float(qty)})
+                                    st.rerun()
             else:
                 st.info("لم تحدد أصناف مفضلة.")
-            st.markdown("</div>", unsafe_allow_html=True)
 
     elif st.session_state["pos_active_view"] == "البحث اليدوي":
         st.markdown('<h3 class="rtl-container">⚡ البحث اليدوي عن الأصناف</h3>', unsafe_allow_html=True)
@@ -370,7 +376,7 @@ def show_page():
             
             if st.button("➕ إضافة إلى سلة المبيعات", type="primary"):
                 if float(manual_qty) > float(selected_item_obj["quantity"]):
-                    st.error(f"❌ رصيد المخزن غير كافٍ! المتاح: {selected_item_obj['quantity']}")
+                    st.error(f"❌ المخزون لا يكفي! المتاح: {selected_item_obj['quantity']}")
                 else:
                     st.session_state["cart"].append({"id": selected_item_obj["id"], "name": selected_item_obj["item_name"], "code": selected_item_obj["item_code"], "price": float(selected_item_obj["sale_price"]), "qty": float(manual_qty), "total": float(selected_item_obj["sale_price"]) * float(manual_qty)})
                     st.success(f"تمت إضافة ({selected_item_obj['item_name']}) بنجاح!")
