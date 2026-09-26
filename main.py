@@ -75,7 +75,7 @@ def check_user_permission(menu_name):
         return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف"]
     return False
 
-# --- استيراد كافة الشاشات مباشرة وبأمان تام من المجلد الرئيسي ---
+# --- استيراد الشاشات بشكل آمن ومنع انهيار التطبيق ---
 modules_dict = {}
 screen_files = {
     "dashboard": "dashboard",
@@ -117,7 +117,7 @@ if not st.session_state["logged_in"]:
                     user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
                     conn.close()
                     if user:
-                        if user["is_active"] == 0:
+                        if "is_active" in user.keys() and user["is_active"] == 0:
                             st.error("🚫 هذا الحساب موقوف!")
                             st.stop()
                         st.session_state["logged_in"] = True
@@ -188,7 +188,7 @@ screens_routing = {
     "💰 المصروفات": ("expenses", "شاشة المصروفات"),
     "📥 المشتريات والموردين": ("purchases", "شاشة المشتريات"),
     "🥜 التحميص والخلط": ("roasting_blending", "شاشة التحميص والخلط"),
-    "📊 التقارير والأرباح": ("reports", "شاشة التقارير والأرباح")
+    "📊 التقارير والأرباح": ("reports", "reports")
 }
 
 if choice in screens_routing:
