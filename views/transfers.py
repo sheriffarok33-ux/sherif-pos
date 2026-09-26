@@ -5,6 +5,7 @@ from datetime import datetime
 from database import get_db_connection
 
 def to_excel(df):
+    """دالة تحويل أي جدول إلى ملف Excel جاهز للتنزيل"""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Transfers_Archive')
@@ -15,9 +16,12 @@ def show_page():
     st.info("💡 إنشاء فاتورة تزويد مجمعة تحتوي على عدة أصناف (من 1 إلى 15 صنفاً أو أكثر) وإرسالها للفرع كعهدَة مالية ومخزنية.")
 
     conn = get_db_connection()
+    
+    # تهيئة سلة أصناف التحويل المؤقتة في الجلسة
     if "transfer_cart" not in st.session_state:
         st.session_state["transfer_cart"] = []
 
+    # جلب الفروع والمخازن
     branches = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
     if not branches:
         st.warning("⚠️ يرجى إضافة فروع ومخازن أولاً.")
@@ -25,8 +29,9 @@ def show_page():
         return
 
     branch_dict = {b["branch_name"]: b["id"] for b in branches}
-    warehouse_record = conn.execute("SELECT id, branch_name FROM branches WHERE branch_type = 'مخزن'").fetchone()
     
+    # تحديد المخزن الرئيسي
+    warehouse_record = conn.execute("SELECT id, branch_name FROM branches WHERE branch_type = 'مخزن'").fetchone()
     if not warehouse_record:
         st.warning("⚠️ تنبيه: لا يوجد مخزن رئيسي معرف في نظام الفروع!")
         conn.close()
@@ -35,9 +40,16 @@ def show_page():
     warehouse_id = warehouse_record["id"]
     warehouse_name = warehouse_record["branch_name"]
 
-    transfer_mode = st.radio("🎯 اختر القسم:", ["📦 إنشاء فاتورة تزويد جديدة (سلة الأصناف)", "📋 أرشيف فواتير التزويد المرسلة"], horizontal=True)
+    # التبويبات الأساسية
+    transfer_mode = st.radio(
+        "🎯 اختر القسم:",
+        ["📦 إنشاء فاتورة تزويد جديدة (سلة الأصناف)", "📋 أرشيف فواتير التزويد المرسلة"],
+        horizontal=True
+    )
+
     st.markdown("---")
 
+    # --- القسم الأول: سلة الفاتورة المجمعة وتزويد فرع ---
     if transfer_mode.startswith("📦"):
         col_target_b, col_notes = st.columns(2)
         with col_target_b:
@@ -46,10 +58,17 @@ def show_page():
             transfer_notes = st.text_input("ملاحظات عامة على الفاتورة (اختياري):", value="")
 
         st.markdown("### 🛒 إضافة أصناف إلى فاتورة التزويد المجمعة")
-        items_in_warehouse = conn.execute("SELECT id, item_code, item_name, quantity, sale_price, buy_price FROM items WHERE branch_id = ? AND quantity > 0", (warehouse_id,)).fetchall()
+        
+        # جلب أصناف المخزن الرئيسي المتوفرة فقط
+        items_in_warehouse = conn.execute("""
+            SELECT id, item_code, item_name, quantity, sale_price, buy_price 
+            FROM items 
+            WHERE branch_id = ? AND quantity > 0
+        """, (warehouse_id,)).fetchall()
 
         if items_in_warehouse:
             item_options = {f"{it['item_name']} (المتوفر: {it['quantity']} - السعر: {it['sale_price']} د.ل)": it for it in items_in_warehouse}
+            
             with st.form("add_item_to_transfer_cart", clear_on_submit=True):
                 col_i1, col_i2, col_i3 = st.columns([2, 1, 1])
                 with col_i1:
@@ -73,45 +92,70 @@ def show_page():
                             break
                     if not exists:
                         st.session_state["transfer_cart"].append({
-                            "id": item_obj["id"], "code": item_obj["item_code"], "name": item_obj["item_name"],
-                            "price": float(item_obj["sale_price"]), "buy_price": float(item_obj["buy_price"]), "qty": float(t_qty)
+                            "id": item_obj["id"],
+                            "code": item_obj["item_code"],
+                            "name": item_obj["item_name"],
+                            "price": float(item_obj["sale_price"]),
+                            "buy_price": float(item_obj["buy_price"]),
+                            "qty": float(t_qty)
                         })
                     st.success(f"تمت إضافة ({item_obj['item_name']}) إلى سلة الفاتورة بنجاح!")
                     st.rerun()
         else:
             st.warning(f"⚠️ المخزن الرئيسي ({warehouse_name}) خالي من الأصناف حالياً.")
 
+        # عرض محتويات سلة الفاتورة الحالية
         st.markdown("### 📋 الأصناف المضافة للفاتورة الحالية")
         if st.session_state["transfer_cart"]:
-            cart_df = pd.DataFrame(st.session_state["transfer_cart"])
-            display_cart_df = cart_df[["code", "name", "qty", "price"]].copy()
-            display_cart_df.columns = ["كود الصنف", "اسم الصنف", "الكمية المطلوبة", "سعر البيع"]
-            st.dataframe(display_cart_df, use_container_width=True, hide_index=True)
+            
+            # 🌟 إضافة خاصية حذف الصنف المفرد عبر بناء صفوف تفاعلية بدلاً من الجدول الثابت
+            for index, c_item in enumerate(st.session_state["transfer_cart"]):
+                c_col1, c_col2, c_col3, c_col4, c_col5 = st.columns([1, 2, 1, 1, 0.5])
+                c_col1.write(f"🏷️ {c_item['code']}")
+                c_col2.write(f"{c_item['name']}")
+                c_col3.write(f"الكمية: {c_item['qty']}")
+                c_col4.write(f"السعر: {c_item['price']} د.ل")
+                if c_col5.button("🗑️", key=f"del_trans_{index}", help="حذف هذا الصنف من الفاتورة"):
+                    st.session_state["transfer_cart"].pop(index)
+                    st.rerun()
+            
+            st.markdown("---")
 
             col_act1, col_act2 = st.columns(2)
             with col_act1:
                 if st.button("🚀 ترحيل واعتماد فاتورة التزويد للفرع", type="primary", use_container_width=True):
                     target_b_id = branch_dict[target_branch_name]
                     cur = conn.cursor()
+                    
                     try:
                         items_summary_list = []
                         for c_item in st.session_state["transfer_cart"]:
-                            items_summary_list.append(f"{c_item['name']} (الكمية: {c_item['qty']})")
+                            items_summary_list.append(f"• {c_item['name']} (الكمية: {c_item['qty']})")
                         
-                        # 🌟 التعديل الجذري: دمج الأصناف بأسطر منفصلة ونقاط لتظهر كقائمة أنيقة
-                        items_details_str = "\n".join([f"• {x}" for x in items_summary_list])
+                        items_details_str = "\n".join(items_summary_list)
                         if transfer_notes:
                             items_details_str += f"\nملاحظات: {transfer_notes}"
 
                         for c_item in st.session_state["transfer_cart"]:
                             cur.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
-                            target_item_row = cur.execute("SELECT id FROM items WHERE branch_id = ? AND item_name = ?", (target_b_id, c_item["name"])).fetchone()
+                            
+                            target_item_row = cur.execute("""
+                                SELECT id FROM items WHERE branch_id = ? AND item_name = ?
+                            """, (target_b_id, c_item["name"])).fetchone()
+                            
                             if target_item_row:
                                 cur.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (c_item["qty"], target_item_row["id"]))
                             else:
-                                cur.execute("INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price) VALUES (?, ?, ?, ?, ?, ?)", (target_b_id, c_item["code"], c_item["name"], c_item["qty"], c_item["buy_price"], c_item["price"]))
+                                cur.execute("""
+                                    INSERT INTO items (branch_id, item_code, item_name, quantity, buy_price, sale_price)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                """, (target_b_id, c_item["code"], c_item["name"], c_item["qty"], c_item["buy_price"], c_item["price"]))
 
-                        cur.execute("INSERT INTO transfer_logs (from_branch_id, to_branch_id, transfer_type, items_details, status) VALUES (?, ?, ?, ?, ?)", (warehouse_id, target_b_id, "فاتورة تزويد مجمعة", items_details_str, "مع بانتظار تأكيد الكاشير"))
+                        cur.execute("""
+                            INSERT INTO transfer_logs (from_branch_id, to_branch_id, transfer_type, items_details, status)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (warehouse_id, target_b_id, "فاتورة تزويد مجمعة", items_details_str, "مع بانتظار تأكيد الكاشير"))
+                        
                         conn.commit()
                         st.session_state["transfer_cart"] = [] 
                         st.success(f"✅ تم إصدار فاتورة التزويد المجمعة للفرع ({target_branch_name}) بنجاح وتم ترحيلها!")
@@ -121,20 +165,41 @@ def show_page():
                         st.error(f"❌ حدث خطأ أثناء ترحيل الفاتورة: {ex}")
 
             with col_act2:
-                if st.button("🗑️ تفريغ السلة", use_container_width=True):
+                if st.button("🗑️ تفريغ السلة بالكامل", use_container_width=True):
                     st.session_state["transfer_cart"] = []
                     st.rerun()
         else:
             st.info("🛒 السلة فارغة. قم بإضافة أصناف للفاتورة بالأعلى.")
 
+    # --- القسم الثاني: أرشيف الفواتير المرسلة ---
     elif transfer_mode.startswith("📋"):
         st.subheader("📋 أرشيف فواتير وحركات التزويد السابقة")
-        logs_df = pd.read_sql("SELECT transfer_logs.id AS 'رقم الحركة', b1.branch_name AS 'المرسل (الرئيسي)', b2.branch_name AS 'الفرع المستهدف', transfer_logs.transfer_type AS 'نوع الفاتورة', transfer_logs.items_details AS 'تفاصيل الأصناف والكميات', transfer_logs.status AS 'حالة الاستلام', transfer_logs.transfer_date AS 'التاريخ' FROM transfer_logs LEFT JOIN branches b1 ON transfer_logs.from_branch_id = b1.id LEFT JOIN branches b2 ON transfer_logs.to_branch_id = b2.id ORDER BY transfer_logs.id DESC", conn)
+        logs_df = pd.read_sql("""
+            SELECT 
+                transfer_logs.id AS 'رقم الفاتورة / الحركة',
+                b1.branch_name AS 'المرسل (المخزن الرئيسي)',
+                b2.branch_name AS 'الفرع المستهدف',
+                transfer_logs.transfer_type AS 'نوع الفاتورة',
+                transfer_logs.items_details AS 'تفاصيل الأصناف والكميات',
+                transfer_logs.status AS 'حالة الاستلام',
+                transfer_logs.transfer_date AS 'تاريخ الإصدار'
+            FROM transfer_logs
+            LEFT JOIN branches b1 ON transfer_logs.from_branch_id = b1.id
+            LEFT JOIN branches b2 ON transfer_logs.to_branch_id = b2.id
+            ORDER BY transfer_logs.id DESC
+        """, conn)
 
         if not logs_df.empty:
             st.dataframe(logs_df, use_container_width=True, hide_index=True)
             excel_bytes = to_excel(logs_df)
-            st.download_button(label="📥 تصدير الأرشيف إلى ملف Excel", data=excel_bytes, file_name=f"transfers_{datetime.now().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            st.download_button(
+                label="📥 تصدير الأرشيف إلى ملف Excel",
+                data=excel_bytes,
+                file_name=f"transfers_invoice_archive_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
         else:
             st.info("📌 لا توجد فواتير تزويد مسجلة في الأرشيف.")
+
     conn.close()
