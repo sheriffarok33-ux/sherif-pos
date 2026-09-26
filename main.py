@@ -1,4 +1,6 @@
 import os
+import re
+import io
 import sqlite3
 import pandas as pd
 import streamlit as st
@@ -107,7 +109,7 @@ def check_user_permission(menu_name):
     return False
 # -------------------------------------------------------------
 
-# --- استيراد الشاشات من المجلد الرئيسي مباشرة مع معالجة الأخطاء الآمنة ---
+# --- استيراد الشاشات مباشرة من المجلد الرئيسي مع الحماية ---
 try:
     import dashboard
 except ImportError:
@@ -206,7 +208,7 @@ if not st.session_state["logged_in"]:
                     st.session_state["branch_id"] = user["branch_id"]
                     st.rerun()
                 else: 
-                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
+                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (التلقائي: admin / admin123)")
     st.stop()
 
 # --- القائمة الجانبية (Navigation Menu) ---
@@ -245,7 +247,7 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# --- منطقة توجيه الشاشات (Router) الآمنة المباشرة من المجلد الرئيسي ---
+# --- منطقة توجيه الشاشات (Router) الآمنة المباشرة ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
 if not check_user_permission(choice):
