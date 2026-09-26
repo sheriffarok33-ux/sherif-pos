@@ -1,9 +1,7 @@
 import os
 import streamlit as st
 
-# ==========================================
-# 1. إعداد الصفحة وتكوين الواجهة
-# ==========================================
+# إعداد الصفحة وتكوين الواجهة
 st.set_page_config(
     page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
     page_icon="🥜",
@@ -26,42 +24,36 @@ st.markdown("""
 if not os.path.exists("item_images"):
     os.makedirs("item_images")
 
-# ==========================================
-# 2. استدعاء قاعدة البيانات وتهيئة الجداول بأمان
-# ==========================================
+# تهيئة قاعدة البيانات بأمان
 try:
     from database import get_db_connection, create_tables
     create_tables()
-except ImportError:
-    try:
-        from database import get_db_connection, initialize_database as create_tables
-        create_tables()
-    except Exception as e:
-        st.error(f"⚠️ خطأ في دالة تهيئة قاعدة البيانات: {e}")
-        st.stop()
+except Exception as e:
+    st.error(f"⚠️ خطأ في تهيئة قاعدة البيانات: {e}")
+    st.stop()
 
-# ==========================================
-# 3. استدعاء كافة شاشات المشروع برمجياً
-# ==========================================
-import users
-import pos
-import transfers
-import roasting_blending
-import reports
-import purchases
-import parties
-import items_import
-import inventory
-import favorites
+# استدعاء الشاشات الآمنة مع التعامل مع أي خطأ استيراد بشكل مباشر
+try:
+    import users
+    import pos
+    import transfers
+    import roasting_blending
+    import reports
+    import purchases
+    import parties
+    import items_import
+    import inventory
+    import favorites
+except Exception as e:
+    st.error(f"⚠️ خطأ أثناء استيراد شاشات النظام: {e}")
+    st.stop()
 
 try:
     import branches
 except ImportError:
     branches = None
 
-# ==========================================
-# 4. إدارة الجلسات (Session State)
-# ==========================================
+# إدارة الجلسات
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
 if "username" not in st.session_state: st.session_state["username"] = ""
 if "role" not in st.session_state: st.session_state["role"] = ""
@@ -74,9 +66,7 @@ def set_page(page_name):
     st.session_state["page"] = page_name
     st.rerun()
 
-# ==========================================
-# 5. نظام الصلاحيات الأمني
-# ==========================================
+# نظام الصلاحيات
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     if role in ["Admin", "General_Supervisor"]: 
@@ -89,9 +79,7 @@ def check_user_permission(menu_name):
         return menu_name in ["🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "📥 المشتريات", "👥 جهات التعامل", "🥜 التحميص والخلط", "⭐ لوحة المفضلة (1-20)"]
     return False
 
-# ==========================================
-# 6. بوابة الدخول (Login)
-# ==========================================
+# بوابة الدخول
 if not st.session_state["logged_in"]:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -116,12 +104,10 @@ if not st.session_state["logged_in"]:
                     st.session_state["branch_id"] = user["branch_id"]
                     st.rerun()
                 else: 
-                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
+                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (افتراضي: admin / admin123)")
     st.stop()
 
-# ==========================================
-# 7. القائمة الجانبية (Sidebar)
-# ==========================================
+# القائمة الجانبية
 with st.sidebar:
     st.markdown("<h2 style='text-align: center; color: #38bdf8;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
     st.markdown(f"<p style='text-align: center; font-size:14px;'>المستخدم: <b>{st.session_state['username']}</b> | الصلاحية: <b>{st.session_state['role']}</b></p>", unsafe_allow_html=True)
@@ -155,9 +141,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("<p style='text-align: center; font-size:12px; color: #94a3b8;'>ENG: SHERIF M. FAROK</p>", unsafe_allow_html=True)
 
-# ==========================================
-# 8. موجه الشاشات (Router)
-# ==========================================
+# توجيه الشاشات
 choice = st.session_state.get("page", "🛒 نقطة البيع (POS)")
 
 if not check_user_permission(choice):
