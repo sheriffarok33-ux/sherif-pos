@@ -1,30 +1,25 @@
+```python
 import os
 import sys
 import sqlite3
 import pandas as pd
 import streamlit as st
 import importlib.util
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# ضبط مسار الجذر لضمان رؤية كافة الملفات البرمجية فوراً
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
-# استيراد قاعدة البيانات الأساسية مع الحماية
-try:
-    from database import initialize_database, get_db_connection
-    initialize_database()
-except Exception as e:
-    st.error(f"⚠️ خطأ في تهيئة قاعدة البيانات: {e}")
+from database import initialize_database, get_db_connection
 
-# إعدادات الصفحة الأساسية
+initialize_database()
+
 st.set_page_config(
     page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ستايل CSS الموحد لضمان وضوح الخطوط والأزرار
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -59,7 +54,6 @@ st.markdown("""
 if not os.path.exists("item_images"): 
     os.makedirs("item_images")
 
-# تهيئة متغيرات الجلسة (Session State)
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
 if "username" not in st.session_state: st.session_state["username"] = ""
 if "role" not in st.session_state: st.session_state["role"] = ""
@@ -72,7 +66,6 @@ def set_page(page_name):
     st.session_state["page"] = page_name
     st.rerun()
 
-# دالة فحص الصلاحيات
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     if role in ["Admin", "General_Supervisor"]: return True
@@ -84,20 +77,16 @@ def check_user_permission(menu_name):
         return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف"]
     return False
 
-# --- دالة تحميل ذكية جداً تفحص اسم الملف الأساسي أو البديل (_2) ---
 def load_screen_module(module_name):
     possible_files = [f"{module_name}.py", f"{module_name}_2.py"]
     target_file = None
-    
     for f in possible_files:
         full_path = os.path.join(current_dir, f)
         if os.path.exists(full_path):
             target_file = full_path
             break
-            
     if not target_file:
         return None
-        
     try:
         spec = importlib.util.spec_from_file_location(module_name, target_file)
         mod = importlib.util.module_from_spec(spec)
@@ -105,10 +94,9 @@ def load_screen_module(module_name):
         spec.loader.exec_module(mod)
         return mod
     except Exception as e:
-        st.error(f"⚠️ خطأ في قراءة ملف الشاشة ({module_name}): {e}")
+        st.error(f"⚠️ خطأ في تحميل وحدة الشاشة ({module_name}): {e}")
         return None
 
-# تحميل كافة وحدات الشاشات ديناميكياً وبأمان
 screens_mapping = {
     "dashboard": load_screen_module("dashboard"),
     "pos": load_screen_module("pos"),
@@ -126,7 +114,6 @@ screens_mapping = {
     "reports": load_screen_module("reports")
 }
 
-# --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -158,7 +145,6 @@ if not st.session_state["logged_in"]:
                     st.error(f"⚠️ خطأ في الاتصال بقاعدة البيانات: {db_err}")
     st.stop()
 
-# --- القائمة الجانبية ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
@@ -193,7 +179,6 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# --- التوجيه الآمن للشاشات (Router) ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
 if not check_user_permission(choice):
@@ -222,8 +207,10 @@ if choice in screens_routing:
     if mod_obj is not None and hasattr(mod_obj, "show_page"):
         mod_obj.show_page()
     else:
-        st.error(f"❌ عذراً، حدث خطأ في تحميل وحدة الشاشة `{mod_key}.py`. يرجى التأكد من وجود الملف في مجلد المشروع.")
+        st.error(f"❌ عذراً، لم يتم العثور على ملف الشاشة المطلوبة `{mod_key}.py` أو `_2.py` في مسار المشروع.")
 elif choice == "⚙️ الجرد والتصفير السنوي":
     st.info("⚙️ شاشة الجرد والتصفير السنوي قيد التجهيز.")
 else:
     st.error("❌ الشاشة غير مطلوبة أو غير معرفة.")
+
+```
