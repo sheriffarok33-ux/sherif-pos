@@ -17,7 +17,7 @@ def show_page():
     st.markdown('<h2 style="color: #0f172a; text-align: right;">🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية (Dashboard)</h2>', unsafe_allow_html=True)
     st.info("💡 مرحباً بك في النظام السحابي لإدارة المحامص والمخازن. إليك ملخصاً فورياً لحركة العمل والأداء المالي.")
     
-    # --- الإحصائيات العلوية التي طلبت الحفاظ عليها ---
+    # --- الإحصائيات العلوية بتنسيق فاتح وواضح جداً ---
     conn = get_db_connection()
     try:
         sales = conn.execute("SELECT SUM(total_amount) FROM invoices").fetchone()[0] or 0.0
@@ -29,34 +29,42 @@ def show_page():
     conn.close()
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(f"<div style='background-color:#0f172a; color:white; padding:15px; border-radius:8px; text-align:center;'><b>💰 إجمالي المبيعات العامة</b><br><br>{sales:,.2f} د.ل</div>", unsafe_allow_html=True)
-    c2.markdown(f"<div style='background-color:#0f172a; color:white; padding:15px; border-radius:8px; text-align:center;'><b>🏢 الفروع والمخازن</b><br><br>فرع {branches}</div>", unsafe_allow_html=True)
-    c3.markdown(f"<div style='background-color:#0f172a; color:white; padding:15px; border-radius:8px; text-align:center;'><b>📦 إجمالي المخزون</b><br><br>{inventory:,.2f}</div>", unsafe_allow_html=True)
-    c4.markdown(f"<div style='background-color:#0f172a; color:white; padding:15px; border-radius:8px; text-align:center;'><b>👥 طاقم العمل</b><br><br>موظف {users}</div>", unsafe_allow_html=True)
+    # تصميم المربعات العلوية بخلفية بيضاء نقية وإطار واضح
+    box_style = "background-color:#ffffff; padding:15px; border-radius:8px; text-align:center; border:2px solid #cbd5e1; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"
+    
+    c1.markdown(f"<div style='{box_style}'><b style='color:#0f172a !important; font-size:18px;'>💰 إجمالي المبيعات العامة</b><br><br><span style='font-size:22px; font-weight:900; color:#0284c7 !important;'>{sales:,.2f} د.ل</span></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div style='{box_style}'><b style='color:#0f172a !important; font-size:18px;'>🏢 الفروع والمخازن</b><br><br><span style='font-size:22px; font-weight:900; color:#0284c7 !important;'>فرع {branches}</span></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div style='{box_style}'><b style='color:#0f172a !important; font-size:18px;'>📦 إجمالي المخزون</b><br><br><span style='font-size:22px; font-weight:900; color:#0284c7 !important;'>{inventory:,.2f}</span></div>", unsafe_allow_html=True)
+    c4.markdown(f"<div style='{box_style}'><b style='color:#0f172a !important; font-size:18px;'>👥 طاقم العمل</b><br><br><span style='font-size:22px; font-weight:900; color:#0284c7 !important;'>موظف {users}</span></div>", unsafe_allow_html=True)
 
     st.markdown("---")
     
-    # --- كود CSS السحري لإرجاع المربعات الكبيرة (الكروت) ---
+    # --- كود CSS لإرجاع مربعات الشاشات مع إجبار النص على اللون الداكن ---
     st.markdown("""
         <style>
         div[data-testid="column"] .stButton > button {
             height: 130px; 
             font-size: 22px !important; 
-            font-weight: bold !important;
+            font-weight: 900 !important;
             border-radius: 15px;
-            background: linear-gradient(135deg, #ffffff, #f8fafc);
-            color: #0f172a !important;
-            border: 2px solid #cbd5e1;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            background: linear-gradient(135deg, #ffffff, #f8fafc) !important;
+            border: 2px solid #cbd5e1 !important;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05) !important;
             white-space: normal; 
             transition: all 0.3s ease-in-out;
             width: 100%;
         }
+        /* إجبار النصوص داخل المربعات على اللون الأزرق الداكن لتبقى مقروءة بوضوح */
+        div[data-testid="column"] .stButton > button p, 
+        div[data-testid="column"] .stButton > button div, 
+        div[data-testid="column"] .stButton > button span {
+            color: #0f172a !important; 
+        }
         div[data-testid="column"] .stButton > button:hover {
-            border-color: #0284c7;
-            background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+            border-color: #0284c7 !important;
+            background: linear-gradient(135deg, #f0f9ff, #e0f2fe) !important;
             transform: translateY(-5px); 
-            box-shadow: 0 8px 15px rgba(2, 132, 199, 0.15);
+            box-shadow: 0 8px 15px rgba(2, 132, 199, 0.15) !important;
         }
         </style>
     """, unsafe_allow_html=True)
