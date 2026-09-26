@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ستايل CSS الموحد وتنسيق الأزرار
+# ستايل CSS الموحد لضمان وضوح وتناسق الواجهة وتلوين الأزرار
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -46,6 +46,7 @@ st.markdown("""
         transition: all 0.3s ease; margin-bottom: 8px; font-size: 17px !important; height: auto;
     }
     [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); }
+    div[data-testid="InputInstructions"] { display: none !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -77,18 +78,17 @@ def check_user_permission(menu_name):
         return menu_name in ["🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "📥 المشتريات", "👥 جهات التعامل", "🥜 التحميص والخلط"]
     return False
 
-# --- استيراد الشاشات الأساسية مباشرة ---
+# --- استيراد الشاشات الموجودة فعلياً في المشروع ---
 import pos
-import branches
 import users
-import items_import
-import parties
-import purchases
-import transfers
-import favorites
 import inventory
-import roasting_blending
+import purchases
+import parties
 import reports
+import transfers
+import roasting_blending
+import items_import
+import favorites
 
 # --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
@@ -124,7 +124,6 @@ st.sidebar.markdown("---")
 
 DEFAULT_MENUS = [
     "🛒 نقطة البيع (POS)",
-    "🏢 إدارة الفروع",
     "👥 إدارة المستخدمين",
     "⭐ لوحة المفضلة (1-20)",
     "📦 إدارة المخزن والفروع",
@@ -159,23 +158,23 @@ if not check_user_permission(choice):
 
 if choice == "🛒 نقطة البيع (POS)":
     pos.show_page()
-elif choice == "🏢 إدارة الفروع":
-    branches.show_page()
 elif choice == "👥 إدارة المستخدمين":
     users.show_page()
-elif choice == "📁 استيراد Excel":
-    items_import.show_page()
-elif choice == "👥 جهات التعامل":
-    parties.show_page()
-elif choice == "📥 المشتريات":
-    purchases.show_page()
-elif choice == "🔄 تزويد الفروع والأرشيف":
-    transfers.show_page()
-elif choice == "⭐ لوحة المفضلة (1-20)":
-    favorites.show_page()
 elif choice == "📦 إدارة المخزن والفروع":
     inventory.show_page()
-elif choice == "🥜 التحميص والخلط":
-    roasting_blending.show_page()
+elif choice == "📥 المشتريات":
+    purchases.show_page()
+elif choice == "👥 جهات التعامل":
+    parties.show_page()
 elif choice == "📊 التقارير والأرباح":
     reports.show_page()
+elif choice == "🔄 تزويد الفروع والأرشيف":
+    transfers.show_page()
+elif choice == "🥜 التحميص والخلط":
+    roasting_blending.show_page()
+elif choice == "📁 استيراد Excel":
+    items_import.show_page()
+elif choice == "⭐ لوحة المفضلة (1-20)":
+    favorites.show_page()
+else:
+    st.info("يرجى اختيار شاشة صحيحة من القائمة الجانبية.")
