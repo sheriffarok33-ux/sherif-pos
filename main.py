@@ -2,7 +2,7 @@ import os
 import streamlit as st
 
 # ==========================================
-# 1. إعداد الصفحة وتكوين الواجهة (يجب أن يكون أول أمر)
+# 1. إعداد الصفحة وتكوين الواجهة
 # ==========================================
 st.set_page_config(
     page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
@@ -10,6 +10,20 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
+    * { font-family: 'Tajawal', sans-serif !important; direction: rtl !important; text-align: right !important; }
+    div.stButton > button { border-radius: 8px; font-weight: 900 !important; height: 50px; background: linear-gradient(135deg, #0284c7, #0369a1); color: #ffffff !important; border: none; }
+    div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); }
+    [data-testid="stSidebar"] { background-color: #0f172a; }
+    [data-testid="stSidebar"] * { color: #ffffff !important; }
+    </style>
+""", unsafe_allow_html=True)
+
+if not os.path.exists("item_images"):
+    os.makedirs("item_images")
 
 # ==========================================
 # 2. استدعاء قاعدة البيانات وتهيئة الجداول (الدالة الصحيحة create_tables)
@@ -38,24 +52,7 @@ except ImportError:
     branches = None
 
 # ==========================================
-# 4. التنسيق العام (CSS) للواجهة
-# ==========================================
-st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
-    * { font-family: 'Tajawal', sans-serif !important; direction: rtl !important; text-align: right !important; }
-    div.stButton > button { border-radius: 8px; font-weight: 900 !important; height: 50px; background: linear-gradient(135deg, #0284c7, #0369a1); color: #ffffff !important; border: none; }
-    div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); }
-    [data-testid="stSidebar"] { background-color: #0f172a; }
-    [data-testid="stSidebar"] * { color: #ffffff !important; }
-    </style>
-""", unsafe_allow_html=True)
-
-if not os.path.exists("item_images"):
-    os.makedirs("item_images")
-
-# ==========================================
-# 5. إدارة الجلسات (Session State)
+# 4. إدارة الجلسات (Session State)
 # ==========================================
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
 if "username" not in st.session_state: st.session_state["username"] = ""
@@ -69,7 +66,7 @@ def set_page(page_name):
     st.rerun()
 
 # ==========================================
-# 6. نظام الصلاحيات الأمني
+# 5. نظام الصلاحيات الأمني
 # ==========================================
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
@@ -84,7 +81,7 @@ def check_user_permission(menu_name):
     return False
 
 # ==========================================
-# 7. بوابة الدخول (Login)
+# 6. بوابة الدخول (Login)
 # ==========================================
 if not st.session_state["logged_in"]:
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -114,7 +111,7 @@ if not st.session_state["logged_in"]:
     st.stop()
 
 # ==========================================
-# 8. القائمة الجانبية (Sidebar)
+# 7. القائمة الجانبية (Sidebar)
 # ==========================================
 with st.sidebar:
     st.markdown("<h2 style='text-align: center; color: #38bdf8;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
@@ -150,7 +147,7 @@ with st.sidebar:
     st.markdown("<p style='text-align: center; font-size:12px; color: #94a3b8;'>ENG: SHERIF M. FAROK</p>", unsafe_allow_html=True)
 
 # ==========================================
-# 9. موجه الشاشات (Router)
+# 8. موجه الشاشات (Router)
 # ==========================================
 choice = st.session_state.get("page", "🛒 نقطة البيع (POS)")
 
