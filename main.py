@@ -72,9 +72,7 @@ def set_page(page_name):
     st.session_state["page"] = page_name
     st.rerun()
 
-# -------------------------------------------------------------
 # 🛡️ دالة فحص الصلاحيات المحمية بدقة عالية
-# -------------------------------------------------------------
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     
@@ -106,76 +104,48 @@ def check_user_permission(menu_name):
 
     return False
 
-# --- استيراد الشاشات من المجلد الرئيسي مباشرة ---
-try:
-    import dashboard
-except ImportError:
-    dashboard = None
+# --- استيراد الشاشات مع معالجة الأخطاء لضمان عدم توقف التطبيق ---
+try: import dashboard
+except ImportError: dashboard = None
 
-try:
-    import pos
-except ImportError:
-    pos = None
+try: import pos
+except ImportError: pos = None
 
-try:
-    import branches
-except ImportError:
-    branches = None
+try: import branches
+except ImportError: branches = None
 
-try:
-    import users
-except ImportError:
-    users = None
+try: import users
+except ImportError: users = None
 
-try:
-    import adjustments
-except ImportError:
-    adjustments = None
+try: import adjustments
+except ImportError: adjustments = None
 
-try:
-    import items_import
-except ImportError:
-    items_import = None
+try: import items_import
+except ImportError: items_import = None
 
-try:
-    import expenses
-except ImportError:
-    expenses = None
+try: import expenses
+except ImportError: expenses = None
 
-try:
-    import parties
-except ImportError:
-    parties = None
+try: import parties
+except ImportError: parties = None
 
-try:
-    import purchases
-except ImportError:
-    purchases = None
+try: import purchases
+except ImportError: purchases = None
 
-try:
-    import transfers
-except ImportError:
-    transfers = None
+try: import transfers
+except ImportError: transfers = None
 
-try:
-    import favorites
-except ImportError:
-    favorites = None
+try: import favorites
+except ImportError: favorites = None
 
-try:
-    import inventory
-except ImportError:
-    inventory = None
+try: import inventory
+except ImportError: inventory = None
 
-try:
-    import roasting_blending
-except ImportError:
-    roasting_blending = None
+try: import roasting_blending
+except ImportError: roasting_blending = None
 
-try:
-    import reports
-except ImportError:
-    reports = None
+try: import reports
+except ImportError: reports = None
 
 
 # --- بوابة الدخول ---
@@ -252,11 +222,11 @@ if not check_user_permission(choice):
     st.stop()
 
 if choice == "🏠 الرئيسية واللوحة":
-    if dashboard:
+    if dashboard and hasattr(dashboard, "show_page"):
         dashboard.show_page()
     else:
         st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
-        st.info("مرحباً بك في النظام السحابي. (ملف dashboard.py غير متوفر أو غير متاح في المسار الحالي).")
+        st.info("مرحباً بك في النظام السحابي. يجدر التحقق من وجود دالة show_page داخل ملف dashboard.py")
 
 elif choice == "🛒 نقطة البيع (POS)":
     if pos: pos.show_page()
