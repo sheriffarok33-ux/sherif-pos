@@ -26,10 +26,17 @@ if not os.path.exists("item_images"):
     os.makedirs("item_images")
 
 # ==========================================
-# 2. استدعاء قاعدة البيانات وتهيئة الجداول
+# 2. استدعاء قاعدة البيانات وتجنب أخطاء الاستيراد
 # ==========================================
-from database import create_tables, get_db_connection
-create_tables()
+try:
+    from database import create_tables, get_db_connection
+    create_tables()
+except ImportError:
+    try:
+        from database import initialize_database as create_tables, get_db_connection
+        create_tables()
+    except Exception as e:
+        st.error(f"خطأ في الاتصال بقاعدة البيانات: {e}")
 
 # ==========================================
 # 3. استدعاء كافة شاشات المشروع الموجودة
@@ -45,11 +52,15 @@ import items_import
 import inventory
 import favorites
 
-# محاولة استدعاء ملف الفروع إن وجد
 try:
     import branches
 except ImportError:
     branches = None
+
+try:
+    import dashboard
+except ImportError:
+    dashboard = None
 
 # ==========================================
 # 4. إدارة الجلسات (Session State)
@@ -120,6 +131,7 @@ with st.sidebar:
     st.markdown("---")
 
     menus_map = {
+        "🏠 الرئيسية واللوحة": dashboard,
         "🛒 نقطة البيع (POS)": pos,
         "🏢 إدارة الفروع": branches,
         "👥 إدارة المستخدمين": users,
@@ -156,7 +168,9 @@ if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
-if choice == "🛒 نقطة البيع (POS)":
+if choice == "🏠 الرئيسية واللوحة" and dashboard:
+    dashboard.show_page()
+elif choice == "🛒 نقطة البيع (POS)":
     pos.show_page()
 elif choice == "🏢 إدارة الفروع" and branches:
     branches.show_page()
@@ -179,4 +193,4 @@ elif choice == "🥜 التحميص والخلط":
 elif choice == "📊 التقارير والأرباح":
     reports.show_page()
 else:
-    st.info("يرجى اختيار شاشة صحيحة من القائمة الجانبية.")
+    pos.show_page()
