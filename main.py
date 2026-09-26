@@ -6,7 +6,7 @@ import streamlit as st
 import importlib.util
 from datetime import datetime, timedelta
 
-# ضبط مسار الجذر وضمان رؤية الملفات
+# ضبط مسار الجذر لضمان رؤية كافة الملفات البرمجية فوراً
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
@@ -84,9 +84,8 @@ def check_user_permission(menu_name):
         return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "🔄 تزويد الفروع والأرشيف"]
     return False
 
-# --- دالة تحميل الشاشات بمرونة تامة (تمنع انهيار التطبيق كلياً) ---
+# --- دالة التحميل المرن والآمن للشاشات ---
 def load_screen_module(module_name):
-    # محاولة البحث عن الملف بالاسم العادي أو بلاحقة _2
     possible_files = [f"{module_name}.py", f"{module_name}_2.py"]
     target_file = None
     
@@ -106,10 +105,10 @@ def load_screen_module(module_name):
         spec.loader.exec_module(mod)
         return mod
     except Exception as e:
-        st.error(f"⚠️ خطأ أثناء تحميل شاشة ({module_name}): {e}")
+        st.error(f"⚠️ خطأ في تحميل شاشة ({module_name}): {e}")
         return None
 
-# تحميل كافة وحدات الشاشات
+# تحميل كافة وحدات الشاشات بأمان
 screens_mapping = {
     "dashboard": load_screen_module("dashboard"),
     "pos": load_screen_module("pos"),
@@ -201,7 +200,6 @@ if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
-# ربط القوائم بالوحدات المحملة بأمان
 screens_routing = {
     "🏠 الرئيسية واللوحة": ("dashboard", "لوحة التحكم الرئيسية"),
     "🛒 نقطة البيع (POS)": ("pos", "شاشة نقطة البيع"),
