@@ -26,20 +26,17 @@ if not os.path.exists("item_images"):
     os.makedirs("item_images")
 
 # ==========================================
-# 2. استدعاء قاعدة البيانات وتجنب أخطاء الاستيراد
+# 2. استدعاء قاعدة البيانات بالدالة الصحيحة create_tables
 # ==========================================
 try:
     from database import create_tables, get_db_connection
     create_tables()
-except ImportError:
-    try:
-        from database import initialize_database as create_tables, get_db_connection
-        create_tables()
-    except Exception as e:
-        st.error(f"خطأ في الاتصال بقاعدة البيانات: {e}")
+except Exception as e:
+    st.error(f"⚠️ خطأ في الاتصال بقاعدة البيانات: {e}")
+    st.stop()
 
 # ==========================================
-# 3. استدعاء كافة شاشات المشروع الموجودة
+# 3. استدعاء كافة شاشات المشروع
 # ==========================================
 import users
 import pos
@@ -131,7 +128,6 @@ with st.sidebar:
     st.markdown("---")
 
     menus_map = {
-        "🏠 الرئيسية واللوحة": dashboard,
         "🛒 نقطة البيع (POS)": pos,
         "🏢 إدارة الفروع": branches,
         "👥 إدارة المستخدمين": users,
@@ -168,9 +164,7 @@ if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
     st.stop()
 
-if choice == "🏠 الرئيسية واللوحة" and dashboard:
-    dashboard.show_page()
-elif choice == "🛒 نقطة البيع (POS)":
+if choice == "🛒 نقطة البيع (POS)":
     pos.show_page()
 elif choice == "🏢 إدارة الفروع" and branches:
     branches.show_page()
