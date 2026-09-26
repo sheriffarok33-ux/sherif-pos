@@ -1,10 +1,5 @@
 import os
-import re
-import io
-import sqlite3
-import pandas as pd
 import streamlit as st
-from datetime import datetime, timedelta
 from database import initialize_database, get_db_connection
 
 # تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
@@ -17,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS مع ضبط لون الحروف داخل الأزرار الزرقاء ليصبح أبيضاً
+# ستايل CSS الموحد لضمان وضوح وتناسق الواجهة
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -51,14 +46,14 @@ st.markdown("""
         transition: all 0.3s ease; margin-bottom: 8px; font-size: 17px !important; height: auto;
     }
     [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); }
+    div[data-testid="InputInstructions"] { display: none !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# إنشاء مجلد الصور إذا لم يكن موجوداً
 if not os.path.exists("item_images"): 
     os.makedirs("item_images")
 
-# تهيئة متغيرات الجلسة (Session State)
+# تهيئة متغيرات الجلسة
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
 if "username" not in st.session_state: st.session_state["username"] = ""
 if "role" not in st.session_state: st.session_state["role"] = ""
@@ -66,52 +61,24 @@ if "user_id" not in st.session_state: st.session_state["user_id"] = None
 if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
 if "cart" not in st.session_state: st.session_state["cart"] = []
 if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
-if "success_alert_msg" not in st.session_state: st.session_state["success_alert_msg"] = ""
 
 def set_page(page_name): 
     st.session_state["page"] = page_name
     st.rerun()
 
-# -------------------------------------------------------------
-# 🛡️ دالة فحص الصلاحيات المحمية بدقة عالية
-# -------------------------------------------------------------
+# نظام الصلاحيات الآمن
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
-    
-    if role in ["Admin", "General_Supervisor"]: 
-        return True
-        
+    if role in ["Admin", "General_Supervisor"]: return True
     if role == "Cashier":
-        allowed_for_cashier = [
-            "🏠 الرئيسية واللوحة", 
-            "🛒 نقطة البيع (POS)", 
-            "⭐ لوحة المفضلة (1-20)"
-        ]
-        return menu_name in allowed_for_cashier
-
+        return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)"]
     if role == "Viewer":
-        allowed_for_viewer = [
-            "🏠 الرئيسية واللوحة",
-            "📊 التقارير والأرباح"
-        ]
-        return menu_name in allowed_for_viewer
-        
+        return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
     if role == "Branch_Supervisor":
-         allowed_for_bs = [
-            "🏠 الرئيسية واللوحة",
-            "🛒 نقطة البيع (POS)",
-            "📦 إدارة المخزن والفروع"
-         ]
-         return menu_name in allowed_for_bs
-
+        return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع"]
     return False
 
-# --- استيراد الشاشات من المجلد الرئيسي مباشرة ---
-try:
-    import dashboard
-except ImportError:
-    dashboard = None
-
+# --- استيراد كافة الشاشات من المجلد الرئيسي مباشرة ---
 try:
     import pos
 except ImportError:
@@ -128,19 +95,9 @@ except ImportError:
     users = None
 
 try:
-    import adjustments
-except ImportError:
-    adjustments = None
-
-try:
     import items_import
 except ImportError:
     items_import = None
-
-try:
-    import expenses
-except ImportError:
-    expenses = None
 
 try:
     import parties
@@ -205,7 +162,7 @@ if not st.session_state["logged_in"]:
                     st.session_state["branch_id"] = user["branch_id"]
                     st.rerun()
                 else: 
-                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (التلقائي: admin / admin123)")
+                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (الافتراضي: admin / admin123)")
     st.stop()
 
 # --- القائمة الجانبية (Navigation Menu) ---
@@ -220,13 +177,10 @@ DEFAULT_MENUS = [
     "👥 إدارة المستخدمين",
     "⭐ لوحة المفضلة (1-20)",
     "📦 إدارة المخزن والفروع",
-    "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
     "🔄 تزويد الفروع والأرشيف",
     "📁 استيراد Excel",
-    "💰 المصروفات",
     "👥 جهات التعامل",
     "📥 المشتريات",
-    "⚙️ الجرد والتصفير السنوي",
     "🥜 التحميص والخلط",
     "📊 التقارير والأرباح"
 ]
@@ -244,7 +198,7 @@ if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.text("ENG: SHERIF M. FAROK")
 
-# --- منطقة توجيه الشاشات (Router) الآمنة ---
+# --- موجه الشاشات (Router) الرئيسي ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
 if not check_user_permission(choice):
@@ -252,89 +206,49 @@ if not check_user_permission(choice):
     st.stop()
 
 if choice == "🏠 الرئيسية واللوحة":
-    if dashboard:
-        dashboard.show_page()
-    else:
-        st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
-        st.info("مرحباً بك في النظام السحابي.")
+    st.title("🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية")
+    st.info("مرحباً بك في النظام السحابي لإدارة المحامص والمخازن. اختر الشاشة المطلوبة من القائمة الجانبية.")
 
 elif choice == "🛒 نقطة البيع (POS)":
-    if pos:
-        pos.show_page()
-    else:
-        st.error("⚠️ شاشة نقطة البيع غير متوفرة.")
+    if pos: pos.show_page()
+    else: st.error("⚠️ شاشة نقطة البيع غير متوفرة.")
 
 elif choice == "🏢 إدارة الفروع":
-    if branches:
-        branches.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
+    if branches: branches.show_page()
+    else: st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
 
 elif choice == "👥 إدارة المستخدمين":
-    if users:
-        users.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
-
-elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
-    if adjustments:
-        adjustments.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود.")
+    if users: users.show_page()
+    else: st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
 
 elif choice == "📁 استيراد Excel":
-    if items_import:
-        items_import.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
-
-elif choice == "💰 المصروفات":
-    if expenses:
-        expenses.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
+    if items_import: items_import.show_page()
+    else: st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
 
 elif choice == "👥 جهات التعامل":
-    if parties:
-        parties.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
+    if parties: parties.show_page()
+    else: st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
 
 elif choice == "📥 المشتريات":
-    if purchases:
-        purchases.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
+    if purchases: purchases.show_page()
+    else: st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
 
 elif choice == "🔄 تزويد الفروع والأرشيف":
-    if transfers:
-        transfers.show_page()
-    else:
-        st.info("🔄 شاشة تزويد الفروع والأرشيف قيد التجهيز.")
+    if transfers: transfers.show_page()
+    else: st.warning("⚠️ ملف شاشة التزويد غير موجود.")
 
 elif choice == "⭐ لوحة المفضلة (1-20)":
-    if favorites:
-        favorites.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
+    if favorites: favorites.show_page()
+    else: st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
 
 elif choice == "📦 إدارة المخزن والفروع":
-    if inventory:
-        inventory.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
-
-elif choice == "⚙️ الجرد والتصفير السنوي":
-    st.info("⚙️ شاشة الجرد قيد التجهيز.")
+    if inventory: inventory.show_page()
+    else: st.warning("⚠️ ملف شاشة إدارة المخزن غير موجود.")
 
 elif choice == "🥜 التحميص والخلط":
-    if roasting_blending:
-        roasting_blending.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
+    if roasting_blending: roasting_blending.show_page()
+    else: st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
 
 elif choice == "📊 التقارير والأرباح":
-    if reports:
-        reports.show_page()
-    else:
-        st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود.")
+    if reports: reports.show_page()
+    else: st.warning("⚠️ ملف شاشة التقارير غير موجود.")
