@@ -35,6 +35,7 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, branch_phone_str, cash
     selected_account_id = None
     selected_account_type = "customer"
     
+    # دمج الزبائن والموردين في قائمة الدفع الآجل وخصم الحساب
     if pay_method in ["آجل (على الحساب)", "خصم من حساب (مورد / زبون جملة)"]:
         customers = conn.execute("SELECT id, customer_name, balance FROM customers").fetchall()
         suppliers = conn.execute("SELECT id, supplier_name, balance FROM suppliers").fetchall()
@@ -153,7 +154,7 @@ def show_page():
     user_branch_id = st.session_state.get("branch_id")
     current_shift_num = get_current_shift_number()
 
-    # التحقق الآمن من أعمدة جدول الفروع (لتجنب خطأ عدم وجود حقل الهاتف)
+    # التحقق الآمن من وجود عمود الهاتف في الفروع
     branch_columns = [col[1] for col in conn.execute("PRAGMA table_info(branches)").fetchall()]
     has_phone_col = "phone" in branch_columns
 
@@ -200,7 +201,7 @@ def show_page():
                 
             st.markdown('</div>', unsafe_allow_html=True)
             
-            if st.button("✅ اضغط للموافقة وتأكيد استلام البضاعة وبدء العمل", type="primary", use_container_width=True):
+            if st.button("✅ اضغط للموافقة وتأكيد استلاستلام البضاعة وبدء العمل", type="primary", use_container_width=True):
                 cur_pt = conn.cursor()
                 for pt in pending_logs:
                     cur_pt.execute("""
@@ -221,7 +222,7 @@ def show_page():
     daily_inv_num = branch_inv_count + 1
 
     # ==========================================
-    # 🌟 قسم التقارير (X-Read / Z-Read) - مقيد للإدارة فقط
+    # 🌟 تقارير X-Read / Z-Read (مقيدة للإدارة والمشرفين فقط)
     # ==========================================
     if role in ["Admin", "General_Supervisor"]:
         st.markdown("---")
@@ -246,7 +247,7 @@ def show_page():
             """
             st.download_button("🖨️ طباعة تقرير X-Read", data=x_html.encode('utf-8'), file_name=f"X_Read_{today_date}_Shift{current_shift_num}.html", mime="text/html", use_container_width=True)
 
-        # حساب مبيعات اليوم وتراكمي الأيام السابقة لتقرير Z-Read
+        # حساب مبيعات اليوم وتراكمي الأيام السابقة لتقرير Z-Read الشامل
         day_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id=? AND DATE(created_at)=?", (b_id, today_date)).fetchone()
         day_sales = day_sales_row[0] if day_sales_row[0] else 0.0
         
@@ -467,7 +468,7 @@ def show_page():
                     items_html_reprint = "".join([f"<tr><td>{i['name']}</td><td>{i['qty']}</td><td>{i['price']}</td><td>{i['total']}</td></tr>" for i in saved_items])
                     html_reprint_content = f"""
                     <html dir="rtl"><head><meta charset="utf-8"></head>
-                    <body style="font-family: Arial; test-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
+                    <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
                         <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {b_info['branch_name'] if b_info else 'غير محدد'} | هاتف: {b_phone_rep}<br><small>(نسخة مسترجعة)</small></p><hr>
                         <p style="text-align: right;"><b>رقم الفاتورة المرجعية:</b> #{inv_data['id']}<br><b>التاريخ:</b> {inv_data['created_at']}<br>
                         <b>الكاشير:</b> {u_info['username'] if u_info else 'غير محدد'}<br><b>الوردية:</b> رقم {inv_data['shift_status']}<br><b>طريقة الدفع:</b> {inv_data['payment_method']}</p><hr>
