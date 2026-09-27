@@ -15,7 +15,7 @@ def is_allowed(menu_name, role):
 
 def show_page():
     st.markdown('<h2 style="color: #0f172a; text-align: right;">🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية (Dashboard)</h2>', unsafe_allow_html=True)
-    st.info("💡 مرحباً بك في النظام السحابي لإدارة المحامص والمخازن. إليك ملخصاً فورياً لحركة العمل والأداء المالي.")
+    st.info("💡 مرحباً بك في ادارة مجموعة ابو زيد. إليك ملخصاً فورياً لحركة العمل والأداء المالي.")
     
     # --- الإحصائيات العلوية بتنسيق فاتح وواضح جداً ---
     conn = get_db_connection()
