@@ -179,7 +179,7 @@ def show_page():
                     cur_pt.execute("UPDATE transfer_logs SET status = ? WHERE id = ?", (f"مكتملة ومستلمة بواسطة الكاشير: {username}", pt['id']))
                 conn.commit()
                 conn.close()
-                st.success("✅ تم تأكيد استلاستلام البضاعة بنجاح! جاري فتح نقطة البيع...")
+                st.success("✅ تم تأكيد استلام البضاعة بنجاح! جاري فتح نقطة البيع...")
                 st.rerun()
             
             conn.close()
@@ -190,7 +190,7 @@ def show_page():
     daily_inv_num = branch_inv_count + 1
 
     # ==========================================
-    # 🌟 إظهار تقارير X-Read و Z-Read حصرياً للأدمن والمدير والمشرف العام
+    # 🌟 إظهار تقارير X-Read و Z-Read حصرياً للأدمن والمشرف العام
     # ==========================================
     if role in ["Admin", "General_Supervisor"]:
         st.markdown("---")
@@ -277,7 +277,6 @@ def show_page():
     st.markdown("---")
 
     if st.session_state["pos_active_view"] == "الكاشير السريع":
-        # 🌟 حساب إجمالي أصناف ومبلغ السلة لعرضها فوراً في الأعلى للكاشير
         cart_items_count = len(st.session_state.get("cart", []))
         cart_total_val = sum(item["total"] for item in st.session_state.get("cart", []))
 
@@ -289,7 +288,6 @@ def show_page():
         with col_bar:
             st.text_input("🔍 مسح الباركود الفوري (Enter):", key="barcode_scan_input", on_change=process_barcode_scan)
         with col_info:
-            # 🌟 شريط معلومات الكاشير المحدث ليضم عدد الأصناف وإجمالي المبلغ الفوري في الأعلى
             st.markdown(f"""
                 <div style="font-size: 13px; text-align: right; line-height: 1.4; direction: rtl;">
                     <b>رقم فاتورة اليوم:</b> <span style="color:red; font-size: 15px;">#{daily_inv_num}</span> | <b>الوردية:</b> <span style="color:blue;">رقم {current_shift_num}</span><br>
@@ -340,7 +338,6 @@ def show_page():
             st.markdown('<h3 class="rtl-container">⭐ المفضلة</h3>', unsafe_allow_html=True)
             fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 12", (b_id,)).fetchall()
             
-            # 🌟 معالجة الفراغ تحت لوحة المفضلة عبر حاوية مرتبة بحدود واضحة وتمرير مرن
             st.markdown("<div style='background-color:#f1f5f9; padding:6px; border-radius:8px; height:420px; overflow-y:auto; border:1px solid #cbd5e1; direction: rtl;'>", unsafe_allow_html=True)
             if fav_items:
                 for item in fav_items:
