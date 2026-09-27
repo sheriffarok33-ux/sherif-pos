@@ -65,8 +65,6 @@ def show_page():
                         st.image(image_bytes, use_container_width=True)
                     except Exception as e:
                         st.error("خطأ في قراءة الصورة.")
-                else:
-                    st.info("ℹ️ لا توجد صورة مرفوعة لهذا الصنف (سيظهر رمز 🥜 افتراضياً).")
             else:
                 st.info("لا توجد أصناف متاحة.")
                 
