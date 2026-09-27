@@ -16,13 +16,13 @@ def show_page():
     # جلب الأصناف
     items_df = pd.read_sql("SELECT id, item_code AS 'كود الصنف', item_name AS 'اسم الصنف', favorite_rank AS 'مفضل (1 نعم، 0 لا)' FROM items WHERE branch_id = ?", conn, params=(b_id,))
     
-    col1, col2 = st.columns([2, 1])
+    col1, col2 = st.columns([1.8, 1.2])
     
     with col1:
         st.markdown("### 📋 تحديد الأصناف المفضلة")
         if not items_df.empty:
-            edited_df = st.data_editor(items_df, hide_index=True, use_container_width=True)
-            if st.button("💾 حفظ التعديلات", type="primary"):
+            edited_df = st.data_editor(items_df, hide_index=True, use_container_width=True, height=450)
+            if st.button("💾 حفظ التعديلات", type="primary", use_container_width=True):
                 for idx, row in edited_df.iterrows():
                     conn.execute("UPDATE items SET favorite_rank = ? WHERE id = ?", (row['مفضل (1 نعم، 0 لا)'], row['id']))
                 conn.commit()
@@ -33,34 +33,39 @@ def show_page():
             st.warning("لا توجد أصناف في هذا الفرع.")
 
     with col2:
-        st.markdown("### 🖼️ إضافة صورة لصنف")
-        if not items_df.empty:
-            item_list = {f"[{row['كود الصنف']}] {row['اسم الصنف']}": row['كود الصنف'] for _, row in items_df.iterrows()}
-            selected_item_label = st.selectbox("اختر الصنف لرفع صورته:", list(item_list.keys()))
-            selected_code = item_list[selected_item_label]
-            
-            # 🌟 السر الأول: إعطاء مفتاح ديناميكي لمربع الرفع لكي يفرغ نفسه عند تغيير الصنف
-            uploaded_file = st.file_uploader("اختر صورة (JPG, PNG)", type=["jpg", "jpeg", "png"], key=f"upload_{selected_code}")
-            
-            if uploaded_file is not None:
-                if st.button("📤 رفع وحفظ الصورة", use_container_width=True):
-                    file_path = os.path.join("item_images", f"{selected_code}.jpg")
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    st.success("✅ تم حفظ الصورة بنجاح!")
-                    time.sleep(0.5)
-                    st.rerun() # تحديث الصفحة لضمان عرض الصورة الجديدة فوراً
-            
-            # معاينة الصورة إذا كانت موجودة
-            preview_path = os.path.join("item_images", f"{selected_code}.jpg")
-            if os.path.exists(preview_path):
-                st.markdown("**الصورة الحالية للصنف:**")
-                # 🌟 السر الثاني: قراءة الصورة كبايتات لتخطي الكاش وعرض أحدث نسخة دائماً
-                try:
-                    with open(preview_path, "rb") as f:
-                        image_bytes = f.read()
-                    st.image(image_bytes, use_container_width=True)
-                except Exception as e:
-                    st.error("خطأ في قراءة الصورة.")
+        st.markdown("### 🖼️ إدارة صور الأصناف المفضلة")
+        # 🌟 استخدام حاوية بحدود واضحة لملء الفراغ وتنظيم الشاشة بشكل احترافي
+        with st.container(border=True):
+            if not items_df.empty:
+                item_list = {f"[{row['كود الصنف']}] {row['اسم الصنف']}": row['كود الصنف'] for _, row in items_df.iterrows()}
+                selected_item_label = st.selectbox("اختر الصنف لرفع صورته:", list(item_list.keys()))
+                selected_code = item_list[selected_item_label]
+                
+                uploaded_file = st.file_uploader("اختر صورة (JPG, PNG)", type=["jpg", "jpeg", "png"], key=f"upload_{selected_code}")
+                
+                if uploaded_file is not None:
+                    if st.button("📤 رفع وحفظ الصورة", use_container_width=True):
+                        file_path = os.path.join("item_images", f"{selected_code}.jpg")
+                        with open(file_path, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
+                        st.success("✅ تم حفظ الصورة بنجاح!")
+                        time.sleep(0.5)
+                        st.rerun()
+                
+                # معاينة الصورة داخل نفس الحاوية لملء الفراغ بشكل جذاب
+                preview_path = os.path.join("item_images", f"{selected_code}.jpg")
+                st.markdown("---")
+                st.markdown("**📸 معاينة الصورة الحالية للصنف:**")
+                if os.path.exists(preview_path):
+                    try:
+                        with open(preview_path, "rb") as f:
+                            image_bytes = f.read()
+                        st.image(image_bytes, use_container_width=True)
+                    except Exception as e:
+                        st.error("خطأ في قراءة الصورة.")
+                else:
+                    st.info("ℹ️ لا توجد صورة مرفوعة لهذا الصنف حالياً (سيظهر رمز 🥜 افتراضياً).")
+            else:
+                st.info("لا توجد أصناف متاحة.")
                 
     conn.close()
