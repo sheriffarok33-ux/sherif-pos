@@ -5,8 +5,14 @@ import time
 from database import get_db_connection
 
 def show_page():
+    # 🌟 التحقق من الصلاحيات: منع الكاشير من الدخول نهائياً لشاشة المفضلة
+    role = st.session_state.get("role", "")
+    if role not in ["Admin", "General_Supervisor"]:
+        st.error("🔒 عذراً، هذه الشاشة مخصصة للمدير والمشرف العام فقط ولا تملك صلاحية الوصول إليها.")
+        return
+
     st.header("⭐ لوحة الأصناف المفضلة (لشاشة الكاشير)")
-    st.info("💡 ضع رقم (1) في عمود 'مفضل' ليظهر الصنف في شاشة الكاشير السريعة. يمكنك أيضاً رفع صورة للصنف.")
+    st.info("💡 ضع رقم (1) في عمود 'مفضل' ليظهر الصنف في شاشة الكاشير السريعة. يمكنك أيضاً رفع صورة للصنف وإدارتها من هنا.")
     
     conn = get_db_connection()
     b_dict = {b["branch_name"]: b["id"] for b in conn.execute("SELECT id, branch_name FROM branches").fetchall()}
@@ -16,12 +22,13 @@ def show_page():
     # جلب الأصناف
     items_df = pd.read_sql("SELECT id, item_code AS 'كود الصنف', item_name AS 'اسم الصنف', favorite_rank AS 'مفضل (1 نعم، 0 لا)' FROM items WHERE branch_id = ?", conn, params=(b_id,))
     
+    # تقسيم الشاشة إلى عمودين لملء الفراغات ومنع أي مساحات بيضاء عشوائية
     col1, col2 = st.columns([1.8, 1.2])
     
     with col1:
         st.markdown("### 📋 تحديد الأصناف المفضلة")
         if not items_df.empty:
-            edited_df = st.data_editor(items_df, hide_index=True, use_container_width=True, height=450)
+            edited_df = st.data_editor(items_df, hide_index=True, use_container_width=True, height=500)
             if st.button("💾 حفظ التعديلات", type="primary", use_container_width=True):
                 for idx, row in edited_df.iterrows():
                     conn.execute("UPDATE items SET favorite_rank = ? WHERE id = ?", (row['مفضل (1 نعم، 0 لا)'], row['id']))
@@ -34,7 +41,7 @@ def show_page():
 
     with col2:
         st.markdown("### 🖼️ إدارة صور الأصناف المفضلة")
-        # 🌟 استخدام حاوية بحدود واضحة لملء الفراغ وتنظيم الشاشة بشكل احترافي
+        # 🌟 حاوية منسقة لملء الفراغ بشكل احترافي وجذاب
         with st.container(border=True):
             if not items_df.empty:
                 item_list = {f"[{row['كود الصنف']}] {row['اسم الصنف']}": row['كود الصنف'] for _, row in items_df.iterrows()}
@@ -52,7 +59,7 @@ def show_page():
                         time.sleep(0.5)
                         st.rerun()
                 
-                # معاينة الصورة داخل نفس الحاوية لملء الفراغ بشكل جذاب
+                # معاينة الصورة داخل نفس الحاوية لملء المساحة المتبقية بفعالية
                 preview_path = os.path.join("item_images", f"{selected_code}.jpg")
                 st.markdown("---")
                 st.markdown("**📸 معاينة الصورة الحالية للصنف:**")
@@ -64,7 +71,7 @@ def show_page():
                     except Exception as e:
                         st.error("خطأ في قراءة الصورة.")
                 else:
-                    st.info("ℹ️ لا توجد صورة مرفوعة لهذا الصنف حالياً (سيظهر رمز 🥜 افتراضياً).")
+                    st.info("ℹ️ لا توجد صورة مرفوعة لهذا الصنف حالياً (سيظهر رمز 🥜 افتراضياً في شاشة الكاشير).")
             else:
                 st.info("لا توجد أصناف متاحة.")
                 
