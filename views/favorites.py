@@ -5,7 +5,6 @@ import time
 from database import get_db_connection
 
 def show_page():
-    # 🔒 تقييد الوصول للمدير والمشرف العام فقط
     role = st.session_state.get("role", "")
     if role not in ["Admin", "General_Supervisor"]:
         st.error("🔒 عذراً، هذه الشاشة مخصصة للمدير والمشرف العام فقط.")
@@ -39,7 +38,6 @@ def show_page():
 
     with col2:
         st.markdown("### 🖼️ إدارة صور الأصناف")
-        # 🌟 حاوية منسقة لملء الفراغ ومنع أي مساحات بيضاء عشوائية
         with st.container(border=True):
             if not items_df.empty:
                 item_list = {f"[{row['كود الصنف']}] {row['اسم الصنف']}": row['كود الصنف'] for _, row in items_df.iterrows()}
