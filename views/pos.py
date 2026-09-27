@@ -36,7 +36,6 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, branch_phone_str, cash
     selected_account_type = "customer"
     
     if pay_method in ["آجل (على الحساب)", "خصم من حساب (مورد / زبون جملة)"]:
-        # دمج الزبائن والموردين في قائمة واحدة لتجنب مشكلة عدم ظهور الموردين
         customers = conn.execute("SELECT id, customer_name, balance FROM customers").fetchall()
         suppliers = conn.execute("SELECT id, supplier_name, balance FROM suppliers").fetchall()
         
@@ -154,8 +153,13 @@ def show_page():
     user_branch_id = st.session_state.get("branch_id")
     current_shift_num = get_current_shift_number()
 
+    # التحقق الآمن من أعمدة جدول الفروع (لتجنب خطأ عدم وجود حقل الهاتف)
+    branch_columns = [col[1] for col in conn.execute("PRAGMA table_info(branches)").fetchall()]
+    has_phone_col = "phone" in branch_columns
+
     if role in ["Admin", "General_Supervisor"]:
-        branches_data = conn.execute("SELECT id, branch_name, branch_type, phone FROM branches").fetchall()
+        query_str = "id, branch_name, branch_type" + (", phone" if has_phone_col else "")
+        branches_data = conn.execute(f"SELECT {query_str} FROM branches").fetchall()
         b_dict = {b["branch_name"]: b for b in branches_data}
         default_index = 0
         for idx, b in enumerate(branches_data):
@@ -166,12 +170,13 @@ def show_page():
         selected_branch_obj = b_dict[sel_pos]
         b_id = selected_branch_obj["id"]
         branch_name_display = sel_pos
-        branch_phone_display = selected_branch_obj["phone"] if "phone" in selected_branch_obj and selected_branch_obj["phone"] else "غير متوفر"
+        branch_phone_display = selected_branch_obj["phone"] if has_phone_col and selected_branch_obj["phone"] else "غير متوفر"
     else:
         b_id = user_branch_id
-        b_row = conn.execute("SELECT branch_name, phone FROM branches WHERE id=?", (b_id,)).fetchone()
+        query_str = "branch_name" + (", phone" if has_phone_col else "")
+        b_row = conn.execute(f"SELECT {query_str} FROM branches WHERE id=?", (b_id,)).fetchone()
         branch_name_display = b_row["branch_name"] if b_row else "الفرع الحالي"
-        branch_phone_display = b_row["phone"] if b_row and "phone" in b_row and b_row["phone"] else "غير متوفر"
+        branch_phone_display = b_row["phone"] if has_phone_col and b_row and b_row["phone"] else "غير متوفر"
         
     st.session_state["branch_id"] = b_id
 
@@ -454,14 +459,16 @@ def show_page():
                     try: saved_items = json.loads(inv_data["notes"]) if inv_data["notes"] else []
                     except: saved_items = [{"name": "أصناف الفاتورة", "qty": "-", "price": "-", "total": inv_data["total_amount"]}]
                     
-                    b_info = conn.execute("SELECT branch_name, phone FROM branches WHERE id = ?", (inv_data["branch_id"],)).fetchone()
+                    b_info = conn.execute(f"SELECT branch_name {', phone' if has_phone_col else ''} FROM branches WHERE id = ?", (inv_data["branch_id"],)).fetchone()
                     u_info = conn.execute("SELECT username FROM users WHERE id = ?", (inv_data["user_id"],)).fetchone()
+                    
+                    b_phone_rep = b_info.get('phone', 'غير متوفر') if has_phone_col and b_info else 'غير متوفر'
                     
                     items_html_reprint = "".join([f"<tr><td>{i['name']}</td><td>{i['qty']}</td><td>{i['price']}</td><td>{i['total']}</td></tr>" for i in saved_items])
                     html_reprint_content = f"""
                     <html dir="rtl"><head><meta charset="utf-8"></head>
-                    <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
-                        <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {b_info['branch_name'] if b_info else 'غير محدد'} | هاتف: {b_info.get('phone', 'غير متوفر') if b_info else 'غير متوفر'}<br><small>(نسخة مسترجعة)</small></p><hr>
+                    <body style="font-family: Arial; test-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
+                        <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {b_info['branch_name'] if b_info else 'غير محدد'} | هاتف: {b_phone_rep}<br><small>(نسخة مسترجعة)</small></p><hr>
                         <p style="text-align: right;"><b>رقم الفاتورة المرجعية:</b> #{inv_data['id']}<br><b>التاريخ:</b> {inv_data['created_at']}<br>
                         <b>الكاشير:</b> {u_info['username'] if u_info else 'غير محدد'}<br><b>الوردية:</b> رقم {inv_data['shift_status']}<br><b>طريقة الدفع:</b> {inv_data['payment_method']}</p><hr>
                         <table style="width: 100%; text-align: right; border-collapse: collapse;">
