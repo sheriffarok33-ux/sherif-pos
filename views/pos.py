@@ -190,7 +190,7 @@ def show_page():
     daily_inv_num = branch_inv_count + 1
 
     # ==========================================
-    # 🌟 إظهار تقارير X-Read و Z-Read حصرياً للأدمن والمدير والمشرف العام لكافة الفروع
+    # 🌟 تقارير X-Read و Z-Read (للأدمن والمشرف العام فقط)
     # ==========================================
     if role in ["Admin", "General_Supervisor"]:
         st.markdown("---")
@@ -277,9 +277,6 @@ def show_page():
     st.markdown("---")
 
     if st.session_state["pos_active_view"] == "الكاشير السريع":
-        cart_items_count = len(st.session_state.get("cart", []))
-        cart_total_val = sum(item["total"] for item in st.session_state.get("cart", []))
-
         st.markdown('<div class="top-panel">', unsafe_allow_html=True)
         col_qty, col_bar, col_info = st.columns([1, 2, 2])
         
@@ -289,12 +286,9 @@ def show_page():
             st.text_input("🔍 مسح الباركود الفوري (Enter):", key="barcode_scan_input", on_change=process_barcode_scan)
         with col_info:
             st.markdown(f"""
-                <div style="font-size: 13px; text-align: right; line-height: 1.4; direction: rtl;">
-                    <b>رقم فاتورة اليوم:</b> <span style="color:red; font-size: 15px;">#{daily_inv_num}</span> | <b>الوردية:</b> <span style="color:blue;">رقم {current_shift_num}</span><br>
-                    <b>الفرع:</b> {branch_name_display} | <b>الكاشير:</b> {username}<br>
-                    <span style="background-color: #dbeafe; padding: 2px 6px; border-radius: 4px; color: #1e40af; display: inline-block; margin-top: 3px;">
-                        🛒 الأصناف بالسلة: <b>{cart_items_count}</b> | 💰 إجمالي المبلغ: <b>{cart_total_val:,.2f} د.ل</b>
-                    </span>
+                <div style="font-size: 14px; text-align: right; line-height: 1.5; direction: rtl;">
+                    <b>رقم فاتورة اليوم:</b> <span style="color:red; font-size: 16px;">#{daily_inv_num}</span> | <b>الوردية:</b> <span style="color:blue;">رقم {current_shift_num}</span><br>
+                    <b>الفرع:</b> {branch_name_display} | <b>الكاشير:</b> {username}
                 </div>
             """, unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
@@ -312,12 +306,12 @@ def show_page():
                     c_col2.write(f"كمية: {cart_item['qty']}")
                     c_col3.write(f"سعر: {cart_item['price']} د.ل")
                     c_col4.write(f"إجمالي: {cart_item['total']} د.ل")
-                    if c_col5.button("🗑️", key=f"del_cart_{index}"):
+                    if c_col5.button("🗑️", key=f"del_cart_{index}", help="حذف هذا الصنف فقط"):
                         st.session_state["cart"].pop(index)
                         st.rerun()
                 st.markdown("---")
 
-            g_tot = cart_total_val
+            g_tot = sum(item["total"] for item in st.session_state.get("cart", []))
             st.markdown(f'<div class="totals-panel">الإجمالي: <b>{g_tot:,.2f} د.ل</b> &nbsp;|&nbsp; الصافي المطلوب: <span style="color:#22c55e;">{g_tot:,.2f} د.ل</span></div>', unsafe_allow_html=True)
             
             st.write("")
@@ -338,10 +332,10 @@ def show_page():
             st.markdown('<h3 class="rtl-container">⭐ المفضلة</h3>', unsafe_allow_html=True)
             fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 12", (b_id,)).fetchall()
             
-            st.markdown("<div style='background-color:#f1f5f9; padding:6px; border-radius:8px; height:420px; overflow-y:auto; border:1px solid #cbd5e1; direction: rtl;'>", unsafe_allow_html=True)
+            st.markdown("<div style='background-color:#f1f5f9; padding:6px; border-radius:8px; height:360px; overflow-y:auto; border:1px solid #cbd5e1; direction: rtl;'>", unsafe_allow_html=True)
             if fav_items:
                 for item in fav_items:
-                    st.markdown("<div style='background:white; padding:6px; border-radius:6px; margin-bottom:6px; border:1px solid #e2e8f0; text-align:center;'>", unsafe_allow_html=True)
+                    st.markdown("<div style='background:white; padding:4px; border-radius:6px; margin-bottom:6px; border:1px solid #e2e8f0; text-align:center;'>", unsafe_allow_html=True)
                     img_path = os.path.join("item_images", f"{item['item_code']}.jpg")
                     if os.path.exists(img_path):
                         try:
@@ -351,7 +345,7 @@ def show_page():
                         except:
                             st.markdown("🥜")
                     else:
-                        st.markdown("<div style='font-size:22px;'>🥜</div>", unsafe_allow_html=True)
+                        st.markdown("<div style='font-size:20px;'>🥜</div>", unsafe_allow_html=True)
                         
                     if st.button(f"{item['item_name']} ({item['sale_price']})", key=f"fav_{item['id']}", use_container_width=True):
                         qty = st.session_state.get("barcode_qty_input", 1.0)
