@@ -336,7 +336,7 @@ def show_page():
         col_qty, col_bar, col_info = st.columns([1, 2, 2])
         
         with col_qty:
-            st.number_input("الكمية (كجم/وحدة):", min_value=0.01, step=0.5, key="barcode_qty_input")
+            st.number_input("الكمية (كجم/وحدة):", min_value=0.01, value=1.00, step=0.5, key="barcode_qty_input")
         with col_bar:
             st.text_input("🔍 مسح الباركود الفوري (Enter):", key="barcode_scan_input", on_change=process_barcode_scan)
         with col_info:
@@ -352,10 +352,23 @@ def show_page():
         
         with col_grid:
             st.markdown("### 🧾 محتويات سلة المبيعات الحالية")
-            if not st.session_state["cart"]:
+            
+            # 🌟 بطاقة إحصائية بارزة أعلى السلة لإجمالي الكمية وإجمالي قيمة الفاتورة للرؤية الفورية
+            cart_items_list = st.session_state.get("cart", [])
+            total_cart_qty = sum(item["qty"] for item in cart_items_list)
+            total_cart_val = sum(item["total"] for item in cart_items_list)
+            
+            stat_c1, stat_c2 = st.columns(2)
+            with stat_c1:
+                st.metric(label="📦 إجمالي الكمية بالسلة", value=f"{total_cart_qty:,.2f}")
+            with stat_c2:
+                st.metric(label="💰 إجمالي قيمة الفاتورة", value=f"{total_cart_val:,.2f} د.ل")
+            st.markdown("---")
+
+            if not cart_items_list:
                 st.info("السلة فارغة حالياً.")
             else:
-                for index, cart_item in enumerate(st.session_state["cart"]):
+                for index, cart_item in enumerate(cart_items_list):
                     c_col1, c_col2, c_col3, c_col4, c_col5 = st.columns([2, 1, 1, 1, 0.6])
                     c_col1.write(f"🏷️ {cart_item['name']}")
                     c_col2.write(f"كمية: {cart_item['qty']}")
@@ -366,7 +379,7 @@ def show_page():
                         st.rerun()
                 st.markdown("---")
 
-            g_tot = sum(item["total"] for item in st.session_state.get("cart", []))
+            g_tot = total_cart_val
             st.markdown(f'<div class="totals-panel">الإجمالي: <b>{g_tot:,.2f} د.ل</b> &nbsp;|&nbsp; الصافي المطلوب: <span style="color:#22c55e;">{g_tot:,.2f} د.ل</span></div>', unsafe_allow_html=True)
             
             st.write("")
