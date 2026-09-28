@@ -5,14 +5,12 @@ from datetime import datetime
 from database import get_db_connection
 
 def to_excel(df):
-    """دالة تحويل أي جدول إلى ملف Excel جاهز للتنزيل"""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Transfers_Archive')
     return output.getvalue()
 
 def show_page():
-    # تنسيق لإجبار خلايا الجدول على عرض النصوص المتعددة الأسطر بشكل مفصل
     st.markdown("""
         <style>
         .dataframe-container td, .dataframe-container th {
@@ -24,15 +22,13 @@ def show_page():
     """, unsafe_allow_html=True)
 
     st.header("🔄 نظام تزويد الفروع والأرشيف (فواتير مجمعة)")
-    st.info("💡 إنشاء فاتورة تزويد مجمعة وإرسالها للفرع كعهدَة مع إصدار إيصال استلام آلي.")
+    st.info("💡 إنشاء فاتورة تزويد مجمعة وإرسالها للفرع كعهدَة مع إمكانية حذف أصناف محددة من السلة.")
 
     conn = get_db_connection()
     username = st.session_state.get("username", "غير محدد")
     
     if "transfer_cart" not in st.session_state:
         st.session_state["transfer_cart"] = []
-    if "last_transfer" not in st.session_state:
-        st.session_state["last_transfer"] = None
 
     branches = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
     if not branches:
@@ -117,10 +113,16 @@ def show_page():
 
         st.markdown("### 📋 الأصناف المضافة للفاتورة الحالية")
         if st.session_state["transfer_cart"]:
-            cart_df = pd.DataFrame(st.session_state["transfer_cart"])
-            display_cart_df = cart_df[["code", "name", "qty", "price"]].copy()
-            display_cart_df.columns = ["كود الصنف", "اسم الصنف", "الكمية المطلوبة", "سعر البيع"]
-            st.dataframe(display_cart_df, use_container_width=True, hide_index=True)
+            # 🌟 إضافة ميزة الحذف الفردي للأصناف داخل السلة
+            for index, cart_item in enumerate(st.session_state["transfer_cart"]):
+                c_col1, c_col2, c_col3, c_col4 = st.columns([3, 2, 2, 1])
+                c_col1.write(f"🏷️ {cart_item['name']}")
+                c_col2.write(f"الكمية: {cart_item['qty']}")
+                c_col3.write(f"السعر: {cart_item['price']} د.ل")
+                if c_col4.button("🗑️ حذف", key=f"del_trans_{index}", help="إزالة هذا الصنف من الفاتورة"):
+                    st.session_state["transfer_cart"].pop(index)
+                    st.rerun()
+            st.markdown("---")
 
             col_act1, col_act2 = st.columns(2)
             with col_act1:
@@ -129,7 +131,7 @@ def show_page():
                     cur = conn.cursor()
                     
                     try:
-                        # تنسيق تفاصيل الأصناف بفاصل أسطر لتظهر عمودية في الأرشيف
+                        # 🌟 حفظ الأصناف باستخدام فاصل أسطر لتظهر عمودية
                         items_summary_list = []
                         for c_item in st.session_state["transfer_cart"]:
                             items_summary_list.append(f"▪ {c_item['name']} (الكمية: {c_item['qty']})")
@@ -153,26 +155,13 @@ def show_page():
                                     VALUES (?, ?, ?, ?, ?, ?)
                                 """, (target_b_id, c_item["code"], c_item["name"], c_item["qty"], c_item["buy_price"], c_item["price"]))
 
-                        cursor_res = cur.execute("""
+                        cur.execute("""
                             INSERT INTO transfer_logs (from_branch_id, to_branch_id, transfer_type, items_details, status)
                             VALUES (?, ?, ?, ?, ?)
                         """, (warehouse_id, target_b_id, "فاتورة تزويد مجمعة", items_details_str, "بانتظار تأكيد الكاشير"))
                         
-                        trans_id = cursor_res.lastrowid
                         conn.commit()
-
-                        # حفظ بيانات الفاتورة في الجلسة وعرضها فوراً
-                        st.session_state["last_transfer"] = {
-                            "trans_id": trans_id,
-                            "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "from_branch": warehouse_name,
-                            "to_branch": target_branch_name,
-                            "username": username,
-                            "items": st.session_state["transfer_cart"].copy(),
-                            "notes": transfer_notes
-                        }
-
-                        st.session_state["transfer_cart"] = []
+                        st.session_state["transfer_cart"] = [] 
                         st.success(f"✅ تم إصدار فاتورة التزويد المجمعة للفرع ({target_branch_name}) بنجاح وتم ترحيلها!")
                         st.rerun()
                     except Exception as ex:
@@ -180,50 +169,11 @@ def show_page():
                         st.error(f"❌ حدث خطأ أثناء ترحيل الفاتورة: {ex}")
 
             with col_act2:
-                if st.button("🗑️ تفريغ السلة", use_container_width=True):
+                if st.button("🗑️ تفريغ السلة بالكامل", use_container_width=True):
                     st.session_state["transfer_cart"] = []
                     st.rerun()
         else:
             st.info("🛒 السلة فارغة. قم بإضافة أصناف للفاتورة بالأعلى.")
-
-        # 🌟 عرض فاتورة التزويد بعد الترحيل مباشرة للتحميل أو الطباعة
-        if st.session_state.get("last_transfer"):
-            tr = st.session_state["last_transfer"]
-            items_html = "".join([f"<tr><td>{i['name']}</td><td>{i['qty']}</td></tr>" for i in tr["items"]])
-            notes_html = f"<p style='text-align: right; font-size: 14px;'><b>ملاحظات:</b> {tr['notes']}</p>" if tr['notes'] else ""
-
-            html_file_content = f"""
-            <html dir="rtl">
-            <head><meta charset="utf-8"></head>
-            <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000; background-color: #fdfdfd;">
-                <h2 style="margin-bottom: 5px;">مجموعة أبو زيد التجارية</h2>
-                <p style="margin-top: 0; font-weight: bold; background-color: #e2e8f0; padding: 5px;">فاتورة تزويد فرع (نقل بضاعة)</p><hr>
-                <p style="text-align: right;">
-                <b>رقم حركة التزويد:</b> #{tr['trans_id']}<br>
-                <b>التاريخ:</b> {tr['date_time']}<br>
-                <b>من (المرسل):</b> {tr['from_branch']}<br>
-                <b>إلى (المستلم):</b> {tr['to_branch']}<br>
-                <b>بواسطة:</b> {tr['username']}</p><hr>
-                <table style="width: 100%; text-align: right; border-collapse: collapse;">
-                    <tr style="border-bottom: 1px solid #000; background-color: #f1f5f9;"><th>الصنف</th><th>الكمية المحولة</th></tr>
-                    {items_html}
-                </table><hr>
-                {notes_html}
-                <p style="font-size: 14px; margin-top: 30px; text-align: right;">توقيع المستلم: ........................</p>
-            </body>
-            </html>
-            """
-            st.markdown("<div style='border: 2px solid #0284c7; padding: 15px; border-radius: 10px; background-color: #f0f9ff; margin-top: 20px; direction: rtl;'>", unsafe_allow_html=True)
-            st.components.v1.html(html_file_content, height=450, scrolling=True)
-            
-            c_inv1, c_inv2 = st.columns(2)
-            with c_inv1: 
-                st.download_button("📥 تحميل فاتورة التزويد (HTML)", data=html_file_content.encode('utf-8'), file_name=f"Transfer_Invoice_{tr['trans_id']}.html", mime="text/html", use_container_width=True)
-            with c_inv2: 
-                if st.button("✖️ إخفاء الفاتورة", type="primary", use_container_width=True): 
-                    st.session_state["last_transfer"] = None
-                    st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
 
     # ==========================================
     # القسم الثاني: أرشيف الفواتير وإعادة الطباعة
@@ -265,7 +215,6 @@ def show_page():
                 use_container_width=True
             )
 
-            # 🌟 إضافة خاصية إعادة طباعة الفاتورة من الأرشيف مثل الكاشير
             st.markdown("---")
             st.markdown('<h3 class="rtl-container">🖨️ إعادة طباعة فاتورة تزويد فرع</h3>', unsafe_allow_html=True)
             
@@ -278,23 +227,23 @@ def show_page():
             
             if sel_inv_lbl != "-- اختر الفاتورة --":
                 sel_row = inv_options[sel_inv_lbl]
-                
-                # استخراج الأصناف من نص الفاتورة القديم لترتيبها في جدول HTML
                 items_text = sel_row['تفاصيل الأصناف والكميات']
                 items_html_reprint = ""
                 notes_reprint = ""
                 
-                for line in items_text.split('\n'):
+                delim = '\n' if '\n' in items_text else (' | ' if ' | ' in items_text else ' - ')
+                for line in items_text.split(delim):
                     line = line.strip()
-                    if line.startswith("▪"):
-                        try:
-                            name_part = line[1:line.rfind("(الكمية:")].strip()
-                            qty_part = line[line.rfind("(الكمية:") + 8 : -1].strip()
-                            items_html_reprint += f"<tr><td>{name_part}</td><td>{qty_part}</td></tr>"
-                        except:
-                            items_html_reprint += f"<tr><td colspan='2'>{line}</td></tr>"
-                    elif line.startswith("ملاحظات:"):
+                    if not line: continue
+                    if "ملاحظات:" in line:
                         notes_reprint = line.replace("ملاحظات:", "").strip()
+                    else:
+                        if '(' in line and ')' in line:
+                            name_part = line[:line.rfind('(')].replace('▪', '').replace('-', '').strip()
+                            qty_part = line[line.rfind('(')+1:line.rfind(')')].replace('الكمية:', '').replace('كجم', '').strip()
+                            items_html_reprint += f"<tr><td>{name_part}</td><td>{qty_part}</td></tr>"
+                        else:
+                            items_html_reprint += f"<tr><td colspan='2'>{line.replace('▪', '').replace('-', '').strip()}</td></tr>"
 
                 notes_html_rep = f"<p style='text-align: right; font-size: 14px;'><b>ملاحظات:</b> {notes_reprint}</p>" if notes_reprint else ""
 
