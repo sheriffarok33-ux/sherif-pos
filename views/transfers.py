@@ -12,23 +12,27 @@ def to_excel(df):
     return output.getvalue()
 
 def show_page():
-    # تنسيق لإجبار خلايا الجدول على عرض النصوص المتعددة الأسطر (Wrap Text)
+    # تنسيق لإجبار خلايا الجدول على عرض النصوص المتعددة الأسطر بشكل مفصل
     st.markdown("""
         <style>
         .dataframe-container td, .dataframe-container th {
             white-space: pre-wrap !important;
             word-wrap: break-word !important;
         }
+        .rtl-container { direction: rtl !important; text-align: right !important; }
         </style>
     """, unsafe_allow_html=True)
 
     st.header("🔄 نظام تزويد الفروع والأرشيف (فواتير مجمعة)")
-    st.info("💡 إنشاء فاتورة تزويد مجمعة تحتوي على عدة أصناف وإرسالها للفرع كعهدَة مالية ومخزنية.")
+    st.info("💡 إنشاء فاتورة تزويد مجمعة وإرسالها للفرع كعهدَة مع إصدار إيصال استلام آلي.")
 
     conn = get_db_connection()
+    username = st.session_state.get("username", "غير محدد")
     
     if "transfer_cart" not in st.session_state:
         st.session_state["transfer_cart"] = []
+    if "last_transfer" not in st.session_state:
+        st.session_state["last_transfer"] = None
 
     branches = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
     if not branches:
@@ -49,7 +53,7 @@ def show_page():
 
     transfer_mode = st.radio(
         "🎯 اختر القسم:",
-        ["📦 إنشاء فاتورة تزويد جديدة (سلة الأصناف)", "📋 أرشيف فواتير التزويد المرسلة"],
+        ["📦 إنشاء فاتورة تزويد جديدة (سلة الأصناف)", "📋 أرشيف فواتير التزويد وإعادة الطباعة"],
         horizontal=True
     )
 
@@ -125,7 +129,7 @@ def show_page():
                     cur = conn.cursor()
                     
                     try:
-                        # 🌟 الحفظ في قاعدة البيانات باستخدام الفاصل \n بدلاً من | ليكون العرض عمودياً
+                        # تنسيق تفاصيل الأصناف بفاصل أسطر لتظهر عمودية في الأرشيف
                         items_summary_list = []
                         for c_item in st.session_state["transfer_cart"]:
                             items_summary_list.append(f"▪ {c_item['name']} (الكمية: {c_item['qty']})")
@@ -149,12 +153,25 @@ def show_page():
                                     VALUES (?, ?, ?, ?, ?, ?)
                                 """, (target_b_id, c_item["code"], c_item["name"], c_item["qty"], c_item["buy_price"], c_item["price"]))
 
-                        cur.execute("""
+                        cursor_res = cur.execute("""
                             INSERT INTO transfer_logs (from_branch_id, to_branch_id, transfer_type, items_details, status)
                             VALUES (?, ?, ?, ?, ?)
                         """, (warehouse_id, target_b_id, "فاتورة تزويد مجمعة", items_details_str, "بانتظار تأكيد الكاشير"))
                         
+                        trans_id = cursor_res.lastrowid
                         conn.commit()
+
+                        # حفظ بيانات الفاتورة في الجلسة وعرضها فوراً
+                        st.session_state["last_transfer"] = {
+                            "trans_id": trans_id,
+                            "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "from_branch": warehouse_name,
+                            "to_branch": target_branch_name,
+                            "username": username,
+                            "items": st.session_state["transfer_cart"].copy(),
+                            "notes": transfer_notes
+                        }
+
                         st.session_state["transfer_cart"] = []
                         st.success(f"✅ تم إصدار فاتورة التزويد المجمعة للفرع ({target_branch_name}) بنجاح وتم ترحيلها!")
                         st.rerun()
@@ -169,8 +186,47 @@ def show_page():
         else:
             st.info("🛒 السلة فارغة. قم بإضافة أصناف للفاتورة بالأعلى.")
 
+        # 🌟 عرض فاتورة التزويد بعد الترحيل مباشرة للتحميل أو الطباعة
+        if st.session_state.get("last_transfer"):
+            tr = st.session_state["last_transfer"]
+            items_html = "".join([f"<tr><td>{i['name']}</td><td>{i['qty']}</td></tr>" for i in tr["items"]])
+            notes_html = f"<p style='text-align: right; font-size: 14px;'><b>ملاحظات:</b> {tr['notes']}</p>" if tr['notes'] else ""
+
+            html_file_content = f"""
+            <html dir="rtl">
+            <head><meta charset="utf-8"></head>
+            <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000; background-color: #fdfdfd;">
+                <h2 style="margin-bottom: 5px;">مجموعة أبو زيد التجارية</h2>
+                <p style="margin-top: 0; font-weight: bold; background-color: #e2e8f0; padding: 5px;">فاتورة تزويد فرع (نقل بضاعة)</p><hr>
+                <p style="text-align: right;">
+                <b>رقم حركة التزويد:</b> #{tr['trans_id']}<br>
+                <b>التاريخ:</b> {tr['date_time']}<br>
+                <b>من (المرسل):</b> {tr['from_branch']}<br>
+                <b>إلى (المستلم):</b> {tr['to_branch']}<br>
+                <b>بواسطة:</b> {tr['username']}</p><hr>
+                <table style="width: 100%; text-align: right; border-collapse: collapse;">
+                    <tr style="border-bottom: 1px solid #000; background-color: #f1f5f9;"><th>الصنف</th><th>الكمية المحولة</th></tr>
+                    {items_html}
+                </table><hr>
+                {notes_html}
+                <p style="font-size: 14px; margin-top: 30px; text-align: right;">توقيع المستلم: ........................</p>
+            </body>
+            </html>
+            """
+            st.markdown("<div style='border: 2px solid #0284c7; padding: 15px; border-radius: 10px; background-color: #f0f9ff; margin-top: 20px; direction: rtl;'>", unsafe_allow_html=True)
+            st.components.v1.html(html_file_content, height=450, scrolling=True)
+            
+            c_inv1, c_inv2 = st.columns(2)
+            with c_inv1: 
+                st.download_button("📥 تحميل فاتورة التزويد (HTML)", data=html_file_content.encode('utf-8'), file_name=f"Transfer_Invoice_{tr['trans_id']}.html", mime="text/html", use_container_width=True)
+            with c_inv2: 
+                if st.button("✖️ إخفاء الفاتورة", type="primary", use_container_width=True): 
+                    st.session_state["last_transfer"] = None
+                    st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
+
     # ==========================================
-    # القسم الثاني: أرشيف الفواتير وعرضها بشكل مفصل
+    # القسم الثاني: أرشيف الفواتير وإعادة الطباعة
     # ==========================================
     elif transfer_mode.startswith("📋"):
         st.subheader("📋 أرشيف فواتير وحركات التزويد السابقة")
@@ -190,7 +246,6 @@ def show_page():
 
         if not logs_df.empty:
             st.markdown('<div class="dataframe-container">', unsafe_allow_html=True)
-            # 🌟 استخدام data_editor أو dataframe مع تفعيل خصائص التنسيق للعرض الرأسي
             st.dataframe(
                 logs_df, 
                 use_container_width=True, 
@@ -209,6 +264,69 @@ def show_page():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
+
+            # 🌟 إضافة خاصية إعادة طباعة الفاتورة من الأرشيف مثل الكاشير
+            st.markdown("---")
+            st.markdown('<h3 class="rtl-container">🖨️ إعادة طباعة فاتورة تزويد فرع</h3>', unsafe_allow_html=True)
+            
+            inv_options = {}
+            for idx, row in logs_df.iterrows():
+                lbl = f"فاتورة #{row['رقم الفاتورة']} | إلى: {row['المستهدف']} | التاريخ: {row['تاريخ الإصدار']}"
+                inv_options[lbl] = row
+            
+            sel_inv_lbl = st.selectbox("🔍 اختر فاتورة التزويد لعرضها وإعادة طباعتها:", ["-- اختر الفاتورة --"] + list(inv_options.keys()))
+            
+            if sel_inv_lbl != "-- اختر الفاتورة --":
+                sel_row = inv_options[sel_inv_lbl]
+                
+                # استخراج الأصناف من نص الفاتورة القديم لترتيبها في جدول HTML
+                items_text = sel_row['تفاصيل الأصناف والكميات']
+                items_html_reprint = ""
+                notes_reprint = ""
+                
+                for line in items_text.split('\n'):
+                    line = line.strip()
+                    if line.startswith("▪"):
+                        try:
+                            name_part = line[1:line.rfind("(الكمية:")].strip()
+                            qty_part = line[line.rfind("(الكمية:") + 8 : -1].strip()
+                            items_html_reprint += f"<tr><td>{name_part}</td><td>{qty_part}</td></tr>"
+                        except:
+                            items_html_reprint += f"<tr><td colspan='2'>{line}</td></tr>"
+                    elif line.startswith("ملاحظات:"):
+                        notes_reprint = line.replace("ملاحظات:", "").strip()
+
+                notes_html_rep = f"<p style='text-align: right; font-size: 14px;'><b>ملاحظات:</b> {notes_reprint}</p>" if notes_reprint else ""
+
+                html_reprint_content = f"""
+                <html dir="rtl"><head><meta charset="utf-8"></head>
+                <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
+                    <h2 style="margin-bottom: 5px;">مجموعة أبو زيد التجارية</h2>
+                    <p style="margin-top: 0; font-weight: bold; background-color: #e2e8f0; padding: 5px;">فاتورة تزويد فرع (نسخة مسترجعة)</p><hr>
+                    <p style="text-align: right;">
+                    <b>رقم حركة التزويد:</b> #{sel_row['رقم الفاتورة']}<br>
+                    <b>التاريخ:</b> {sel_row['تاريخ الإصدار']}<br>
+                    <b>من (المرسل):</b> {sel_row['المرسل']}<br>
+                    <b>إلى (المستلم):</b> {sel_row['المستهدف']}<br>
+                    <b>حالة الفاتورة:</b> {sel_row['الحالة']}</p><hr>
+                    <table style="width: 100%; text-align: right; border-collapse: collapse;">
+                        <tr style="border-bottom: 1px solid #000; background-color: #f1f5f9;"><th>الصنف</th><th>الكمية المحولة</th></tr>
+                        {items_html_reprint}
+                    </table><hr>
+                    {notes_html_rep}
+                    <p style="font-size: 14px; margin-top: 30px; text-align: right;">توقيع المستلم: ........................</p>
+                </body></html>
+                """
+                
+                st.components.v1.html(html_reprint_content, height=450, scrolling=True)
+                st.download_button(
+                    label="📥 تحميل فاتورة التزويد المسترجعة (HTML)", 
+                    data=html_reprint_content.encode('utf-8'), 
+                    file_name=f"Transfer_Invoice_Reprint_{sel_row['رقم الفاتورة']}.html", 
+                    mime="text/html", 
+                    use_container_width=True
+                )
+
         else:
             st.info("📌 لا توجد فواتير تزويد مسجلة في الأرشيف.")
 
