@@ -32,10 +32,7 @@ st.markdown("""
     h2 { font-size: 24px !important; color: #1e293b !important; }
     h3 { font-size: 20px !important; color: #334155 !important; }
     
-    div.stButton > button, div.stButton > button * { 
-        color: #ffffff !important; 
-    }
-    
+    div.stButton > button, div.stButton > button * { color: #ffffff !important; }
     div.stButton > button { 
         border-radius: 8px; font-weight: 900 !important; transition: all 0.3s ease; height: 50px; 
         background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
@@ -75,7 +72,7 @@ def set_page(page_name):
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
     if role in ["Admin", "General_Supervisor"]: return True
-    if role == "Cashier": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)"]
+    if role == "Cashier": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)"]
     if role == "Viewer": return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
     if role == "Branch_Supervisor": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع"]
     return False
@@ -114,9 +111,10 @@ st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجمو
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
+# القائمة تم تنظيفها تماماً من المفضلة
 DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "🏢 إدارة الفروع", "👥 إدارة المستخدمين",
-    "⭐  "📦 إدارة المخزن والفروع", "➕ الفائض والتوالف والمرتجعات وتعديل السعر
+    "📦 إدارة المخزن والفروع", "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
     "🔄 تزويد الفروع والأرشيف", "📁 استيراد Excel", "💰 المصروفات", "👥 جهات التعامل",
     "📥 المشتريات", "⚙️ الجرد والتصفير السنوي", "🥜 التحميص والخلط", "📊 التقارير والأرباح"
 ]
@@ -168,7 +166,6 @@ if choice == "🏠 الرئيسية واللوحة":
 
     st.markdown('<h3 class="rtl-container" style="color: #0f172a; font-weight: 900;">🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية</h3>', unsafe_allow_html=True)
     
-    # رسالة ترحيبية عامة تظهر لكافة الموظفين
     st.markdown(f"""
         <div class="dashboard-banner">
             <h4 style="margin-top:0; color:#16a34a;">👋 مرحباً بك يا {username} في النظام السحابي لإدارة المحامص والمخازن.</h4>
@@ -176,42 +173,28 @@ if choice == "🏠 الرئيسية واللوحة":
         </div>
     """, unsafe_allow_html=True)
 
-    # 🔒 حجب البطاقات الإحصائية والمالية عن الكاشير (تظهر حصرياً للأدمن والمشرف العام فقط)
     if role in ["Admin", "General_Supervisor"]:
         conn = get_db_connection()
-        
-        # 1. إجمالي المبيعات العامة
         total_sales_res = conn.execute("SELECT SUM(total_amount) FROM invoices").fetchone()
         total_sales = total_sales_res[0] if total_sales_res and total_sales_res[0] else 0.0
 
-        # 2. عدد الفروع والمخازن
         branches_count = conn.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
         
-        # 3. إجمالي المخزون (القطع)
         total_stock_res = conn.execute("SELECT SUM(quantity) FROM items").fetchone()
         total_stock = total_stock_res[0] if total_stock_res and total_stock_res[0] else 0.0
 
-        # 4. طاقم العمل والمستخدمين
         users_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        
         conn.close()
 
         st.markdown('<p class="rtl-container" style="font-weight: 900; font-size: 18px; color: #0f172a;">📊 ملخص حركة العمل والأداء المالي العام:</p>', unsafe_allow_html=True)
         
         col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric(label="💰 إجمالي المبيعات العامة", value=f"{total_sales:,.2f} د.ل")
-        with col2:
-            st.metric(label="🏢 الفروع والمخازن", value=f"{branches_count} فرع")
-        with col3:
-            st.metric(label="📦 إجمالي المخزون", value=f"{total_stock:,.2f}")
-        with col4:
-            st.metric(label="👥 طاقم العمل", value=f"{users_count} موظف")
-            
+        with col1: st.metric(label="💰 إجمالي المبيعات العامة", value=f"{total_sales:,.2f} د.ل")
+        with col2: st.metric(label="🏢 الفروع والمخازن", value=f"{branches_count} فرع")
+        with col3: st.metric(label="📦 إجمالي المخزون", value=f"{total_stock:,.2f}")
+        with col4: st.metric(label="👥 طاقم العمل", value=f"{users_count} موظف")
         st.markdown("---")
     else:
-        # واجهة مبسطة ومريحة للكاشير تمنع ظهور أي أرقام إدارية أو مالية عامة
         st.info("🛒 تم إعداد الشاشة بنجاح. يمكنك الانتقال مباشرة عبر القائمة الجانبية إلى قسم (نقطة البيع POS) لبدء تسجيل الفواتير وخدمة الزبائن.")
 
 elif choice == "🛒 نقطة البيع (POS)":
@@ -219,7 +202,7 @@ elif choice == "🛒 نقطة البيع (POS)":
         from views import pos
         pos.show_page()
     except ImportError:
-        st.info("🛒 شاشة نقطة البيع قيد الترتيب وفق الهيكل الجديد...")
+        st.info("🛒 شاشة نقطة البيع قيد الترتيب...")
 elif choice == "🏢 إدارة الفروع":
     try:
         from views import branches
@@ -268,12 +251,6 @@ elif choice == "🔄 تزويد الفروع والأرشيف":
         transfers.show_page()
     except ImportError:
         st.info("🔄 شاشة تزويد الفروع والأرشيف قيد التجهيز.")
-elif choice == "⭐ لوحة المفضلة (1-20)":
-    try:
-        from views import favorites
-        favorites.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة المفضلة غير موجود.")
 elif choice == "📦 إدارة المخزن والفروع":
     try:
         from views import inventory
@@ -287,10 +264,10 @@ elif choice == "🥜 التحميص والخلط":
         from views import roasting_blending
         roasting_blending.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود داخل مجلد views.")
+        st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
 elif choice == "📊 التقارير والأرباح":
     try:
         from views import reports
         reports.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود داخل مجلد views.")
+        st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود.")
