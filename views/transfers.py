@@ -12,8 +12,18 @@ def to_excel(df):
     return output.getvalue()
 
 def show_page():
+    # تنسيق لإجبار خلايا الجدول على عرض النصوص المتعددة الأسطر (Wrap Text)
+    st.markdown("""
+        <style>
+        .dataframe-container td, .dataframe-container th {
+            white-space: pre-wrap !important;
+            word-wrap: break-word !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     st.header("🔄 نظام تزويد الفروع والأرشيف (فواتير مجمعة)")
-    st.info("💡 إنشاء فاتورة تزويد مجمعة تحتوي على عدة أصناف (من 1 إلى 15 صنفاً أو أكثر) وإرسالها للفرع كعهدَة مالية ومخزنية.")
+    st.info("💡 إنشاء فاتورة تزويد مجمعة تحتوي على عدة أصناف وإرسالها للفرع كعهدَة مالية ومخزنية.")
 
     conn = get_db_connection()
     
@@ -45,6 +55,9 @@ def show_page():
 
     st.markdown("---")
 
+    # ==========================================
+    # القسم الأول: إنشاء فاتورة التزويد المجمعة
+    # ==========================================
     if transfer_mode.startswith("📦"):
         col_target_b, col_notes = st.columns(2)
         with col_target_b:
@@ -112,10 +125,10 @@ def show_page():
                     cur = conn.cursor()
                     
                     try:
-                        # 1. بناء نص الفاتورة كقائمة رأسية لفك التداخل
+                        # 🌟 الحفظ في قاعدة البيانات باستخدام الفاصل \n بدلاً من | ليكون العرض عمودياً
                         items_summary_list = []
                         for c_item in st.session_state["transfer_cart"]:
-                            items_summary_list.append(f"• {c_item['name']} (الكمية: {c_item['qty']})")
+                            items_summary_list.append(f"▪ {c_item['name']} (الكمية: {c_item['qty']})")
                         
                         items_details_str = "\n".join(items_summary_list)
                         if transfer_notes:
@@ -123,6 +136,7 @@ def show_page():
 
                         for c_item in st.session_state["transfer_cart"]:
                             cur.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
+                            
                             target_item_row = cur.execute("""
                                 SELECT id FROM items WHERE branch_id = ? AND item_name = ?
                             """, (target_b_id, c_item["name"])).fetchone()
@@ -138,10 +152,10 @@ def show_page():
                         cur.execute("""
                             INSERT INTO transfer_logs (from_branch_id, to_branch_id, transfer_type, items_details, status)
                             VALUES (?, ?, ?, ?, ?)
-                        """, (warehouse_id, target_b_id, "فاتورة تزويد مجمعة", items_details_str, "مع بانتظار تأكيد الكاشير"))
+                        """, (warehouse_id, target_b_id, "فاتورة تزويد مجمعة", items_details_str, "بانتظار تأكيد الكاشير"))
                         
                         conn.commit()
-                        st.session_state["transfer_cart"] = [] 
+                        st.session_state["transfer_cart"] = []
                         st.success(f"✅ تم إصدار فاتورة التزويد المجمعة للفرع ({target_branch_name}) بنجاح وتم ترحيلها!")
                         st.rerun()
                     except Exception as ex:
@@ -155,16 +169,18 @@ def show_page():
         else:
             st.info("🛒 السلة فارغة. قم بإضافة أصناف للفاتورة بالأعلى.")
 
+    # ==========================================
+    # القسم الثاني: أرشيف الفواتير وعرضها بشكل مفصل
+    # ==========================================
     elif transfer_mode.startswith("📋"):
         st.subheader("📋 أرشيف فواتير وحركات التزويد السابقة")
         logs_df = pd.read_sql("""
             SELECT 
-                transfer_logs.id AS 'رقم الفاتورة / الحركة',
-                b1.branch_name AS 'المرسل (المخزن الرئيسي)',
-                b2.branch_name AS 'الفرع المستهدف',
-                transfer_logs.transfer_type AS 'نوع الفاتورة',
+                transfer_logs.id AS 'رقم الفاتورة',
+                b1.branch_name AS 'المرسل',
+                b2.branch_name AS 'المستهدف',
                 transfer_logs.items_details AS 'تفاصيل الأصناف والكميات',
-                transfer_logs.status AS 'حالة الاستلام',
+                transfer_logs.status AS 'الحالة',
                 transfer_logs.transfer_date AS 'تاريخ الإصدار'
             FROM transfer_logs
             LEFT JOIN branches b1 ON transfer_logs.from_branch_id = b1.id
@@ -173,7 +189,18 @@ def show_page():
         """, conn)
 
         if not logs_df.empty:
-            st.dataframe(logs_df, use_container_width=True, hide_index=True)
+            st.markdown('<div class="dataframe-container">', unsafe_allow_html=True)
+            # 🌟 استخدام data_editor أو dataframe مع تفعيل خصائص التنسيق للعرض الرأسي
+            st.dataframe(
+                logs_df, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "تفاصيل الأصناف والكميات": st.column_config.TextColumn("تفاصيل الأصناف والكميات", width="large")
+                }
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+            
             excel_bytes = to_excel(logs_df)
             st.download_button(
                 label="📥 تصدير الأرشيف إلى ملف Excel",
