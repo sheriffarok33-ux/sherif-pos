@@ -66,33 +66,50 @@ def show_page():
                 pl_data = []
                 total_global_sales = 0
                 total_global_expenses = 0
+                total_global_damages = 0
                 total_global_net = 0
 
                 for b in target_branches:
                     b_id = b["id"]
                     b_name = b["branch_name"]
 
+                    # إجمالي المبيعات
                     sales_row = conn.execute("SELECT SUM(total_amount) AS total_sales FROM invoices WHERE branch_id = ?", (b_id,)).fetchone()
                     b_sales = sales_row["total_sales"] if sales_row and sales_row["total_sales"] else 0.0
 
+                    # إجمالي المصروفات
                     try:
                         exp_row = conn.execute("SELECT SUM(amount) AS total_exp FROM expenses WHERE branch_id = ?", (b_id,)).fetchone()
                         b_expenses = exp_row["total_exp"] if exp_row and exp_row["total_exp"] else 0.0
                     except:
                         b_expenses = 0.0
 
-                    b_net_profit = b_sales - b_expenses
+                    # 🌟 إجمالي التوالف والخسائر التشغيلية المستقلة
+                    try:
+                        dam_row = conn.execute("""
+                            SELECT SUM(loss_or_gain_value) AS total_dam 
+                            FROM stock_adjustments 
+                            WHERE branch_id = ? AND adjustment_type LIKE '%تالف%'
+                        """, (b_id,)).fetchone()
+                        b_damages = dam_row["total_dam"] if dam_row and dam_row["total_dam"] else 0.0
+                    except:
+                        b_damages = 0.0
+
+                    # صافي الربح الحقيقي = المبيعات - المصروفات - التوالف والخسائر
+                    b_net_profit = b_sales - b_expenses - b_damages
 
                     total_global_sales += b_sales
                     total_global_expenses += b_expenses
+                    total_global_damages += b_damages
                     total_global_net += b_net_profit
 
                     pl_data.append({
                         "اسم الفرع": b_name,
                         "نوع المنشأة": b["branch_type"],
                         "إجمالي المبيعات (د.ل)": f"{b_sales:,.2f}",
-                        "إجمالي المصروفات والرواتب والإيجارات (د.ل)": f"{b_expenses:,.2f}",
-                        "صافي الربح التقديري (د.ل)": f"{b_net_profit:,.2f}"
+                        "إجمالي المصروفات والرواتب (د.ل)": f"{b_expenses:,.2f}",
+                        "إجمالي التوالف والهدر (د.ل)": f"{b_damages:,.2f}",
+                        "صافي الربح الحقيقي (د.ل)": f"{b_net_profit:,.2f}"
                     })
 
                 df_pl = pd.DataFrame(pl_data)
@@ -119,7 +136,8 @@ def show_page():
                         <h4 style="margin:0; color: #0f172a; font-weight: 900; font-size: 20px;">🏢 {label_text}</h4>
                         <p style="margin: 8px 0; color: #000000; font-weight: 900; font-size: 18px;">💰 إجمالي المبيعات: <b>{total_global_sales:,.2f} د.ل</b></p>
                         <p style="margin: 8px 0; color: #000000; font-weight: 900; font-size: 18px;">💸 إجمالي المصروفات والرواتب والإيجارات: <b>{total_global_expenses:,.2f} د.ل</b></p>
-                        <p style="margin: 0; color: #0284c7; font-weight: 900; font-size: 21px;">📈 صافي الربح الإجمالي: <b>{total_global_net:,.2f} د.ل</b></p>
+                        <p style="margin: 8px 0; color: #dc2626; font-weight: 900; font-size: 18px;">🗑️ إجمالي التوالف والهدر والخسائر: <b>{total_global_damages:,.2f} د.ل</b></p>
+                        <p style="margin: 0; color: #0284c7; font-weight: 900; font-size: 21px;">📈 صافي الربح الإجمالي الحقيقي: <b>{total_global_net:,.2f} د.ل</b></p>
                     </div>
                 """, unsafe_allow_html=True)
             else:
