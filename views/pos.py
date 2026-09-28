@@ -163,7 +163,7 @@ def process_barcode_scan():
 
 # --- واجهة شاشة نقطة البيع الأساسية ---
 def show_page():
-    # 🌟 ستايل منسق بدقة لتفادي أي تداخل نصي في العناوين أو الـ Expander
+    # 🌟 ستايل محسن لمنع تداخل الحروف وضبط اتجاهات الـ RTL بدقة تامة في العناوين والـ Expander
     st.markdown("""
         <style>
         .top-panel { background-color: #e2e8f0; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 12px; direction: rtl; text-align: right; }
@@ -172,12 +172,15 @@ def show_page():
         .btn-red > button { background-color: #dc2626 !important; }
         .rtl-container { direction: rtl !important; text-align: right !important; }
         
-        /* 🌟 إصلاح تداخل العناوين والأيقونات في الـ Expander */
+        /* إصلاح جذري لتداخل النصوص والأيقونات في عناصر Expander */
         div[data-testid="stExpander"] details summary {
             direction: rtl !important;
             text-align: right !important;
+            display: flex;
+            flex-direction: row-reverse;
         }
-        div[data-testid="stExpander"] details summary span {
+        div[data-testid="stExpander"] details summary span,
+        div[data-testid="stExpander"] details summary p {
             direction: rtl !important;
             text-align: right !important;
             unicode-bidi: plaintext !important;
