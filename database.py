@@ -10,15 +10,15 @@ try:
 except ImportError:
     POSTGRES_AVAILABLE = False
 
-# 🌟 تحديد مسار ثابت ومطلق لملف قاعدة البيانات داخل مجلد المشروع لضمان عدم ضياع البيانات
-BASE_DIR = Path(__file__).resolve().parent  # مجلد ملف database.py الحالي
-DB_PATH = BASE_DIR / "data" / "abu_zaid_new_system.db"  # مسار ثابت في مجلد data
+# 🌟 تحديد مسار ثابت ومطلق لملف قاعدة البيانات داخل مجلد المشروع
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "data" / "abu_zaid_new_system.db"
 
 # التأكد من إنشاء مجلد data تلقائياً إذا لم يكن موجوداً
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_MENUS = [
-    "🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)", "📦 إدارة المخزن والفروع",
+    "🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع",
     "➕ الفائض والتوالف والمرتجعات وتعديل السعر", "🔄 تزويد الفروع والأرشيف", "🏢 إدارة الفروع",
     "📁 استيراد Excel", "💰 المصروفات", "📥 المشتريات والموردين", "⚙️ الجرد والتصفير السنوي",
     "🥜 التحميص والخلط", "📊 التقارير والأرباح", "👥 إدارة المستخدمين"
@@ -38,7 +38,7 @@ def get_db_connection():
         try:
             conn = psycopg2.connect(postgres_url, cursor_factory=RealDictCursor)
             return conn
-        except Exception as e:
+        except Exception:
             conn = sqlite3.connect(str(DB_PATH), timeout=10)
             conn.execute("PRAGMA foreign_keys = ON")
             conn.row_factory = sqlite3.Row
@@ -49,28 +49,8 @@ def get_db_connection():
         conn.row_factory = sqlite3.Row
         return conn
 
-def reindex_table(conn, table_name):
-    cursor = conn.cursor()
-    try:
-        if table_name == "branches":
-            rows = cursor.execute("SELECT branch_name, branch_type FROM branches ORDER BY id ASC").fetchall()
-            cursor.execute("DELETE FROM branches")
-            cursor.execute("DELETE FROM sqlite_sequence WHERE name='branches'")
-            for row in rows:
-                cursor.execute("INSERT INTO branches (branch_name, branch_type) VALUES (?, ?)", (row[0], row[1]))
-                
-        elif table_name == "users":
-            rows = cursor.execute("SELECT username, phone, password, role, branch_id, allowed_branches, custom_permissions, is_active FROM users ORDER BY id ASC").fetchall()
-            cursor.execute("DELETE FROM users")
-            cursor.execute("DELETE FROM sqlite_sequence WHERE name='users'")
-            for row in rows:
-                cursor.execute("INSERT INTO users (username, phone, password, role, branch_id, allowed_branches, custom_permissions, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", row)
-                
-        conn.commit()
-    except Exception as e:
-        print(f"Error re-indexing {table_name}: {e}")
-
 def initialize_database():
+    """كود التهيئة الآمن: ينشئ الجداول إن لم تكن موجودة دون المسح أو التصفير"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -164,7 +144,7 @@ def initialize_database():
     except: pass
     try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
     except: pass
-    try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),⭐ لوحة المفضلة (1-20),🔄 تزويد الفروع والأرشيف')")
+    try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),🔄 تزويد الفروع والأرشيف')")
     except: pass
 
     branch_count = cursor.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
@@ -175,11 +155,11 @@ def initialize_database():
 
     admin_chk = cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin' AND is_active = 1").fetchone()[0]
     if admin_chk == 0:
-        cursor.execute("INSERT OR IGNORE INTO users (username, phone, password, role, allowed_branches, is_active) VALUES ('admin', '0910000000', 'admin', 'Admin', 'ALL', 1)")
+        cursor.execute("INSERT OR IGNORE INTO users (username, phone, password, role, allowed_branches, is_active) VALUES ('admin', '0910000000', '123456', 'Admin', 'ALL', 1)")
 
     conn.commit()
     conn.close()
 
 if __name__ == "__main__":
     initialize_database()
-    print("✅ تم إنشاء قاعدة البيانات والجداول بالمسار الثابت والمطلق بنجاح!")
+    print("✅ تم فحص وتهيئة قاعدة البيانات بنجاح!")
