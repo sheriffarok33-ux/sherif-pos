@@ -111,7 +111,6 @@ st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجمو
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-# القائمة تم تنظيفها تماماً من المفضلة
 DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "🏢 إدارة الفروع", "👥 إدارة المستخدمين",
     "📦 إدارة المخزن والفروع", "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
@@ -217,10 +216,10 @@ elif choice == "👥 إدارة المستخدمين":
         st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
 elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
     try:
-        from views import adjustments
-        adjustments.show_page()
+        from views import damages_returns
+        damages_returns.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة الفائض والتوالف غير موجود.")
+        st.warning("⚠️ ملف شاشة الفائض والتوالف والمرتجعات (damages_returns.py) غير موجود في مجلد views.")
 elif choice == "📁 استيراد Excel":
     try:
         from views import items_import
