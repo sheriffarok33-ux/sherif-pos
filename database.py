@@ -31,7 +31,6 @@ def get_db_connection():
 def create_desktop_backup():
     """🌟 دالة ذكية لأخذ نسخة احتياطية يومية وتلقائية على جهاز الكمبيوتر الخاص بالمدير (تتجاهل الهواتف)"""
     try:
-        # فحص ما إذا كان المستخدم يدخل من هاتف محمول لتتجاهله
         user_agent = str(st.context.headers.get("User-Agent", "")).lower() if hasattr(st, "context") else ""
         is_mobile = any(m in user_agent for m in ["iphone", "android", "ipad", "mobile", "tablet"])
         
@@ -39,10 +38,8 @@ def create_desktop_backup():
             today_str = datetime.now().strftime("%Y-%m-%d")
             backup_file = BACKUP_DIR / f"abu_zaid_backup_{today_str}.db"
             
-            # إذا لم تكن نسخة اليوم موجودة، يتم إنشاؤها فوراً
             if not backup_file.exists():
                 shutil.copy2(DB_PATH, backup_file)
-                # الاحتفاظ فقط بآخر 7 نسخ احتياطية لتنظيف المجلد تلقائياً
                 backups = sorted(BACKUP_DIR.glob("abu_zaid_backup_*.db"))
                 if len(backups) > 7:
                     for old_b in backups[:-7]:
@@ -136,6 +133,22 @@ def initialize_database():
         )
     """)
     
+    # 🌟 جدول التوالف والمرتجعات المستقل (مضاف حديثاً لدعم طلبك بدقة)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch_id INTEGER NOT NULL,
+            item_id INTEGER,
+            item_name TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            adjustment_type TEXT NOT NULL,
+            loss_or_gain_value REAL NOT NULL,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (branch_id) REFERENCES branches(id)
+        )
+    """)
+
     cursor.execute("CREATE TABLE IF NOT EXISTS negative_sales_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
     cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role TEXT PRIMARY KEY, allowed_menus TEXT)")
     cursor.execute("CREATE TABLE IF NOT EXISTS custom_labels (original_name TEXT PRIMARY KEY, custom_name TEXT NOT NULL)")
@@ -161,7 +174,6 @@ def initialize_database():
     conn.commit()
     conn.close()
 
-    # تنفيذ النسخ الاحتياطي التلقائي للكمبيوتر
     create_desktop_backup()
 
 if __name__ == "__main__":
