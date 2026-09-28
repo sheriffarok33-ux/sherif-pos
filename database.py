@@ -1,56 +1,57 @@
 import os
 import streamlit as st
 import sqlite3
+import shutil
+from datetime import datetime
 from pathlib import Path
 
-try:
-    import psycopg2
-    from psycopg2.extras import RealDictCursor
-    POSTGRES_AVAILABLE = True
-except ImportError:
-    POSTGRES_AVAILABLE = False
-
-# 🌟 تحديد مسار ثابت ومطلق لملف قاعدة البيانات داخل مجلد المشروع
+# 🌟 تحديد مسار ثابت ومطلق لقاعدة البيانات والنسخ الاحتياطي داخل مجلد المشروع
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "data" / "abu_zaid_new_system.db"
+DATA_DIR = BASE_DIR / "data"
+DB_PATH = DATA_DIR / "abu_zaid_new_system.db"
+BACKUP_DIR = BASE_DIR / "backups"
 
-# التأكد من إنشاء مجلد data تلقائياً إذا لم يكن موجوداً
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+# التأكد من إنشاء المجلدات تلقائياً
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_MENUS = [
-    "🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع",
+    "🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)", "📦 إدارة المخزن والفروع",
     "➕ الفائض والتوالف والمرتجعات وتعديل السعر", "🔄 تزويد الفروع والأرشيف", "🏢 إدارة الفروع",
     "📁 استيراد Excel", "💰 المصروفات", "📥 المشتريات والموردين", "⚙️ الجرد والتصفير السنوي",
     "🥜 التحميص والخلط", "📊 التقارير والأرباح", "👥 إدارة المستخدمين"
 ]
 
 def get_db_connection():
-    db_type = os.getenv("DB_TYPE", "")
-    postgres_url = os.getenv("DATABASE_URL", "")
+    conn = sqlite3.connect(str(DB_PATH), timeout=15)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.row_factory = sqlite3.Row
+    return conn
 
-    if hasattr(st, "secrets"):
-        if "DB_TYPE" in st.secrets:
-            db_type = st.secrets["DB_TYPE"]
-        if "DATABASE_URL" in st.secrets:
-            postgres_url = st.secrets["DATABASE_URL"]
-
-    if db_type == "postgres" and POSTGRES_AVAILABLE and postgres_url:
-        try:
-            conn = psycopg2.connect(postgres_url, cursor_factory=RealDictCursor)
-            return conn
-        except Exception:
-            conn = sqlite3.connect(str(DB_PATH), timeout=10)
-            conn.execute("PRAGMA foreign_keys = ON")
-            conn.row_factory = sqlite3.Row
-            return conn
-    else:
-        conn = sqlite3.connect(str(DB_PATH), timeout=10)
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.row_factory = sqlite3.Row
-        return conn
+def create_desktop_backup():
+    """🌟 دالة ذكية لأخذ نسخة احتياطية يومية وتلقائية على جهاز الكمبيوتر الخاص بالمدير (تتجاهل الهواتف)"""
+    try:
+        # فحص ما إذا كان المستخدم يدخل من هاتف محمول لتتجاهله
+        user_agent = str(st.context.headers.get("User-Agent", "")).lower() if hasattr(st, "context") else ""
+        is_mobile = any(m in user_agent for m in ["iphone", "android", "ipad", "mobile", "tablet"])
+        
+        if not is_mobile and DB_PATH.exists():
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            backup_file = BACKUP_DIR / f"abu_zaid_backup_{today_str}.db"
+            
+            # إذا لم تكن نسخة اليوم موجودة، يتم إنشاؤها فوراً
+            if not backup_file.exists():
+                shutil.copy2(DB_PATH, backup_file)
+                # الاحتفاظ فقط بآخر 7 نسخ احتياطية لتنظيف المجلد تلقائياً
+                backups = sorted(BACKUP_DIR.glob("abu_zaid_backup_*.db"))
+                if len(backups) > 7:
+                    for old_b in backups[:-7]:
+                        old_b.unlink()
+    except Exception as e:
+        print(f"Backup warning: {e}")
 
 def initialize_database():
-    """كود التهيئة الآمن: ينشئ الجداول إن لم تكن موجودة دون المسح أو التصفير"""
+    """كود التهيئة الآمن: ينشئ الجداول إن لم تكن موجودة دون المسح أو التصفير مع تفعيل النسخ الاحتياطي"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -160,6 +161,9 @@ def initialize_database():
     conn.commit()
     conn.close()
 
+    # تنفيذ النسخ الاحتياطي التلقائي للكمبيوتر
+    create_desktop_backup()
+
 if __name__ == "__main__":
     initialize_database()
-    print("✅ تم فحص وتهيئة قاعدة البيانات بنجاح!")
+    print("✅ تم فحص وتهيئة قاعدة البيانات وتفعيل النسخ الاحتياطي بنجاح!")
