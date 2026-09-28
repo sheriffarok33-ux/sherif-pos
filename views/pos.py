@@ -152,11 +152,9 @@ def process_barcode_scan():
                 "id": item["id"], "code": item["item_code"], "name": item["item_name"], 
                 "price": unit_price, "qty": float(qty_to_add), "total": unit_price * qty_to_add
             })
-            # 🌟 تصفير حقل الكمية تلقائياً بعد نجاح إضافة الصنف
             st.session_state["barcode_qty_input"] = 1.0
         else:
             conn.close()
-            # 🌟 فتح شاشة إضافة الصنف غير المسجل مباشرة
             add_missing_item_dialog(code, b_id)
             return
             
@@ -165,6 +163,7 @@ def process_barcode_scan():
 
 # --- واجهة شاشة نقطة البيع الأساسية ---
 def show_page():
+    # 🌟 ستايل محسّن لمنع تداخل الحروف وضبط اتجاهات الـ RTL بدقة تامة
     st.markdown("""
         <style>
         .top-panel { background-color: #e2e8f0; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 12px; direction: rtl; text-align: right; }
@@ -172,7 +171,17 @@ def show_page():
         .btn-green > button { background-color: #16a34a !important; }
         .btn-red > button { background-color: #dc2626 !important; }
         .rtl-container { direction: rtl !important; text-align: right !important; }
-        div.stButton > button p, div.stButton > button span, div.stButton > button div { color: #ffffff !important; }
+        
+        /* إصلاح جذري لمشكلة تداخل العناوين والأيقونات باللغة العربية */
+        div[data-testid="stExpander"] summary div p {
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+        }
+
+        div.stButton > button p, div.stButton > button span, div.stButton > button div { 
+            color: #ffffff !important; 
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -221,7 +230,7 @@ def show_page():
                 
             st.markdown('</div>', unsafe_allow_html=True)
             
-            if st.button("✅ اضغط للموافقة وتأكيد استلاستلام البضاعة وبدء العمل", type="primary", use_container_width=True):
+            if st.button("✅ اضغط للموافقة وتأكيد استلام البضاعة وبدء العمل", type="primary", use_container_width=True):
                 cur_pt = conn.cursor()
                 for pt in pending_logs:
                     cur_pt.execute("UPDATE transfer_logs SET status = ? WHERE id = ?", (f"مكتملة ومستلمة بواسطة الكاشير: {username}", pt['id']))
@@ -242,7 +251,7 @@ def show_page():
         with st.expander("📊 تقارير الإغلاق المالي وتسليم الورديات (X-Read / Z-Read)"):
             c_x, c_z = st.columns(2)
             
-            # تقرير X-Read (الوردية الحالية بدون تصفير)[cite: 4]
+            # تقرير X-Read (الوردية الحالية بدون تصفير المبيعات اليومية)[cite: 4]
             with c_x:
                 st.markdown("#### 🕒 تقرير X-Read (الوردية الحالية)")
                 shift_sales_row = conn.execute("""
@@ -259,15 +268,15 @@ def show_page():
                     <h3>تقرير X-Read (تسليم وردية)</h3>
                     <p style="text-align: right;"><b>التاريخ والوقت:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
                     <b>الكاشير:</b> {username} | <b>وردية رقم:</b> {current_shift_num}</p><hr>
-                    <h3>إجمالي المبيعات: {shift_sales:,.2f} د.ل</h3><hr>
-                    <p style="font-size: 12px;">نهاية التقرير</p>
+                    <h3>إجمالي مبيعات الوردية: {shift_sales:,.2f} د.ل</h3><hr>
+                    <p style="font-size: 12px;">نهاية التقرير التشغيلي</p>
                 </body></html>
                 """
                 st.download_button("🖨️ طباعة تقرير X-Read", data=x_html.encode('utf-8'), file_name=f"X_Read_{today_date}_Shift{current_shift_num}.html", mime="text/html", use_container_width=True)
 
-            # تقرير Z-Read (الإغلاق المالي اليومي مع التصفير والتراكمي)[cite: 4]
+            # تقرير Z-Read (الإغلاق المالي اليومي مع التصفير وتتبع التراكمي)[cite: 4]
             with c_z:
-                st.markdown("#### 🔒 تقرير Z-Read (الإغلاق المالي)")
+                st.markdown("#### 🔒 تقرير Z-Read (الإغلاق المالي اليومي)")
                 day_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ? AND shift_status != 'Z_Closed'", (b_id, today_date)).fetchone()
                 day_sales = day_sales_row[0] if day_sales_row and day_sales_row[0] else 0.0
                 
@@ -287,7 +296,7 @@ def show_page():
                     <b>مبيعات اليوم الحالي:</b> {day_sales:,.2f} د.ل<br>
                     <b>إجمالي الأيام السابقة (التراكمي):</b> {cumulative_prev_sales:,.2f} د.ل</p><hr>
                     <h3>الإجمالي الكلي التراكمي: {total_all_sales:,.2f} د.ل</h3><hr>
-                    <p style="font-size: 12px;">نهاية التقرير المالي</p>
+                    <p style="font-size: 12px;">تم الإغلاق المالي بنجاح</p>
                 </body></html>
                 """
                 st.download_button("🖨️ طباعة تقرير Z-Read الشامل", data=z_html.encode('utf-8'), file_name=f"Z_Read_{today_date}.html", mime="text/html", use_container_width=True)
