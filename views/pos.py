@@ -5,13 +5,15 @@ import os
 from datetime import datetime
 from database import get_db_connection
 
+# --- تحديد رقم الوردية (الشفت) تلقائياً (1 للصَباحي، 2 للمسائي) ---
 def get_current_shift_number():
     current_hour = datetime.now().hour
     if 6 <= current_hour < 16:
-        return 1  
+        return 1  # وردية 1 (صباحي)
     else:
-        return 2  
+        return 2  # وردية 2 (مسائي)
 
+# --- دالة شاشة إتمام الدفع وإصدار الفاتورة ---
 @st.dialog("💳 إتمام الدفع وإصدار الفاتورة")
 def checkout_payment_dialog(b_id, g_tot, branch_name_str, branch_phone_str, cashier_name_str, shift_num, daily_inv_num):
     st.subheader(f"إجمالي الفاتورة المطلوب: {g_tot:,.2f} د.ل")
@@ -100,6 +102,7 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, branch_phone_str, cash
             st.warning("⚠️ المبلغ المدفوع أقل من إجمالي الفاتورة.")
     conn.close()
 
+# --- معالجة الباركود ---
 def process_barcode_scan():
     code = st.session_state.barcode_scan_input.strip()
     qty_to_add = st.session_state.get("barcode_qty_input", 1.0)
@@ -129,6 +132,7 @@ def process_barcode_scan():
         conn.close()
     st.session_state.barcode_scan_input = "" 
 
+# --- واجهة شاشة نقطة البيع الأساسية ---
 def show_page():
     st.markdown("""
         <style>
@@ -149,6 +153,7 @@ def show_page():
     user_branch_id = st.session_state.get("branch_id")
     current_shift_num = get_current_shift_number()
 
+    # التحقق الآمن من أعمدة جدول الفروع (لتجنب خطأ عدم وجود حقل الهاتف)
     branch_columns = [col[1] for col in conn.execute("PRAGMA table_info(branches)").fetchall()]
     has_phone_col = "phone" in branch_columns
 
@@ -175,6 +180,7 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
+    # تأكيد استلام التزويد للكاشير
     if b_id and b_id != "ALL":
         pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE (to_branch_id = ? OR to_branch_id IN (SELECT id FROM branches WHERE branch_name LIKE '%مصراتة%' OR id = ?)) AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id, b_id)).fetchall()
         if pending_logs:
@@ -197,7 +203,11 @@ def show_page():
             if st.button("✅ اضغط للموافقة وتأكيد استلام البضاعة وبدء العمل", type="primary", use_container_width=True):
                 cur_pt = conn.cursor()
                 for pt in pending_logs:
-                    cur_pt.execute("UPDATE transfer_logs SET status = ? WHERE id = ?", (f"مكتملة ومستلمة بواسطة الكاشير: {username}", pt['id']))
+                    cur_pt.execute("""
+                        UPDATE transfer_logs 
+                        SET status = ? 
+                        WHERE id = ?
+                    """, (f"مكتملة ومستلمة بواسطة الكاشير: {username}", pt['id']))
                 conn.commit()
                 conn.close()
                 st.success("✅ تم تأكيد استلام البضاعة بنجاح! جاري فتح نقطة البيع...")
@@ -211,7 +221,7 @@ def show_page():
     daily_inv_num = branch_inv_count + 1
 
     # ==========================================
-    # 🌟 تقارير X-Read / Z-Read (للأدمن والمشرف العام فقط)
+    # 🌟 قسم التقارير (X-Read / Z-Read) - مقيد للإدارة فقط
     # ==========================================
     if role in ["Admin", "General_Supervisor"]:
         st.markdown("---")
@@ -236,6 +246,7 @@ def show_page():
             """
             st.download_button("🖨️ طباعة تقرير X-Read", data=x_html.encode('utf-8'), file_name=f"X_Read_{today_date}_Shift{current_shift_num}.html", mime="text/html", use_container_width=True)
 
+        # حساب مبيعات اليوم وتراكمي الأيام السابقة لتقرير Z-Read
         day_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id=? AND DATE(created_at)=?", (b_id, today_date)).fetchone()
         day_sales = day_sales_row[0] if day_sales_row[0] else 0.0
         
@@ -261,6 +272,7 @@ def show_page():
             """
             st.download_button("🖨️ طباعة تقرير Z-Read الشامل", data=z_html.encode('utf-8'), file_name=f"Z_Read_{today_date}.html", mime="text/html", use_container_width=True)
 
+    # عرض الفاتورة بعد الحفظ وتضمين هاتف الفرع
     if "last_invoice" in st.session_state and st.session_state["last_invoice"]:
         inv = st.session_state["last_invoice"]
         items_html = "".join([f"<tr><td>{i['name']}</td><td>{i['qty']}</td><td>{i['price']}</td><td>{i['total']}</td></tr>" for i in inv["items"]])
@@ -324,16 +336,8 @@ def show_page():
             """, unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # 🌟 جلب الأصناف المفضلة للفرع الحالي فقط
-        fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 12", (b_id,)).fetchall()
-
-        # 🌟 التحقق الذكي: إذا لم تكن هناك أصناف مفضلة، لا نعرض عمود الفراغ الأبيض نهائياً وتتوسع سلة المبيعات لملء الشاشة بالكامل
-        if fav_items:
-            col_grid, col_fav = st.columns([3, 1])
-        else:
-            col_grid = st.container()
-            col_fav = None
-
+        col_grid, col_fav = st.columns([3, 1])
+        
         with col_grid:
             st.markdown("### 🧾 محتويات سلة المبيعات الحالية")
             if not st.session_state["cart"]:
@@ -367,11 +371,12 @@ def show_page():
                     st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
 
-        # 🌟 عرض لوحة المفضلة فقط إذا كانت موجودة، لمنع ظهور أي فراغ أبيض غير مطلوب
-        if col_fav is not None:
-            with col_fav:
-                st.markdown('<h3 class="rtl-container">⭐ المفضلة</h3>', unsafe_allow_html=True)
-                st.markdown("<div style='background-color:#f1f5f9; padding:6px; border-radius:8px; height:360px; overflow-y:auto; border:1px solid #cbd5e1; direction: rtl;'>", unsafe_allow_html=True)
+        with col_fav:
+            st.markdown('<h3 class="rtl-container">⭐ المفضلة</h3>', unsafe_allow_html=True)
+            fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 12", (b_id,)).fetchall()
+            
+            st.markdown("<div style='background-color:#f1f5f9; padding:6px; border-radius:8px; height:360px; overflow-y:auto; border:1px solid #cbd5e1; direction: rtl;'>", unsafe_allow_html=True)
+            if fav_items:
                 for item in fav_items:
                     st.markdown("<div style='background:white; padding:4px; border-radius:6px; margin-bottom:6px; border:1px solid #e2e8f0; text-align:center;'>", unsafe_allow_html=True)
                     img_path = os.path.join("item_images", f"{item['item_code']}.jpg")
@@ -390,7 +395,9 @@ def show_page():
                         st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(qty), "total": float(item["sale_price"]) * float(qty)})
                         st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
+            else:
+                st.info("لم تحدد أصناف مفضلة.")
+            st.markdown("</div>", unsafe_allow_html=True)
 
     # ==========================================
     # 2. البحث اليدوي والصنف الحر
