@@ -98,7 +98,8 @@ def show_page():
                     "🗑️ تلف / كسر (خسارة تشغيلية)", 
                     "⏳ منتهي الصلاحية (خسارة تشغيلية)", 
                     "🔄 مرتجع زبون - صالح للبيع (يعود للمخزن)", 
-                    "⚠️ مرتجع زبون - تالف (لا يعود للبيع)"
+                    "⚠️ مرتجع زبون - تالف (لا يعود للبيع)",
+                    "🔄 إعادة صنف تالف/مُصلح إلى المخزن (إلغاء إتلاف)"
                 ])
                 
                 notes = st.text_input("ملاحظات أو سبب الحركة (اختياري):", value="")
@@ -111,9 +112,13 @@ def show_page():
                         unit_cost = float(selected_item["avg_cost"]) if float(selected_item["avg_cost"]) > 0 else float(selected_item["buy_price"])
                         total_loss_value = qty * unit_cost
                         
-                        if "صالح للبيع" in adj_type:
+                        if "صالح للبيع" in adj_type or "إعادة صنف تالف/مُصلح" in adj_type:
+                            # زيادة الكمية في المخزن (سواء مرتجع صالح أو إصلاح تالف)
                             cur.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (qty, selected_item["id"]))
-                            db_type = "مرتجع صالح للبيع"
+                            db_type = "إعادة صنف مُصلح للخدمة" if "إعادة صنف تالف/مُصلح" in adj_type else "مرتجع صالح للبيع"
+                            # إذا كانت إعادة إصلاح، نضع القيمة بالسالب لخصمها من الخسائر المسجلة مسبقاً
+                            if "إعادة صنف تالف/مُصلح" in adj_type:
+                                total_loss_value = -total_loss_value
                         elif "تلف" in adj_type or "منتهي" in adj_type or "مرتجع زبون - تالف" in adj_type:
                             if float(selected_item["quantity"]) < qty:
                                 st.error("❌ الكمية المراد إتلافها أكبر من المتوفر في المخزن!")
@@ -130,7 +135,7 @@ def show_page():
                         """, (b_id, selected_item["id"], selected_item["item_name"], qty, db_type, total_loss_value, notes))
                         
                         conn.commit()
-                        st.success("✅ تم تسجيل الحركة وتحديث مخزون الفرع وإظهار الإجماليات بنجاح!")
+                        st.success("✅ تم تسجيل الحركة وتحديث المخزن وإظهار الإجماليات بنجاح!")
                         st.rerun()
                     else:
                         st.warning("⚠️ يرجى إدخال كمية صحيحة.")
