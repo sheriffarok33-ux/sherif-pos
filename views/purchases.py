@@ -20,6 +20,9 @@ def show_page():
             direction: rtl !important;
             text-align: right !important;
         }
+        div.stButton > button p, div.stButton > button span, div.stButton > button div {
+            color: #ffffff !important;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -159,13 +162,31 @@ def show_page():
 
     if st.session_state["purch_cart"]:
         st.markdown("### 🛒 محتويات فاتورة الشراء الحالية")
-        cart_df = pd.DataFrame(st.session_state["purch_cart"]).rename(columns={"code": "الكود", "name": "الصنف", "qty": "الكمية", "price": "سعر الوحدة", "total": "الإجمالي"})
-        st.dataframe(cart_df[["الكود", "الصنف", "الكمية", "سعر الوحدة", "الإجمالي"]], use_container_width=True, hide_index=True)
         
+        # 🌟 عرض الأصناف مع زر حذف صنف مفرد أو تفريغ السلة بالكامل
+        for index, purch_item in enumerate(st.session_state["purch_cart"]):
+            p_col1, p_col2, p_col3, p_col4, p_col5 = st.columns([2, 1, 1, 1, 0.6])
+            p_col1.write(f"🏷️ {purch_item['name']} ({purch_item['code']})")
+            p_col2.write(f"كمية: {purch_item['qty']}")
+            p_col3.write(f"سعر: {purch_item['price']} د.ل")
+            p_col4.write(f"إجمالي: {purch_item['total']} د.ل")
+            if p_col5.button("🗑️", key=f"del_purch_item_{index}", help="حذف هذا الصنف فقط"):
+                st.session_state["purch_cart"].pop(index)
+                st.rerun()
+        st.markdown("---")
+
         g_tot = sum([x["total"] for x in st.session_state["purch_cart"]])
         st.markdown(f"### 📌 إجمالي الفاتورة: <span style='color: #dc2626;'>{g_tot:,.2f} د.ل</span>", unsafe_allow_html=True)
         
-        if st.button("💾 اعتماد فاتورة المشتريات (ترحيل للمخزن وتحديث متوسط التكلفة)", type="primary"):
+        col_act1, col_act2 = st.columns(2)
+        with col_act1:
+            confirm_btn = st.button("💾 اعتماد فاتورة المشتريات (ترحيل للمخزن وتحديث متوسط التكلفة)", type="primary", use_container_width=True)
+        with col_act2:
+            if st.button("❌ تفريغ السلة بالكامل", use_container_width=True):
+                st.session_state["purch_cart"] = []
+                st.rerun()
+
+        if confirm_btn:
             if not inv_num.strip():
                 st.error("⚠️ يرجى إدخال رقم الفاتورة الورقية الخاصة بالمورد.")
             else:
