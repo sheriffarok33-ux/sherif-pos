@@ -163,7 +163,7 @@ def process_barcode_scan():
 
 # --- واجهة شاشة نقطة البيع الأساسية ---
 def show_page():
-    # 🌟 ستايل محسّن لمنع تداخل الحروف وضبط اتجاهات الـ RTL بدقة تامة
+    # 🌟 ستايل منسق بدقة لتفادي أي تداخل نصي في العناوين أو الـ Expander
     st.markdown("""
         <style>
         .top-panel { background-color: #e2e8f0; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 12px; direction: rtl; text-align: right; }
@@ -172,8 +172,12 @@ def show_page():
         .btn-red > button { background-color: #dc2626 !important; }
         .rtl-container { direction: rtl !important; text-align: right !important; }
         
-        /* إصلاح جذري لمشكلة تداخل العناوين والأيقونات باللغة العربية */
-        div[data-testid="stExpander"] summary div p {
+        /* 🌟 إصلاح تداخل العناوين والأيقونات في الـ Expander */
+        div[data-testid="stExpander"] details summary {
+            direction: rtl !important;
+            text-align: right !important;
+        }
+        div[data-testid="stExpander"] details summary span {
             direction: rtl !important;
             text-align: right !important;
             unicode-bidi: plaintext !important;
@@ -296,7 +300,7 @@ def show_page():
                     <b>مبيعات اليوم الحالي:</b> {day_sales:,.2f} د.ل<br>
                     <b>إجمالي الأيام السابقة (التراكمي):</b> {cumulative_prev_sales:,.2f} د.ل</p><hr>
                     <h3>الإجمالي الكلي التراكمي: {total_all_sales:,.2f} د.ل</h3><hr>
-                    <p style="font-size: 12px;">تم الإغلاق المالي بنجاح</p>
+                    <p style="font-size: 12px;">نهاية التقرير المالي</p>
                 </body></html>
                 """
                 st.download_button("🖨️ طباعة تقرير Z-Read الشامل", data=z_html.encode('utf-8'), file_name=f"Z_Read_{today_date}.html", mime="text/html", use_container_width=True)
