@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS مع ضبط لون الحروف داخل الأزرار الزرقاء ليصبح أبيضاً
+# إضافة ستايل CSS مع ضبط لون الحروف داخل الأزرار الزرقاء وإخفاء إرشادات الإدخال الإنجليزية
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -48,6 +48,11 @@ st.markdown("""
         transition: all 0.3s ease; margin-bottom: 8px; font-size: 17px !important; height: auto;
     }
     [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); }
+    
+    /* 🌟 إخفاء إرشادات الضغط على زر Enter التلقائية لتكون الواجهة عربية بالكامل بدون إنجليزية */
+    div[data-testid="InputInstructions"] {
+        display: none !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
