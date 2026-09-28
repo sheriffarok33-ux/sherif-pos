@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 import sqlite3
+from pathlib import Path
 
 try:
     import psycopg2
@@ -9,7 +10,12 @@ try:
 except ImportError:
     POSTGRES_AVAILABLE = False
 
-DB_NAME = "abu_zaid_new_system.db"
+# 🌟 تحديد مسار ثابت ومطلق لملف قاعدة البيانات داخل مجلد المشروع لضمان عدم ضياع البيانات
+BASE_DIR = Path(__file__).resolve().parent  # مجلد ملف database.py الحالي
+DB_PATH = BASE_DIR / "data" / "abu_zaid_new_system.db"  # مسار ثابت في مجلد data
+
+# التأكد من إنشاء مجلد data تلقائياً إذا لم يكن موجوداً
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "⭐ لوحة المفضلة (1-20)", "📦 إدارة المخزن والفروع",
@@ -22,22 +28,23 @@ def get_db_connection():
     db_type = os.getenv("DB_TYPE", "")
     postgres_url = os.getenv("DATABASE_URL", "")
 
-    if "DB_TYPE" in st.secrets:
-        db_type = st.secrets["DB_TYPE"]
-    if "DATABASE_URL" in st.secrets:
-        postgres_url = st.secrets["DATABASE_URL"]
+    if hasattr(st, "secrets"):
+        if "DB_TYPE" in st.secrets:
+            db_type = st.secrets["DB_TYPE"]
+        if "DATABASE_URL" in st.secrets:
+            postgres_url = st.secrets["DATABASE_URL"]
 
     if db_type == "postgres" and POSTGRES_AVAILABLE and postgres_url:
         try:
             conn = psycopg2.connect(postgres_url, cursor_factory=RealDictCursor)
             return conn
         except Exception as e:
-            conn = sqlite3.connect(DB_NAME, timeout=10)
+            conn = sqlite3.connect(str(DB_PATH), timeout=10)
             conn.execute("PRAGMA foreign_keys = ON")
             conn.row_factory = sqlite3.Row
             return conn
     else:
-        conn = sqlite3.connect(DB_NAME, timeout=10)
+        conn = sqlite3.connect(str(DB_PATH), timeout=10)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         return conn
@@ -175,4 +182,4 @@ def initialize_database():
 
 if __name__ == "__main__":
     initialize_database()
-    print("✅ تم إنشاء قاعدة البيانات والجداول بنجاح!")
+    print("✅ تم إنشاء قاعدة البيانات والجداول بالمسار الثابت والمطلق بنجاح!")
