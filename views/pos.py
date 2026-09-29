@@ -51,7 +51,7 @@ def add_missing_item_dialog(scanned_code, b_id):
             else:
                 st.error("⚠️ يرجى إدخال اسم الصنف وسعر بيع صحيح.")
 
-# --- دالة شاشة إتمام الدفع وإصدار الفاتورة مع ميزة الخصم المتاحة للجميع ---
+# --- دالة شاشة إتمام الدفع وإصدار الفاتورة مع ميزة الخصم المتاح للجميع ---
 @st.dialog("💳 إتمام الدفع وإصدار الفاتورة")
 def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shift_num, daily_inv_num):
     st.subheader(f"إجمالي الفاتورة قبل الخصم: {g_tot:,.2f} د.ل")
@@ -110,6 +110,7 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
             cart_json = json.dumps(st.session_state["cart"], ensure_ascii=False)
             cur_in = conn.cursor()
             
+            # حفظ الفاتورة بالصافي النهائي (final_tot) لكي تظهر في تقارير X و Z بدقة
             cursor_res = cur_in.execute("""
                 INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method, notes, shift_status) 
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
