@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from database import initialize_database, get_db_connection
 import streamlit.components.v1 as components
 
-# تهيئة قاعدة البيانات عند بدء تشغيل التطبيق (مع إنشاء حساب الأدمن الافتراضي تلقائياً لحل مشكلة الدخول)
+# تهيئة قاعدة البيانات وإنشاء حساب الأدمن تلقائياً لحل مشكلة الدخول فوراً
 def init_default_admin():
     try:
         initialize_database()
