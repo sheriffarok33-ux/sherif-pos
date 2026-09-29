@@ -358,7 +358,7 @@ def show_page():
         c_inv1, c_inv2 = st.columns(2)
         with c_inv1: st.download_button("📥 تحميل الفاتورة (HTML)", data=html_file_content.encode('utf-8'), file_name=f"Invoice_{inv['inv_id']}.html", mime="text/html", use_container_width=True)
         with c_inv2: 
-            if st.button("✖️️ إخفاء الفاتورة ومتابعة البيع", type="primary", use_container_width=True): 
+            if st.button("✖️ إخفاء الفاتورة ومتابعة البيع", type="primary", use_container_width=True): 
                 st.session_state["last_invoice"] = None
                 st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
@@ -373,7 +373,7 @@ def show_page():
     st.markdown("---")
 
     # ==========================================
-    # 1. شاشة الكاشير السريع (بدون لوحة المفضلة)
+    # 1. شاشة الكاشير السريع
     # ==========================================
     if st.session_state["pos_active_view"] == "الكاشير السريع":
         st.markdown('<div class="top-panel">', unsafe_allow_html=True)
@@ -392,6 +392,9 @@ def show_page():
             """, unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
+        # 🌟 تم إلغاء عمود المفضلة (col_fav) وجعل سلة المبيعات تأخذ الشاشة كاملة
+        st.markdown("### 🧾 محتويات سلة المبيعات الحالية")
+        
         cart_items_list = st.session_state.get("cart", [])
         total_cart_qty = sum(item["qty"] for item in cart_items_list)
         total_cart_val = sum(item["total"] for item in cart_items_list)
