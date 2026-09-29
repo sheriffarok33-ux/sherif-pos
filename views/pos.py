@@ -474,11 +474,11 @@ def show_page():
             else: st.warning("يرجى إدخال سعر صحيح للصنف الحر.")
 
     # ==========================================
-    # 3. الأرشيف وإعادة الطباعة (يحتوي على فواتير التزويد، تقارير Z، وفواتير المبيعات)
+    # 3. الأرشيف وإعادة الطباعة (يحتوي على فواتير التزويد، تقارير Z السابقة، وفواتير المبيعات)
     # ==========================================
     elif st.session_state["pos_active_view"] == "الأرشيف":
         
-        # أ) أرشيف فواتير التزويد الواردة للفرع (الاستعلام مصحح وآمن تماماً باستخدام b_id)
+        # أ) أرشيف فواتير التزويد الواردة للفرع
         st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك</h3>', unsafe_allow_html=True)
         branch_transfers = conn.execute("""
             SELECT id AS 'رقم التزويد', items_details AS 'تفاصيل الأصناف والكميات', status AS 'حالة الاستلام', transfer_date AS 'تاريخ الإرسال'
@@ -494,35 +494,22 @@ def show_page():
                 trans_data = conn.execute("SELECT * FROM transfer_logs WHERE id = ?", (target_trans_id,)).fetchone()
                 
                 if trans_data:
-                    b_info = conn.execute("SELECT branch_name, phone FROM branches WHERE id = ?", (b_id,)).fetchone()
-                    b_phone_rep = b_info.get('phone', 'غير متوفر') if b_info else 'غير متوفر'
+                    # 🌟 استعلام آمن للفرع بدون توقع وجود عمود الهاتف لضمان عدم حدوث OperationalError
+                    b_info = conn.execute("SELECT branch_name FROM branches WHERE id = ?", (b_id,)).fetchone()
+                    b_name_rep = b_info["branch_name"] if b_info else branch_name_display
                     
-                    items_text = trans_data['items_details']
-                    items_html_reprint = ""
-                    notes_reprint = ""
-                    
-                    for line in items_text.split(" -- ملاحظات: "):
-                        if " -- ملاحظات: " in items_text:
-                            parts = items_text.split(" -- ملاحظات: ")
-                            items_part = parts[0]
-                            notes_reprint = parts[1] if len(parts) > 1 else ""
-                        else:
-                            items_part = items_text
-
                     trans_html_content = f"""
                     <html dir="rtl"><head><meta charset="utf-8"></head>
                     <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
                         <h2>مجموعة أبو زيد التجارية</h2>
                         <p style="margin-top: 0; font-weight: bold; background-color: #e2e8f0; padding: 5px;">فاتورة تزويد واردة للفرع</p><hr>
                         <p style="text-align: right;">
-                        <b>فرع الاستلام:</b> {branch_name_display} | هاتف: {b_phone_rep}<br>
+                        <b>فرع الاستلام:</b> {b_name_rep}<br>
                         <b>رقم حركة التزويد:</b> #{trans_data['id']}<br>
                         <b>التاريخ:</b> {trans_data['transfer_date']}<br>
                         <b>المرسل:</b> المخزن الرئيسي<br>
                         <b>حالة الاستلام:</b> {trans_data['status']}</p><hr>
-                        <p style="text-align: right; font-size: 15px;"><b>الأصناف والكميات الواردة:</b><br>{items_part}</p>
-                        {f"<p style='text-align: right;'><b>ملاحظات:</b> {notes_reprint}</p>" if notes_reprint else ""}
-                        <hr>
+                        <p style="text-align: right; font-size: 15px;"><b>الأصناف والكميات الواردة:</b><br>{trans_data['items_details']}</p><hr>
                         <p style="font-size: 12px; margin-top: 20px;">الرجاء مراجعة الكميات، توقيع المستلم: ........................</p>
                     </body></html>
                     """
@@ -540,7 +527,7 @@ def show_page():
 
         st.markdown("---")
 
-        # ب) أرشيف تقارير الإغلاق المالي اليومي (Z-Read) السابقة (محفوظة بالكامل)
+        # ب) أرشيف تقارير الإغلاق المالي اليومي (Z-Read) السابقة (محفوظة بالكامل كما طلبت)
         st.markdown('<h3 class="rtl-container">🔒 أرشيف تقارير الإغلاق المالي اليومي (Z-Read) السابقة</h3>', unsafe_allow_html=True)
         z_closed_dates = conn.execute("""
             SELECT DISTINCT DATE(created_at) as closed_date 
