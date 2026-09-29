@@ -8,8 +8,35 @@ from datetime import datetime, timedelta
 from database import initialize_database, get_db_connection
 import streamlit.components.v1 as components
 
-# تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
-initialize_database()
+# تهيئة قاعدة البيانات عند بدء تشغيل التطبيق (مع إنشاء حساب الأدمن الافتراضي تلقائياً لحل مشكلة الدخول)
+def init_default_admin():
+    try:
+        initialize_database()
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                phone TEXT,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL,
+                branch_id INTEGER,
+                is_active INTEGER DEFAULT 1
+            )
+        """)
+        admin_exists = cursor.execute("SELECT * FROM users WHERE role = 'Admin'").fetchone()
+        if not admin_exists:
+            cursor.execute("""
+                INSERT INTO users (username, phone, password, role, branch_id, is_active)
+                VALUES (?, ?, ?, ?, ?, 1)
+            """, ("admin", "0910000000", "admin123", "Admin", 1))
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        pass
+
+init_default_admin()
 
 # إعدادات الصفحة الأساسية
 st.set_page_config(
@@ -50,7 +77,6 @@ st.markdown("""
     }
     [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); }
     
-    /* 🌟 إخفاء إرشادات الضغط على زر Enter التلقائية */
     div[data-testid="InputInstructions"] {
         display: none !important;
     }
@@ -68,11 +94,11 @@ st.markdown("""
         const text = document.getElementById('status-text');
         
         if (navigator.onLine) {
-            dot.style.backgroundColor = '#22c55e'; // أخضر
+            dot.style.backgroundColor = '#22c55e';
             text.innerHTML = 'متصل بالسيرفر (Online)';
             syncOfflineData();
         } else {
-            dot.style.backgroundColor = '#dc2626'; // أحمر
+            dot.style.backgroundColor = '#dc2626';
             text.innerHTML = 'غير متصل (Offline - يعمل محلياً)';
         }
     }
@@ -81,7 +107,6 @@ st.markdown("""
         const pendingInvoices = JSON.parse(localStorage.getItem('pending_invoices') || '[]');
         if (pendingInvoices.length > 0) {
             console.log('جاري مزامنة البيانات والفواتير المعلقة مع السيرفر السحابي...', pendingInvoices);
-            // سيتم إرسال البيانات للسيرفر هنا برمجياً فور توفر الاتصال
         }
     }
 
@@ -89,7 +114,7 @@ st.markdown("""
     window.addEventListener('offline', updateOnlineStatus);
     
     updateOnlineStatus();
-    setInterval(updateOnlineStatus, 5000); // فحص دوري لحالة الشبكة كل 5 ثوانٍ
+    setInterval(updateOnlineStatus, 5000);
     </script>
 """, unsafe_allow_html=True)
 
@@ -132,10 +157,10 @@ if not st.session_state["logged_in"]:
             submit = st.form_submit_button("🚀 دخول للنظام", use_container_width=True)
             if submit:
                 conn = get_db_connection()
-                user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name, u_pass)).fetchone()
+                user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name.strip(), u_pass)).fetchone()
                 conn.close()
                 if user:
-                    if user["is_active"] == 0:
+                    if "is_active" in user.keys() and user["is_active"] == 0:
                         st.error("🚫 هذا الحساب موقوف!")
                         st.stop()
                     st.session_state["logged_in"] = True
@@ -145,7 +170,7 @@ if not st.session_state["logged_in"]:
                     st.session_state["branch_id"] = user["branch_id"]
                     st.rerun()
                 else: 
-                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!**")
+                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (يمكنك الدخول بـ admin / admin123)")
     st.stop()
 
 # --- القائمة الجانبية (Navigation Menu) ---
