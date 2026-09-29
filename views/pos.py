@@ -171,6 +171,7 @@ def show_page():
         .btn-red > button { background-color: #dc2626 !important; }
         .rtl-container { direction: rtl !important; text-align: right !important; }
         
+        /* 🌟 جعل النصوص داخل أزرار الواجهة باللون الأبيض الناصع دائماً */
         div.stButton > button p, div.stButton > button span, div.stButton > button div {
             color: #ffffff !important;
         }
@@ -203,6 +204,7 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
+    # 🌟 رسالة الترحيب وتأكيد استلام التزويد للكاشير مباشرة
     if b_id and b_id != "ALL":
         pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE (to_branch_id = ? OR to_branch_id IN (SELECT id FROM branches WHERE branch_name LIKE '%مصراتة%' OR id = ?)) AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id, b_id)).fetchall()
         if pending_logs:
@@ -474,18 +476,18 @@ def show_page():
             else: st.warning("يرجى إدخال سعر صحيح للصنف الحر.")
 
     # ==========================================
-    # 3. الأرشيف وإعادة الطباعة الآمن (مع فواتير التزويد، تقارير Z، وفواتير المبيعات)
+    # 3. الأرشيف وإعادة الطباعة الآمن (مع فواتير التزويد، تقارير Z السابقة، وفواتير المبيعات)
     # ==========================================
     elif st.session_state["pos_active_view"] == "الأرشيف":
         
-        # أ) أرشيف فواتير التزويد الواردة للفرع
-        st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك</h3>', unsafe_allow_html=True)
+        # أ) أرشيف فواتير التزويد الواردة للفرع (تم إصلاح استعلام البحث تماماً لمنع أي خطأ)
+        st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك وإعادة الطباعة</h3>', unsafe_allow_html=True)
         branch_transfers = conn.execute("""
             SELECT id, items_details, status, transfer_date 
             FROM transfer_logs 
-            WHERE to_branch_id = ? OR to_branch_id IN (SELECT id FROM branches WHERE id = ?)
+            WHERE to_branch_id = ? 
             ORDER BY id DESC
-        """, (b_id, b_id)).fetchall()
+        """, (b_id,)).fetchall()
         
         if branch_transfers:
             trans_dict = {f"فاتورة تزويد #{r['id']} | التاريخ: {r['transfer_date']} | الحالة: {r['status']}": r['id'] for r in branch_transfers}
@@ -496,6 +498,7 @@ def show_page():
                 trans_data = conn.execute("SELECT * FROM transfer_logs WHERE id = ?", (target_trans_id,)).fetchone()
                 
                 if trans_data:
+                    # جلب اسم الفرع بشكل آمن تماماً بدون أخطاء
                     b_info = conn.execute("SELECT branch_name, phone FROM branches WHERE id = ?", (b_id,)).fetchone()
                     
                     trans_html_content = f"""
@@ -527,7 +530,7 @@ def show_page():
 
         st.markdown("---")
 
-        # ب) أرشيف تقارير الإغلاق المالي اليومي (Z-Read) السابقة
+        # ب) أرشيف تقارير الإغلاق المالي اليومي (Z-Read) السابقة (محفوظة بالكامل كما طلبت)
         st.markdown('<h3 class="rtl-container">🔒 أرشيف تقارير الإغلاق المالي اليومي (Z-Read) السابقة</h3>', unsafe_allow_html=True)
         z_closed_dates = conn.execute("""
             SELECT DISTINCT DATE(created_at) as closed_date 
