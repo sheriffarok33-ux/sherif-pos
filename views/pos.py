@@ -242,7 +242,7 @@ def show_page():
     branch_inv_count = conn.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date)).fetchone()[0]
     daily_inv_num = branch_inv_count + 1
 
-    # --- قسم تقارير الإغلاق المالي وتسليم الورديات     (عنوان عربي خالص لتفادي أي تداخل)  ---
+    # ---     قسم تقارير الإغلاق المالي وتسليم الورديات      ---
     if role in ["Admin", "General_Supervisor", "Branch_Supervisor"]:
         with st.expander("تقارير الإغلاق المالي وتسليم الورديات"):
             c_x, c_z = st.columns(2)
