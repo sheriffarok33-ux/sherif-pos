@@ -222,7 +222,7 @@ def show_page():
                 
             st.markdown('</div>', unsafe_allow_html=True)
             
-            if st.button("✅ اضغط للموافقة وتأكيد استلاستلام البضاعة وبدء العمل", type="primary", use_container_width=True):
+            if st.button("✅ اضغط للموافقة وتأكيد استلام البضاعة وبدء العمل", type="primary", use_container_width=True):
                 cur_pt = conn.cursor()
                 for pt in pending_logs:
                     cur_pt.execute("""
@@ -474,7 +474,7 @@ def show_page():
             else: st.warning("يرجى إدخال سعر صحيح للصنف الحر.")
 
     # ==========================================
-    # 3. الأرشيف وإعادة الطباعة (فواتير التزويد، تقارير Z السابقة، وفواتير المبيعات)
+    # 3. الأرشيف وإعادة الطباعة الآمن (مع فواتير التزويد، تقارير Z، وفواتير المبيعات)
     # ==========================================
     elif st.session_state["pos_active_view"] == "الأرشيف":
         
@@ -483,20 +483,20 @@ def show_page():
         branch_transfers = conn.execute("""
             SELECT id, items_details, status, transfer_date 
             FROM transfer_logs 
-            WHERE to_branch_id = ? 
+            WHERE to_branch_id = ? OR to_branch_id IN (SELECT id FROM branches WHERE id = ?)
             ORDER BY id DESC
-        """, (b_id,)).fetchall()
+        """, (b_id, b_id)).fetchall()
         
         if branch_transfers:
             trans_dict = {f"فاتورة تزويد #{r['id']} | التاريخ: {r['transfer_date']} | الحالة: {r['status']}": r['id'] for r in branch_transfers}
-            sel_trans_str = st.selectbox("🔍 اختر فاتورة التزويد لعرضها وإعادة طباعتها:", ["-- اختر فاتورة التزويد --"] + list(trans_dict.keys()))
+            sel_trans_str = st.selectbox("🔍 اختر فاتورة التزويد لعرضها وإعادة طباعتها:", ["-- اختر فاتورة التزويد --"] + list(trans_dict.keys()), key="sel_trans_reprint_box")
             
             if sel_trans_str != "-- اختر فاتورة التزويد --":
                 target_trans_id = trans_dict[sel_trans_str]
                 trans_data = conn.execute("SELECT * FROM transfer_logs WHERE id = ?", (target_trans_id,)).fetchone()
                 
                 if trans_data:
-                    b_info = conn.execute("SELECT branch_name, phone FROM branches WHERE id = ?", (trans_data["to_branch_id"],)).fetchone()
+                    b_info = conn.execute("SELECT branch_name, phone FROM branches WHERE id = ?", (b_id,)).fetchone()
                     
                     trans_html_content = f"""
                     <html dir="rtl"><head><meta charset="utf-8"></head>
@@ -504,7 +504,7 @@ def show_page():
                         <h2>مجموعة أبو زيد التجارية</h2>
                         <p style="margin-top: 0; font-weight: bold; background-color: #e2e8f0; padding: 5px;">فاتورة تزويد واردة للفرع</p><hr>
                         <p style="text-align: right;">
-                        <b>فرع الاستلام:</b> {b_info['branch_name'] if b_info else 'غير محدد'} | هاتف: {b_info.get('phone', 'غير متوفر') if b_info else 'غير متوفر'}<br>
+                        <b>فرع الاستلام:</b> {b_info['branch_name'] if b_info else branch_name_display} | هاتف: {b_info.get('phone', 'غير متوفر') if b_info else 'غير متوفر'}<br>
                         <b>رقم حركة التزويد:</b> #{trans_data['id']}<br>
                         <b>التاريخ:</b> {trans_data['transfer_date']}<br>
                         <b>المرسل:</b> المخزن الرئيسي<br>
@@ -519,7 +519,8 @@ def show_page():
                         data=trans_html_content.encode('utf-8'),
                         file_name=f"Transfer_Invoice_Reprint_{target_trans_id}.html",
                         mime="text/html",
-                        use_container_width=True
+                        use_container_width=True,
+                        key="dl_trans_btn"
                     )
         else:
             st.info("📭 لا توجد فواتير تزويد بضائع سابقة مسجلة لهذا الفرع.")
@@ -537,7 +538,7 @@ def show_page():
 
         if z_closed_dates:
             z_dates_list = [row["closed_date"] for row in z_closed_dates]
-            sel_z_date = st.selectbox("📅 اختر تاريخ الإغلاق المالي (Z) لعرضه وإعادة طباعته:", ["-- اختر التاريخ --"] + z_dates_list)
+            sel_z_date = st.selectbox("📅 اختر تاريخ الإغلاق المالي (Z) لعرضه وإعادة طباعته:", ["-- اختر التاريخ --"] + z_dates_list, key="sel_z_reprint_box")
 
             if sel_z_date != "-- اختر التاريخ --":
                 day_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, sel_z_date)).fetchone()
@@ -565,7 +566,8 @@ def show_page():
                     data=z_reprint_html.encode('utf-8'),
                     file_name=f"Z_Read_Archive_{branch_name_display}_{sel_z_date}.html",
                     mime="text/html",
-                    use_container_width=True
+                    use_container_width=True,
+                    key="dl_z_btn"
                 )
         else:
             st.info("📭 لا توجد تقارير إغلاق مالي (Z) مؤرشفة سابقة لهذا الفرع.")
@@ -578,7 +580,7 @@ def show_page():
         
         if recent_invs:
             inv_dict = {f"فاتورة مرجعية #{r['id']} | الزبون: {r['customer_name']} | المبلغ: {r['total_amount']} د.ل | التاريخ: {r['created_at']}": r['id'] for r in recent_invs}
-            sel_inv_str = st.selectbox("🔍 اختر الفاتورة لعرضها وإعادة طباعتها:", ["-- اختر الفاتورة --"] + list(inv_dict.keys()))
+            sel_inv_str = st.selectbox("🔍 اختر الفاتورة لعرضها وإعادة طباعتها:", ["-- اختر الفاتورة --"] + list(inv_dict.keys()), key="sel_inv_reprint_box")
             
             if sel_inv_str != "-- اختر الفاتورة --":
                 target_inv_id = inv_dict[sel_inv_str]
@@ -595,7 +597,7 @@ def show_page():
                     html_reprint_content = f"""
                     <html dir="rtl"><head><meta charset="utf-8"></head>
                     <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
-                        <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {b_info['branch_name'] if b_info else 'غير محدد'} <br><small>(نسخة مسترجعة)</small></p><hr>
+                        <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {b_info['branch_name'] if b_info else branch_name_display} <br><small>(نسخة مسترجعة)</small></p><hr>
                         <p style="text-align: right;"><b>رقم الفاتورة المرجعية:</b> #{inv_data['id']}<br><b>التاريخ:</b> {inv_data['created_at']}<br>
                         <b>الكاشير:</b> {u_info['username'] if u_info else 'غير محدد'}<br><b>الوردية:</b> رقم {inv_data['shift_status']}<br><b>طريقة الدفع:</b> {inv_data['payment_method']}</p><hr>
                         <table style="width: 100%; text-align: right; border-collapse: collapse;">
@@ -605,7 +607,14 @@ def show_page():
                     </body></html>
                     """
                     st.components.v1.html(html_reprint_content, height=350, scrolling=True)
-                    st.download_button(label="📥 تحميل الفاتورة المسترجعة (HTML)", data=html_reprint_content.encode('utf-8'), file_name=f"Invoice_Reprint_{target_inv_id}.html", mime="text/html", use_container_width=True)
+                    st.download_button(
+                        label="📥 تحميل الفاتورة المسترجعة (HTML)", 
+                        data=html_reprint_content.encode('utf-8'), 
+                        file_name=f"Invoice_Reprint_{target_inv_id}.html", 
+                        mime="text/html", 
+                        use_container_width=True,
+                        key="dl_inv_btn"
+                    )
         else:
             st.info("📭 لا توجد فواتير مبيعات سابقة مؤرشفة لهذا الفرع.")
 
