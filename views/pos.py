@@ -127,7 +127,7 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
             st.warning("⚠️ المبلغ المدفوع أقل من إجمالي الفاتورة.")
     conn.close()
 
-# --- معالجة الباركود وتصفير الكمية وتفعيل الشاشة المنبثقة للصنف غير الموجود ---
+# --- معالجة الباركود ---
 def process_barcode_scan():
     code = st.session_state.barcode_scan_input.strip()
     qty_to_add = st.session_state.get("barcode_qty_input", 1.0)
@@ -163,7 +163,6 @@ def process_barcode_scan():
 
 # --- واجهة شاشة نقطة البيع الأساسية ---
 def show_page():
-    # 🌟 ستايل منسق بدقة لمنع تداخل الحروف وضبط اتجاهات الـ RTL بالكامل
     st.markdown("""
         <style>
         .top-panel { background-color: #e2e8f0; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 12px; direction: rtl; text-align: right; }
@@ -172,8 +171,8 @@ def show_page():
         .btn-red > button { background-color: #dc2626 !important; }
         .rtl-container { direction: rtl !important; text-align: right !important; }
         
-        div.stButton > button p, div.stButton > button span, div.stButton > button div { 
-            color: #ffffff !important; 
+        div.stButton > button p, div.stButton > button span, div.stButton > button div {
+            color: #ffffff !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -223,13 +222,17 @@ def show_page():
                 
             st.markdown('</div>', unsafe_allow_html=True)
             
-            if st.button("✅ اضغط للموافقة وتأكيد استلام البضاعة وبدء العمل", type="primary", use_container_width=True):
+            if st.button("✅ اضغط للموافقة وتأكيد استلاستلام البضاعة وبدء العمل", type="primary", use_container_width=True):
                 cur_pt = conn.cursor()
                 for pt in pending_logs:
-                    cur_pt.execute("UPDATE transfer_logs SET status = ? WHERE id = ?", (f"مكتملة ومستلمة بواسطة الكاشير: {username}", pt['id']))
+                    cur_pt.execute("""
+                        UPDATE transfer_logs 
+                        SET status = ? 
+                        WHERE id = ?
+                    """, (f"مكتملة ومستلمة بواسطة الكاشير: {username}", pt['id']))
                 conn.commit()
                 conn.close()
-                st.success("✅ تم تأكيد استلاستلام البضاعة بنجاح! جاري فتح نقطة البيع...")
+                st.success("✅ تم تأكيد استلام البضاعة بنجاح! جاري فتح نقطة البيع...")
                 st.rerun()
             
             conn.close()
@@ -241,7 +244,7 @@ def show_page():
 
     # --- قسم تقارير الإغلاق المالي وتسليم الورديات (عنوان عربي خالص لتفادي أي تداخل) ---
     if role in ["Admin", "General_Supervisor", "Branch_Supervisor"]:
-        with st.expander("📊 تقارير الإغلاق المالي وتسليم الورديات"):
+        with st.expander("تقارير الإغلاق المالي وتسليم الورديات"):
             c_x, c_z = st.columns(2)
             
             # تقرير X-Read (الوردية الحالية بدون تصفير المبيعات اليومية)[cite: 4]
@@ -363,50 +366,68 @@ def show_page():
             """, unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown("### 🧾 محتويات سلة المبيعات الحالية")
+        col_grid, col_fav = st.columns([3, 1])
         
-        # 🌟 بطاقة إحصائية بارزة أعلى السلة لعرض إجمالي كمية الأصناف وإجمالي قيمة الفاتورة فوراً[cite: 6]
-        cart_items_list = st.session_state.get("cart", [])
-        total_cart_qty = sum(item["qty"] for item in cart_items_list)
-        total_cart_val = sum(item["total"] for item in cart_items_list)
-        
-        stat_c1, stat_c2 = st.columns(2)
-        with stat_c1:
-            st.metric(label="📦 إجمالي الكمية بالسلة", value=f"{total_cart_qty:,.2f}")
-        with stat_c2:
-            st.metric(label="💰 إجمالي قيمة الفاتورة", value=f"{total_cart_val:,.2f} د.ل")
-        st.markdown("---")
+        with col_grid:
+            st.markdown("### 🧾 محتويات سلة المبيعات الحالية")
+            if not st.session_state["cart"]:
+                st.info("السلة فارغة حالياً.")
+            else:
+                for index, cart_item in enumerate(st.session_state["cart"]):
+                    c_col1, c_col2, c_col3, c_col4, c_col5 = st.columns([2, 1, 1, 1, 0.6])
+                    c_col1.write(f"🏷️ {cart_item['name']}")
+                    c_col2.write(f"كمية: {cart_item['qty']}")
+                    c_col3.write(f"سعر: {cart_item['price']} د.ل")
+                    c_col4.write(f"إجمالي: {cart_item['total']} د.ل")
+                    if c_col5.button("🗑️", key=f"del_cart_{index}", help="حذف هذا الصنف فقط"):
+                        st.session_state["cart"].pop(index)
+                        st.rerun()
+                st.markdown("---")
 
-        if not cart_items_list:
-            st.info("السلة فارغة حالياً.")
-        else:
-            for index, cart_item in enumerate(cart_items_list):
-                c_col1, c_col2, c_col3, c_col4, c_col5 = st.columns([2, 1, 1, 1, 0.6])
-                c_col1.write(f"🏷️ {cart_item['name']}")
-                c_col2.write(f"كمية: {cart_item['qty']}")
-                c_col3.write(f"سعر: {cart_item['price']} د.ل")
-                c_col4.write(f"إجمالي: {cart_item['total']} د.ل")
-                if c_col5.button("🗑️", key=f"del_cart_{index}", help="حذف هذا الصنف فقط"):
-                    st.session_state["cart"].pop(index)
+            g_tot = sum(item["total"] for item in st.session_state.get("cart", []))
+            st.markdown(f'<div class="totals-panel">الإجمالي: <b>{g_tot:,.2f} د.ل</b> &nbsp;|&nbsp; الصافي المطلوب: <span style="color:#22c55e;">{g_tot:,.2f} د.ل</span></div>', unsafe_allow_html=True)
+            
+            st.write("")
+            c_btn1, c_btn3 = st.columns([2, 1])
+            with c_btn1:
+                st.markdown('<div class="pos-btn btn-green">', unsafe_allow_html=True)
+                if st.button("💰 دفع واعتماد الفاتورة (F12)", use_container_width=True) and st.session_state["cart"]: 
+                    checkout_payment_dialog(b_id, g_tot, branch_name_display, username, current_shift_num, daily_inv_num)
+                st.markdown('</div>', unsafe_allow_html=True)
+            with c_btn3:
+                st.markdown('<div class="pos-btn btn-red">', unsafe_allow_html=True)
+                if st.button("❌ تفريغ السلة بالكامل", use_container_width=True): 
+                    st.session_state["cart"] = []
                     st.rerun()
-            st.markdown("---")
+                st.markdown('</div>', unsafe_allow_html=True)
 
-        g_tot = total_cart_val
-        st.markdown(f'<div class="totals-panel">الإجمالي: <b>{g_tot:,.2f} د.ل</b> &nbsp;|&nbsp; الصافي المطلوب: <span style="color:#22c55e;">{g_tot:,.2f} د.ل</span></div>', unsafe_allow_html=True)
-        
-        st.write("")
-        c_btn1, c_btn3 = st.columns([2, 1])
-        with c_btn1:
-            st.markdown('<div class="pos-btn btn-green">', unsafe_allow_html=True)
-            if st.button("💰 دفع واعتماد الفاتورة (F12)", use_container_width=True) and st.session_state["cart"]: 
-                checkout_payment_dialog(b_id, g_tot, branch_name_display, username, current_shift_num, daily_inv_num)
-            st.markdown('</div>', unsafe_allow_html=True)
-        with c_btn3:
-            st.markdown('<div class="pos-btn btn-red">', unsafe_allow_html=True)
-            if st.button("❌ تفريغ السلة بالكامل", use_container_width=True): 
-                st.session_state["cart"] = []
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
+        with col_fav:
+            st.markdown('<h3 class="rtl-container">⭐ المفضلة</h3>', unsafe_allow_html=True)
+            fav_items = conn.execute("SELECT * FROM items WHERE branch_id = ? AND favorite_rank = 1 LIMIT 12", (b_id,)).fetchall()
+            
+            st.markdown("<div style='background-color:#f1f5f9; padding:6px; border-radius:8px; height:360px; overflow-y:auto; border:1px solid #cbd5e1; direction: rtl;'>", unsafe_allow_html=True)
+            if fav_items:
+                for item in fav_items:
+                    st.markdown("<div style='background:white; padding:4px; border-radius:6px; margin-bottom:6px; border:1px solid #e2e8f0; text-align:center;'>", unsafe_allow_html=True)
+                    img_path = os.path.join("item_images", f"{item['item_code']}.jpg")
+                    if os.path.exists(img_path):
+                        try:
+                            with open(img_path, "rb") as f:
+                                img_bytes = f.read()
+                                st.image(img_bytes, use_container_width=True)
+                        except:
+                            st.markdown("🥜")
+                    else:
+                        st.markdown("<div style='font-size:20px;'>🥜</div>", unsafe_allow_html=True)
+                        
+                    if st.button(f"{item['item_name']} ({item['sale_price']})", key=f"fav_{item['id']}", use_container_width=True):
+                        qty = st.session_state.get("barcode_qty_input", 1.0)
+                        st.session_state["cart"].append({"id": item["id"], "code": item["item_code"], "name": item["item_name"], "price": float(item["sale_price"]), "qty": float(qty), "total": float(item["sale_price"]) * float(qty)})
+                        st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
+            else:
+                st.info("لم تحدد أصناف مفضلة.")
+            st.markdown("</div>", unsafe_allow_html=True)
 
     # ==========================================
     # 2. البحث اليدوي والصنف الحر
