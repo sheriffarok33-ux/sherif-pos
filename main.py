@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
 from database import initialize_database, get_db_connection
+import streamlit.components.v1 as components
 
 # تهيئة قاعدة البيانات عند بدء تشغيل التطبيق
 initialize_database()
@@ -17,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# إضافة ستايل CSS مع ضبط لون الحروف داخل الأزرار الزرقاء وإخفاء إرشادات الإدخال الإنجليزية
+# إضافة ستايل CSS ومؤشر الاتصال (Online/Offline) في رأس الصفحة
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
@@ -49,11 +50,47 @@ st.markdown("""
     }
     [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); }
     
-    /* 🌟 إخفاء إرشادات الضغط على زر Enter التلقائية لتكون الواجهة عربية بالكامل بدون إنجليزية */
+    /* 🌟 إخفاء إرشادات الضغط على زر Enter التلقائية */
     div[data-testid="InputInstructions"] {
         display: none !important;
     }
     </style>
+
+    <!-- 🌐 مؤشر حالة الاتصال (Online/Offline) في أعلى الصفحة -->
+    <div id="connection-status" style="position: fixed; top: 10px; left: 10px; z-index: 999999; display: flex; align-items: center; background: #ffffff; padding: 6px 14px; border-radius: 20px; box-shadow: 0 3px 8px rgba(0,0,0,0.2); font-family: 'Tajawal', sans-serif; font-size: 14px; font-weight: bold;">
+        <span id="status-dot" style="height: 12px; width: 12px; background-color: #22c55e; border-radius: 50%; display: inline-block; margin-left: 8px; transition: background-color 0.3s;"></span>
+        <span id="status-text" style="color: #0f172a;">متصل بالسيرفر (Online)</span>
+    </div>
+
+    <script>
+    function updateOnlineStatus() {
+        const dot = document.getElementById('status-dot');
+        const text = document.getElementById('status-text');
+        
+        if (navigator.onLine) {
+            dot.style.backgroundColor = '#22c55e'; // أخضر
+            text.innerHTML = 'متصل بالسيرفر (Online)';
+            syncOfflineData();
+        } else {
+            dot.style.backgroundColor = '#dc2626'; // أحمر
+            text.innerHTML = 'غير متصل (Offline - يعمل محلياً)';
+        }
+    }
+
+    function syncOfflineData() {
+        const pendingInvoices = JSON.parse(localStorage.getItem('pending_invoices') || '[]');
+        if (pendingInvoices.length > 0) {
+            console.log('جاري مزامنة البيانات والفواتير المعلقة مع السيرفر السحابي...', pendingInvoices);
+            // سيتم إرسال البيانات للسيرفر هنا برمجياً فور توفر الاتصال
+        }
+    }
+
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+    
+    updateOnlineStatus();
+    setInterval(updateOnlineStatus, 5000); // فحص دوري لحالة الشبكة كل 5 ثوانٍ
+    </script>
 """, unsafe_allow_html=True)
 
 # إنشاء مجلد الصور إذا لم يكن موجوداً
@@ -224,7 +261,7 @@ elif choice == "➕ الفائض والتوالف والمرتجعات وتعد�
         from views import damages_returns
         damages_returns.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة الفائض والتوالف والمرتجعات (damages_returns.py) غير موجود في مجلد views.")
+        st.warning("⚠️ ملف شاشة الفائض والتوالف والمرتجعات غير موجود.")
 elif choice == "📁 استيراد Excel":
     try:
         from views import items_import
