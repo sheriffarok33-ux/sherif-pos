@@ -242,14 +242,13 @@ def show_page():
     branch_inv_count = conn.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date)).fetchone()[0]
     daily_inv_num = branch_inv_count + 1
 
-    # --- قسم تقارير الإغلاق المالي وتسليم الورديات (بدون أي تداخل بصري) ---
+    # --- قسم تقارير الإغلاق المالي وتسليم الورديات ---
     if role in ["Admin", "General_Supervisor", "Branch_Supervisor"]:
         st.markdown("<hr>", unsafe_allow_html=True)
         st.markdown("<h3 style='text-align: center; color: #0f172a; font-weight: 900;'>📊 تقارير الإغلاق المالي وتسليم الورديات</h3>", unsafe_allow_html=True)
         
         c_x, c_z = st.columns(2)
         
-        # تقرير X-Read (الوردية الحالية بدون تصفير المبيعات اليومية)[cite: 4]
         with c_x:
             st.markdown("<div style='background: #f1f5f9; padding: 15px; border-radius: 8px; border: 1px solid #cbd5e1;'>", unsafe_allow_html=True)
             st.markdown("#### 🕒 تقرير الوردية الحالية")
@@ -274,7 +273,6 @@ def show_page():
             st.download_button("🖨️ طباعة تقرير الوردية", data=x_html.encode('utf-8'), file_name=f"X_Read_{today_date}_Shift{current_shift_num}.html", mime="text/html", use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # تقرير Z-Read (الإغلاق المالي اليومي مع التصفير وتتبع التراكمي)[cite: 4]
         with c_z:
             st.markdown("<div style='background: #f1f5f9; padding: 15px; border-radius: 8px; border: 1px solid #cbd5e1;'>", unsafe_allow_html=True)
             st.markdown("#### 🔒 تقرير الإغلاق المالي اليومي")
@@ -376,7 +374,6 @@ def show_page():
         with col_grid:
             st.markdown("### 🧾 محتويات سلة المبيعات الحالية")
             
-            # 🌟 بطاقة إحصائية بارزة أعلى السلة لإجمالي الكمية وإجمالي قيمة الفاتورة للرؤية الفورية[cite: 6]
             cart_items_list = st.session_state.get("cart", [])
             total_cart_qty = sum(item["qty"] for item in cart_items_list)
             total_cart_val = sum(item["total"] for item in cart_items_list)
@@ -480,68 +477,102 @@ def show_page():
     # 3. الأرشيف وإعادة الطباعة
     # ==========================================
     elif st.session_state["pos_active_view"] == "الأرشيف":
-        st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك</h3>', unsafe_allow_html=True)
+        
+        # أ) أرشيف فواتير التزويد الواردة للفرع
+        st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك وإعادة الطباعة</h3>', unsafe_allow_html=True)
         branch_transfers = conn.execute("""
-            SELECT id AS 'رقم التزويد', items_details AS 'تفاصيل الأصناف والكميات', status AS 'حالة الاستلام', transfer_date AS 'تاريخ الإرسال'
-            FROM transfer_logs WHERE to_branch_id = ? ORDER BY id DESC
+            SELECT id, items_details, status, transfer_date 
+            FROM transfer_logs 
+            WHERE to_branch_id = ? 
+            ORDER BY id DESC
         """, (b_id,)).fetchall()
         
         if branch_transfers:
-            trans_dict = {f"فاتورة تزويد #{r['رقم التزويد']} | التاريخ: {r['تاريخ الإرسال']} | الحالة: {r['حالة الاستلام']}": r for r in branch_transfers}
-            sel_trans_str = st.selectbox("🔍 اختر فاتورة التزويد الواردة لعرضها وإعادة طباعتها:", ["-- اختر فاتورة التزويد --"] + list(trans_dict.keys()))
+            trans_dict = {f"فاتورة تزويد #{r['id']} | التاريخ: {r['transfer_date']} | الحالة: {r['status']}": r['id'] for r in branch_transfers}
+            sel_trans_str = st.selectbox("🔍 اختر فاتورة التزويد لعرضها وإعادة طباعتها:", ["-- اختر فاتورة التزويد --"] + list(trans_dict.keys()))
             
             if sel_trans_str != "-- اختر فاتورة التزويد --":
-                trans_data = trans_dict[sel_trans_str]
-                branch_columns = [col[1] for col in conn.execute("PRAGMA table_info(branches)").fetchall()]
-                has_phone_col = "phone" in branch_columns
-                b_info = conn.execute(f"SELECT branch_name {', phone' if has_phone_col else ''} FROM branches WHERE id = ?", (b_id,)).fetchone()
-                b_phone_rep = b_info.get('phone', 'غير متوفر') if has_phone_col and b_info else 'غير متوفر'
+                target_trans_id = trans_dict[sel_trans_str]
+                trans_data = conn.execute("SELECT * FROM transfer_logs WHERE id = ?", (target_trans_id,)).fetchone()
                 
-                items_text = trans_data['تفاصيل الأصناف والكميات']
-                items_html_reprint = ""
-                notes_reprint = ""
-                
-                delim = '\n' if '\n' in items_text else (' | ' if ' | ' in items_text else ' - ')
-                for line in items_text.split(delim):
-                    line = line.strip()
-                    if not line: continue
-                    if "ملاحظات:" in line:
-                        notes_reprint = line.replace("ملاحظات:", "").strip()
-                    else:
-                        if '(' in line and ')' in line:
-                            name_part = line[:line.rfind('(')].replace('▪', '').replace('-', '').strip()
-                            qty_part = line[line.rfind('(')+1:line.rfind(')')].replace('الكمية:', '').replace('كجم', '').strip()
-                            items_html_reprint += f"<tr><td>{name_part}</td><td>{qty_part}</td></tr>"
-                        else:
-                            items_html_reprint += f"<tr><td colspan='2'>{line.replace('▪', '').replace('-', '').strip()}</td></tr>"
-                
-                notes_html_rep = f"<p style='text-align: right; font-size: 14px;'><b>ملاحظات:</b> {notes_reprint}</p>" if notes_reprint else ""
-                
-                trans_html_content = f"""
-                <html dir="rtl"><head><meta charset="utf-8"></head>
-                <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
-                    <h2>مجموعة أبو زيد التجارية</h2>
-                    <p style="margin-top: 0; font-weight: bold; background-color: #e2e8f0; padding: 5px;">فاتورة تزويد واردة للفرع</p><hr>
-                    <p style="text-align: right;">
-                    <b>فرع الاستلام:</b> {b_info['branch_name'] if b_info else 'غير محدد'} | هاتف: {b_phone_rep}<br>
-                    <b>رقم حركة التزويد:</b> #{trans_data['رقم التزويد']}<br>
-                    <b>التاريخ:</b> {trans_data['تاريخ الإرسال']}<br>
-                    <b>المرسل:</b> المخزن الرئيسي<br>
-                    <b>حالة الاستلام:</b> {trans_data['حالة الاستلام']}</p><hr>
-                    <table style="width: 100%; text-align: right; border-collapse: collapse;">
-                        <tr style="border-bottom: 1px solid #000; background-color: #f1f5f9;"><th>الصنف</th><th>الكمية الواردة</th></tr>
-                        {items_html_reprint}
-                    </table><hr>
-                    {notes_html_rep}
-                    <p style="font-size: 12px; margin-top: 20px;">الرجاء مراجعة الكميات، توقيع المستلم: ........................</p>
-                </body></html>
-                """
-                st.components.v1.html(trans_html_content, height=450, scrolling=True)
-                st.download_button(label="📥 تحميل فاتورة التزويد (HTML)", data=trans_html_content.encode('utf-8'), file_name=f"Transfer_Invoice_Inbound_{trans_data['رقم التزويد']}.html", mime="text/html", use_container_width=True)
+                if trans_data:
+                    b_info = conn.execute("SELECT branch_name, phone FROM branches WHERE id = ?", (trans_data["to_branch_id"],)).fetchone()
+                    
+                    trans_html_content = f"""
+                    <html dir="rtl"><head><meta charset="utf-8"></head>
+                    <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
+                        <h2>مجموعة أبو زيد التجارية</h2>
+                        <p style="margin-top: 0; font-weight: bold; background-color: #e2e8f0; padding: 5px;">فاتورة تزويد واردة للفرع</p><hr>
+                        <p style="text-align: right;">
+                        <b>فرع الاستلام:</b> {b_info['branch_name'] if b_info else 'غير محدد'} | هاتف: {b_info.get('phone', 'غير متوفر') if b_info else 'غير متوفر'}<br>
+                        <b>رقم حركة التزويد:</b> #{trans_data['id']}<br>
+                        <b>التاريخ:</b> {trans_data['transfer_date']}<br>
+                        <b>المرسل:</b> المخزن الرئيسي<br>
+                        <b>حالة الاستلام:</b> {trans_data['status']}</p><hr>
+                        <p style="text-align: right; font-size: 15px;"><b>الأصناف والكميات الواردة:</b><br>{trans_data['items_details']}</p><hr>
+                        <p style="font-size: 12px; margin-top: 20px;">الرجاء مراجعة الكميات، توقيع المستلم: ........................</p>
+                    </body></html>
+                    """
+                    st.components.v1.html(trans_html_content, height=400, scrolling=True)
+                    st.download_button(
+                        label="📥 تحميل فاتورة التزويد المسترجعة (HTML)",
+                        data=trans_html_content.encode('utf-8'),
+                        file_name=f"Transfer_Invoice_Reprint_{target_trans_id}.html",
+                        mime="text/html",
+                        use_container_width=True
+                    )
         else:
             st.info("📭 لا توجد فواتير تزويد بضائع سابقة مسجلة لهذا الفرع.")
 
         st.markdown("---")
+
+        # ب) أرشيف تقارير الإغلاق المالي اليومي (Z-Read) السابقة
+        st.markdown('<h3 class="rtl-container">🔒 أرشيف تقارير الإغلاق المالي اليومي (Z-Read) السابقة</h3>', unsafe_allow_html=True)
+        z_closed_dates = conn.execute("""
+            SELECT DISTINCT DATE(created_at) as closed_date 
+            FROM invoices 
+            WHERE branch_id = ? AND shift_status = 'Z_Closed' 
+            ORDER BY closed_date DESC
+        """, (b_id,)).fetchall()
+
+        if z_closed_dates:
+            z_dates_list = [row["closed_date"] for row in z_closed_dates]
+            sel_z_date = st.selectbox("📅 اختر تاريخ الإغلاق المالي (Z) لعرضه وإعادة طباعته:", ["-- اختر التاريخ --"] + z_dates_list)
+
+            if sel_z_date != "-- اختر التاريخ --":
+                day_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, sel_z_date)).fetchone()
+                target_day_sales = day_sales_row[0] if day_sales_row and day_sales_row[0] else 0.0
+
+                prev_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id = ? AND DATE(created_at) < ?", (b_id, sel_z_date)).fetchone()
+                target_cumulative = prev_sales_row[0] if prev_sales_row and prev_sales_row[0] else 0.0
+                target_total_all = target_day_sales + target_cumulative
+
+                z_reprint_html = f"""
+                <html dir="rtl"><head><meta charset="utf-8"></head>
+                <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000; background-color: #fdfdfd;">
+                    <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {branch_name_display} <br><small>(نسخة تقرير إغلاق Z مسترجعة)</small></p><hr>
+                    <h3>تقرير الإغلاق المالي اليومي (مؤرشف)</h3>
+                    <p style="text-align: right;"><b>تاريخ الإغلاق:</b> {sel_z_date}<br>
+                    <b>تاريخ استخراج النسخة:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p><hr>
+                    <p style="text-align: right;"><b>مبيعات ذلك اليوم:</b> {target_day_sales:,.2f} د.ل<br><b>التراكمي السابق:</b> {target_cumulative:,.2f} د.ل</p><hr>
+                    <h3>الإجمالي الكلي التراكمي: {target_total_all:,.2f} د.ل</h3><hr>
+                    <p style="font-size: 12px;">تمت الأرشفة بنجاح</p>
+                </body></html>
+                """
+                st.components.v1.html(z_reprint_html, height=380, scrolling=True)
+                st.download_button(
+                    label=f"📥 تحميل تقرير الإغلاق المالي (Z) لتاريخ {sel_z_date}",
+                    data=z_reprint_html.encode('utf-8'),
+                    file_name=f"Z_Read_Archive_{branch_name_display}_{sel_z_date}.html",
+                    mime="text/html",
+                    use_container_width=True
+                )
+        else:
+            st.info("📭 لا توجد تقارير إغلاق مالي (Z) مؤرشفة سابقة لهذا الفرع.")
+
+        st.markdown("---")
+
+        # ج) أرشيف مبيعات الفرع وإعادة الطباعة
         st.markdown('<h3 class="rtl-container">📋 أرشيف مبيعات الفرع وإعادة الطباعة</h3>', unsafe_allow_html=True)
         recent_invs = conn.execute("SELECT id, customer_name, total_amount, created_at FROM invoices WHERE branch_id = ? ORDER BY id DESC LIMIT 100", (b_id,)).fetchall()
         
