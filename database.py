@@ -29,7 +29,6 @@ def get_db_connection():
     return conn
 
 def create_desktop_backup():
-    """🌟 دالة ذكية لأخذ نسخة احتياطية يومية وتلقائية على جهاز الكمبيوتر الخاص بالمدير (تتجاهل الهواتف)"""
     try:
         user_agent = str(st.context.headers.get("User-Agent", "")).lower() if hasattr(st, "context") else ""
         is_mobile = any(m in user_agent for m in ["iphone", "android", "ipad", "mobile", "tablet"])
@@ -48,7 +47,7 @@ def create_desktop_backup():
         print(f"Backup warning: {e}")
 
 def initialize_database():
-    """كود التهيئة الآمن: ينشئ الجداول إن لم تكن موجودة دون المسح أو التصفير مع تفعيل النسخ الاحتياطي"""
+    """كود التهيئة الآمن: ينشئ الجداول إن لم تكن موجودة ويضمن وجود حساب الأدمن للدخول الفوري"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -133,7 +132,6 @@ def initialize_database():
         )
     """)
     
-    # 🌟 جدول التوالف والمرتجعات المستقل (مضاف حديثاً لدعم طلبك بدقة)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS stock_adjustments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,13 +165,13 @@ def initialize_database():
         for b_name, b_type in default_branches:
             cursor.execute("INSERT OR IGNORE INTO branches (branch_name, branch_type) VALUES (?, ?)", (b_name, b_type))
 
+    # 🌟 التأكد الإجباري من وجود حساب الأدمن لضمان فتح البرنامج فوراً
     admin_chk = cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'Admin' AND is_active = 1").fetchone()[0]
     if admin_chk == 0:
         cursor.execute("INSERT OR IGNORE INTO users (username, phone, password, role, allowed_branches, is_active) VALUES ('admin', '0910000000', '123456', 'Admin', 'ALL', 1)")
 
     conn.commit()
     conn.close()
-
     create_desktop_backup()
 
 if __name__ == "__main__":
