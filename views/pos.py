@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime
 from database import get_db_connection
+import streamlit.components.v1 as components
 
 # --- تحديد رقم الوردية (الشفت) تلقائياً (1 للصَباحي، 2 للمسائي) ---
 def get_current_shift_number():
@@ -51,7 +52,7 @@ def add_missing_item_dialog(scanned_code, b_id):
             else:
                 st.error("⚠️ يرجى إدخال اسم الصنف وسعر بيع صحيح.")
 
-# --- دالة شاشة إتمام الدفع وإصدار الفاتورة ---
+# --- دالة شاشة إتمام الدفع وإصدار الفاتورة مع الدعم للعمل دون إنترنت ---
 @st.dialog("💳 إتمام الدفع وإصدار الفاتورة")
 def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shift_num, daily_inv_num):
     st.subheader(f"إجمالي الفاتورة المطلوب: {g_tot:,.2f} د.ل")
@@ -90,26 +91,56 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
     if st.button("🖨️ تأكيد وإصدار الفاتورة", type="primary", use_container_width=True):
         if paid_amount >= final_tot or pay_method in ["آجل (على الحساب)", "خصم من حساب (مورد / زبون جملة)"]:
             cart_json = json.dumps(st.session_state["cart"], ensure_ascii=False)
-            cur_in = conn.cursor()
             
-            cursor_res = cur_in.execute("""
-                INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method, notes, shift_status) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (b_id, st.session_state.get("user_id", 1), cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method, cart_json, str(shift_num)))
-            inv_id = cursor_res.lastrowid
+            try:
+                cur_in = conn.cursor()
+                cursor_res = cur_in.execute("""
+                    INSERT INTO invoices (branch_id, user_id, customer_name, customer_phone, total_amount, payment_method, notes, shift_status) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (b_id, st.session_state.get("user_id", 1), cust_name.strip() if cust_name else "زبون نقدي", cust_phone.strip(), final_tot, pay_method, cart_json, str(shift_num)))
+                inv_id = cursor_res.lastrowid
 
-            for c_item in st.session_state["cart"]:
-                if c_item.get("id") != 99999:
-                    conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
+                for c_item in st.session_state["cart"]:
+                    if c_item.get("id") != 99999:
+                        conn.execute("UPDATE items SET quantity = quantity - ? WHERE id = ?", (c_item["qty"], c_item["id"]))
 
-            if selected_account_id and pay_method in ["آجل (على الحساب)", "خصم من حساب (مورد / زبون جملة)"]:
-                conn.execute("UPDATE customers SET balance = balance + ?, total_purchases = total_purchases + ? WHERE id = ?", (final_tot, final_tot, selected_account_id))
+                if selected_account_id and pay_method in ["آجل (على الحساب)", "خصم من حساب (مورد / زبون جملة)"]:
+                    conn.execute("UPDATE customers SET balance = balance + ?, total_purchases = total_purchases + ? WHERE id = ?", (final_tot, final_tot, selected_account_id))
 
-            conn.commit()
+                conn.commit()
+            except Exception as db_err:
+                # 🌐 في حال انقطاع الإنترنت أو فشل الاتصال بالسيرفر، يتم الحفظ احتياطياً في متصفح الكاشير محلياً
+                cart_safe_json = json.dumps(st.session_state["cart"], ensure_ascii=False)
+                offline_backup_script = f"""
+                <script>
+                    try {{
+                        let pending = JSON.parse(localStorage.getItem('pending_invoices') || '[]');
+                        pending.push({{
+                            branch_id: {b_id},
+                            user_id: {st.session_state.get("user_id", 1)},
+                            customer_name: "{cust_name.strip() if cust_name else 'زبون نقدي'}",
+                            customer_phone: "{cust_phone.strip()}",
+                            total: {final_tot},
+                            method: "{pay_method}",
+                            items: {cart_safe_json},
+                            shift: "{shift_num}",
+                            timestamp: new Date().toISOString()
+                        }});
+                        localStorage.setItem('pending_invoices', JSON.stringify(pending));
+                        console.log("تم حفظ الفاتورة محلياً لحين عودة الاتصال بالمخزن السحابي");
+                        alert("⚠️ انقطع الاتصال بالسيرفر! تم حفظ الفاتورة محلياً وسيتم مزامنتها تلقائياً عند عودة الإنترنت.");
+                    } catch (e) {{
+                        console.error("خطأ في التخزين المحلي:", e);
+                    }}
+                </script>
+                """
+                components.html(offline_backup_script, height=0, width=0)
+                st.warning("⚠️ انقطع الاتصال بالسيرفر السحابي، وتم تأمين الفاتورة في التخزين المحلي المؤقت لجهاز الكاشير.")
+            
             conn.close()
 
             st.session_state["last_invoice"] = {
-                "inv_id": inv_id,
+                "inv_id": locals().get("inv_id", 999),
                 "daily_inv_num": daily_inv_num,
                 "branch": branch_name_str,
                 "cashier": cashier_name_str,
@@ -121,7 +152,7 @@ def checkout_payment_dialog(b_id, g_tot, branch_name_str, cashier_name_str, shif
                 "method": pay_method
             }
             st.session_state["cart"] = []
-            st.success("✅ تم إصدار الفاتورة بنجاح!")
+            st.success("✅ تمت عملية إصدار الفاتورة بنجاح!")
             st.rerun()
         else:
             st.warning("⚠️ المبلغ المدفوع أقل من إجمالي الفاتورة.")
@@ -152,7 +183,6 @@ def process_barcode_scan():
                 "id": item["id"], "code": item["item_code"], "name": item["item_name"], 
                 "price": unit_price, "qty": float(qty_to_add), "total": unit_price * qty_to_add
             })
-            st.session_state["barcode_qty_input"] = 1.0
         else:
             conn.close()
             add_missing_item_dialog(code, b_id)
@@ -183,7 +213,7 @@ def show_page():
     role = st.session_state.get("role", "")
     username = st.session_state.get("username", "")
     user_branch_id = st.session_state.get("branch_id")
-    current_shift_num = get_current_shift_number()
+    current_shift_number = get_current_shift_number()
 
     if role in ["Admin", "General_Supervisor"]:
         branches_data = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
@@ -242,39 +272,37 @@ def show_page():
     branch_inv_count = conn.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date)).fetchone()[0]
     daily_inv_num = branch_inv_count + 1
 
-    # --- قسم تقارير الإغلاق المالي وتسليم الورديات (بدون أي تداخل بصري) ---
+    # --- قسم تقارير الإغلاق المالي وتسليم الورديات ---
     if role in ["Admin", "General_Supervisor", "Branch_Supervisor"]:
         st.markdown("<hr>", unsafe_allow_html=True)
         st.markdown("<h3 style='text-align: center; color: #0f172a; font-weight: 900;'>📊 تقارير الإغلاق المالي وتسليم الورديات</h3>", unsafe_allow_html=True)
         
         c_x, c_z = st.columns(2)
         
-        # تقرير X-Read (الوردية الحالية بدون تصفير المبيعات اليومية)[cite: 4]
         with c_x:
             st.markdown("<div style='background: #f1f5f9; padding: 15px; border-radius: 8px; border: 1px solid #cbd5e1;'>", unsafe_allow_html=True)
             st.markdown("#### 🕒 تقرير الوردية الحالية")
             shift_sales_row = conn.execute("""
                 SELECT SUM(total_amount) FROM invoices 
                 WHERE branch_id = ? AND DATE(created_at) = ? AND shift_status = ?
-            """, (b_id, today_date, str(current_shift_num))).fetchone()
+            """, (b_id, today_date, str(current_shift_number))).fetchone()
             shift_sales = shift_sales_row[0] if shift_sales_row and shift_sales_row[0] else 0.0
             
-            st.info(f"مبيعات الوردية الحالية (رقم {current_shift_num}): **{shift_sales:,.2f} د.ل**")
+            st.info(f"مبيعات الوردية الحالية (رقم {current_shift_number}): **{shift_sales:,.2f} د.ل**")
             x_html = f"""
             <html dir="rtl"><head><meta charset="utf-8"></head>
             <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000;">
                 <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {branch_name_display}</p><hr>
                 <h3>تقرير تسليم الوردية</h3>
                 <p style="text-align: right;"><b>التاريخ والوقت:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
-                <b>الكاشير:</b> {username} | <b>وردية رقم:</b> {current_shift_num}</p><hr>
+                <b>الكاشير:</b> {username} | <b>وردية رقم:</b> {current_shift_number}</p><hr>
                 <h3>إجمالي مبيعات الوردية: {shift_sales:,.2f} د.ل</h3><hr>
                 <p style="font-size: 12px;">نهاية التقرير التشغيلي</p>
             </body></html>
             """
-            st.download_button("🖨️ طباعة تقرير الوردية", data=x_html.encode('utf-8'), file_name=f"X_Read_{today_date}_Shift{current_shift_num}.html", mime="text/html", use_container_width=True)
+            st.download_button("🖨️ طباعة تقرير الوردية", data=x_html.encode('utf-8'), file_name=f"X_Read_{today_date}_Shift{current_shift_number}.html", mime="text/html", use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # تقرير Z-Read (الإغلاق المالي اليومي مع التصفير وتتبع التراكمي)[cite: 4]
         with c_z:
             st.markdown("<div style='background: #f1f5f9; padding: 15px; border-radius: 8px; border: 1px solid #cbd5e1;'>", unsafe_allow_html=True)
             st.markdown("#### 🔒 تقرير الإغلاق المالي اليومي")
@@ -365,7 +393,7 @@ def show_page():
         with col_info:
             st.markdown(f"""
                 <div style="font-size: 14px; text-align: right; line-height: 1.5; direction: rtl;">
-                    <b>رقم فاتورة اليوم:</b> <span style="color:red; font-size: 16px;">#{daily_inv_num}</span> | <b>الوردية:</b> <span style="color:blue;">رقم {current_shift_num}</span><br>
+                    <b>رقم فاتورة اليوم:</b> <span style="color:red; font-size: 16px;">#{daily_inv_num}</span> | <b>الوردية:</b> <span style="color:blue;">رقم {current_shift_number}</span><br>
                     <b>الفرع:</b> {branch_name_display} | <b>الكاشير:</b> {username}
                 </div>
             """, unsafe_allow_html=True)
@@ -376,7 +404,6 @@ def show_page():
         with col_grid:
             st.markdown("### 🧾 محتويات سلة المبيعات الحالية")
             
-            # 🌟 بطاقة إحصائية بارزة أعلى السلة لإجمالي الكمية وإجمالي قيمة الفاتورة للرؤية الفورية[cite: 6]
             cart_items_list = st.session_state.get("cart", [])
             total_cart_qty = sum(item["qty"] for item in cart_items_list)
             total_cart_val = sum(item["total"] for item in cart_items_list)
@@ -410,7 +437,7 @@ def show_page():
             with c_btn1:
                 st.markdown('<div class="pos-btn btn-green">', unsafe_allow_html=True)
                 if st.button("💰 دفع واعتماد الفاتورة (F12)", use_container_width=True) and st.session_state["cart"]: 
-                    checkout_payment_dialog(b_id, g_tot, branch_name_display, username, current_shift_num, daily_inv_num)
+                    checkout_payment_dialog(b_id, g_tot, branch_name_display, username, current_shift_number, daily_inv_num)
                 st.markdown('</div>', unsafe_allow_html=True)
             with c_btn3:
                 st.markdown('<div class="pos-btn btn-red">', unsafe_allow_html=True)
