@@ -222,7 +222,7 @@ def show_page():
                 
             st.markdown('</div>', unsafe_allow_html=True)
             
-            if st.button("✅ اضغط للموافقة وتأكيد استلاستلام البضاعة وبدء العمل", type="primary", use_container_width=True):
+            if st.button("✅ اضغط للموافقة وتأكيد استلام البضاعة وبدء العمل", type="primary", use_container_width=True):
                 cur_pt = conn.cursor()
                 for pt in pending_logs:
                     cur_pt.execute("""
@@ -242,66 +242,71 @@ def show_page():
     branch_inv_count = conn.execute("SELECT COUNT(*) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date)).fetchone()[0]
     daily_inv_num = branch_inv_count + 1
 
-    # ---     قسم تقارير الإغلاق المالي وتسليم الورديات      ---
+    # --- قسم تقارير الإغلاق المالي وتسليم الورديات (بدون أي تداخل بصري) ---
     if role in ["Admin", "General_Supervisor", "Branch_Supervisor"]:
-        with st.expander("  تقارير الإغلاق المالي وتسليم الورديات  "):
-            c_x, c_z = st.columns(2)
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<h3 style='text-align: center; color: #0f172a; font-weight: 900;'>📊 تقارير الإغلاق المالي وتسليم الورديات</h3>", unsafe_allow_html=True)
+        
+        c_x, c_z = st.columns(2)
+        
+        # تقرير X-Read (الوردية الحالية بدون تصفير المبيعات اليومية)[cite: 4]
+        with c_x:
+            st.markdown("<div style='background: #f1f5f9; padding: 15px; border-radius: 8px; border: 1px solid #cbd5e1;'>", unsafe_allow_html=True)
+            st.markdown("#### 🕒 تقرير الوردية الحالية")
+            shift_sales_row = conn.execute("""
+                SELECT SUM(total_amount) FROM invoices 
+                WHERE branch_id = ? AND DATE(created_at) = ? AND shift_status = ?
+            """, (b_id, today_date, str(current_shift_num))).fetchone()
+            shift_sales = shift_sales_row[0] if shift_sales_row and shift_sales_row[0] else 0.0
             
-            # تقرير X-Read (الوردية الحالية بدون تصفير المبيعات اليومية)[cite: 4]
-            with c_x:
-                st.markdown("#### 🕒 تقرير الوردية الحالية")
-                shift_sales_row = conn.execute("""
-                    SELECT SUM(total_amount) FROM invoices 
-                    WHERE branch_id = ? AND DATE(created_at) = ? AND shift_status = ?
-                """, (b_id, today_date, str(current_shift_num))).fetchone()
-                shift_sales = shift_sales_row[0] if shift_sales_row and shift_sales_row[0] else 0.0
-                
-                st.info(f"مبيعات الوردية الحالية (رقم {current_shift_num}): **{shift_sales:,.2f} د.ل**")
-                x_html = f"""
-                <html dir="rtl"><head><meta charset="utf-8"></head>
-                <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000;">
-                    <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {branch_name_display}</p><hr>
-                    <h3>تقرير تسليم الوردية</h3>
-                    <p style="text-align: right;"><b>التاريخ والوقت:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
-                    <b>الكاشير:</b> {username} | <b>وردية رقم:</b> {current_shift_num}</p><hr>
-                    <h3>إجمالي مبيعات الوردية: {shift_sales:,.2f} د.ل</h3><hr>
-                    <p style="font-size: 12px;">نهاية التقرير التشغيلي</p>
-                </body></html>
-                """
-                st.download_button("🖨️ طباعة تقرير الوردية", data=x_html.encode('utf-8'), file_name=f"X_Read_{today_date}_Shift{current_shift_num}.html", mime="text/html", use_container_width=True)
+            st.info(f"مبيعات الوردية الحالية (رقم {current_shift_num}): **{shift_sales:,.2f} د.ل**")
+            x_html = f"""
+            <html dir="rtl"><head><meta charset="utf-8"></head>
+            <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000;">
+                <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {branch_name_display}</p><hr>
+                <h3>تقرير تسليم الوردية</h3>
+                <p style="text-align: right;"><b>التاريخ والوقت:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
+                <b>الكاشير:</b> {username} | <b>وردية رقم:</b> {current_shift_num}</p><hr>
+                <h3>إجمالي مبيعات الوردية: {shift_sales:,.2f} د.ل</h3><hr>
+                <p style="font-size: 12px;">نهاية التقرير التشغيلي</p>
+            </body></html>
+            """
+            st.download_button("🖨️ طباعة تقرير الوردية", data=x_html.encode('utf-8'), file_name=f"X_Read_{today_date}_Shift{current_shift_num}.html", mime="text/html", use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
-            # تقرير Z-Read (الإغلاق المالي اليومي مع التصفير وتتبع التراكمي)[cite: 4]
-            with c_z:
-                st.markdown("#### 🔒 تقرير الإغلاق المالي اليومي")
-                day_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ? AND shift_status != 'Z_Closed'", (b_id, today_date)).fetchone()
-                day_sales = day_sales_row[0] if day_sales_row and day_sales_row[0] else 0.0
-                
-                prev_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id = ? AND (DATE(created_at) < ? OR shift_status = 'Z_Closed')", (b_id, today_date)).fetchone()
-                cumulative_prev_sales = prev_sales_row[0] if prev_sales_row and prev_sales_row[0] else 0.0
-                total_all_sales = day_sales + cumulative_prev_sales
-                
-                st.error(f"مبيعات اليوم: **{day_sales:,.2f} د.ل** | التراكمي السابق: **{cumulative_prev_sales:,.2f} د.ل**")
-                z_html = f"""
-                <html dir="rtl"><head><meta charset="utf-8"></head>
-                <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000;">
-                    <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {branch_name_display}</p><hr>
-                    <h3>تقرير الإغلاق المالي اليومي</h3>
-                    <p style="text-align: right;"><b>التاريخ والوقت:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
-                    <b>بواسطة المشرف:</b> {username}</p><hr>
-                    <p style="text-align: right;">
-                    <b>مبيعات اليوم الحالي:</b> {day_sales:,.2f} د.ل<br>
-                    <b>إجمالي الأيام السابقة (التراكمي):</b> {cumulative_prev_sales:,.2f} د.ل</p><hr>
-                    <h3>الإجمالي الكلي التراكمي: {total_all_sales:,.2f} د.ل</h3><hr>
-                    <p style="font-size: 12px;">تم الإغلاق المالي بنجاح</p>
-                </body></html>
-                """
-                st.download_button("🖨️ طباعة تقرير الإغلاق الشامل", data=z_html.encode('utf-8'), file_name=f"Z_Read_{today_date}.html", mime="text/html", use_container_width=True)
+        # تقرير Z-Read (الإغلاق المالي اليومي مع التصفير وتتبع التراكمي)[cite: 4]
+        with c_z:
+            st.markdown("<div style='background: #f1f5f9; padding: 15px; border-radius: 8px; border: 1px solid #cbd5e1;'>", unsafe_allow_html=True)
+            st.markdown("#### 🔒 تقرير الإغلاق المالي اليومي")
+            day_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id = ? AND DATE(created_at) = ? AND shift_status != 'Z_Closed'", (b_id, today_date)).fetchone()
+            day_sales = day_sales_row[0] if day_sales_row and day_sales_row[0] else 0.0
+            
+            prev_sales_row = conn.execute("SELECT SUM(total_amount) FROM invoices WHERE branch_id = ? AND (DATE(created_at) < ? OR shift_status = 'Z_Closed')", (b_id, today_date)).fetchone()
+            cumulative_prev_sales = prev_sales_row[0] if prev_sales_row and prev_sales_row[0] else 0.0
+            total_all_sales = day_sales + cumulative_prev_sales
+            
+            st.error(f"مبيعات اليوم: **{day_sales:,.2f} د.ل** | التراكمي السابق: **{cumulative_prev_sales:,.2f} د.ل**")
+            z_html = f"""
+            <html dir="rtl"><head><meta charset="utf-8"></head>
+            <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px dashed #000;">
+                <h2>مجموعة أبو زيد التجارية</h2><p>فرع: {branch_name_display}</p><hr>
+                <h3>تقرير الإغلاق المالي اليومي</h3>
+                <p style="text-align: right;"><b>التاريخ والوقت:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
+                <b>بواسطة المشرف:</b> {username}</p><hr>
+                <p style="text-align: right;"><b>مبيعات اليوم الحالي:</b> {day_sales:,.2f} د.ل<br><b>إجمالي الأيام السابقة (التراكمي):</b> {cumulative_prev_sales:,.2f} د.ل</p><hr>
+                <h3>الإجمالي الكلي التراكمي: {total_all_sales:,.2f} د.ل</h3><hr>
+                <p style="font-size: 12px;">تم الإغلاق المالي بنجاح</p>
+            </body></html>
+            """
+            st.download_button("🖨️ طباعة تقرير الإغلاق الشامل", data=z_html.encode('utf-8'), file_name=f"Z_Read_{today_date}.html", mime="text/html", use_container_width=True)
 
-                if st.button("⚙️ تنفيذ الإغلاق المالي وتصفير يومية الفرع", type="primary"):
-                    conn.execute("UPDATE invoices SET shift_status = 'Z_Closed' WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date))
-                    conn.commit()
-                    st.success("✅ تم تصفير مبيعات اليوم وترحيل المجموع للتراكمي بنجاح!")
-                    st.rerun()
+            if st.button("⚙️ تنفيذ الإغلاق المالي وتصفير يومية الفرع", type="primary"):
+                conn.execute("UPDATE invoices SET shift_status = 'Z_Closed' WHERE branch_id = ? AND DATE(created_at) = ?", (b_id, today_date))
+                conn.commit()
+                st.success("✅ تم تصفير مبيعات اليوم وترحيل المجموع للتراكمي بنجاح!")
+                st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("<hr>", unsafe_allow_html=True)
 
     if "last_invoice" in st.session_state and st.session_state["last_invoice"]:
         inv = st.session_state["last_invoice"]
@@ -370,10 +375,23 @@ def show_page():
         
         with col_grid:
             st.markdown("### 🧾 محتويات سلة المبيعات الحالية")
-            if not st.session_state["cart"]:
+            
+            # 🌟 بطاقة إحصائية بارزة أعلى السلة لإجمالي الكمية وإجمالي قيمة الفاتورة للرؤية الفورية[cite: 6]
+            cart_items_list = st.session_state.get("cart", [])
+            total_cart_qty = sum(item["qty"] for item in cart_items_list)
+            total_cart_val = sum(item["total"] for item in cart_items_list)
+            
+            stat_c1, stat_c2 = st.columns(2)
+            with stat_c1:
+                st.metric(label="📦 إجمالي الكمية بالسلة", value=f"{total_cart_qty:,.2f}")
+            with stat_c2:
+                st.metric(label="💰 إجمالي قيمة الفاتورة", value=f"{total_cart_val:,.2f} د.ل")
+            st.markdown("---")
+
+            if not cart_items_list:
                 st.info("السلة فارغة حالياً.")
             else:
-                for index, cart_item in enumerate(st.session_state["cart"]):
+                for index, cart_item in enumerate(cart_items_list):
                     c_col1, c_col2, c_col3, c_col4, c_col5 = st.columns([2, 1, 1, 1, 0.6])
                     c_col1.write(f"🏷️ {cart_item['name']}")
                     c_col2.write(f"كمية: {cart_item['qty']}")
@@ -384,7 +402,7 @@ def show_page():
                         st.rerun()
                 st.markdown("---")
 
-            g_tot = sum(item["total"] for item in st.session_state.get("cart", []))
+            g_tot = total_cart_val
             st.markdown(f'<div class="totals-panel">الإجمالي: <b>{g_tot:,.2f} د.ل</b> &nbsp;|&nbsp; الصافي المطلوب: <span style="color:#22c55e;">{g_tot:,.2f} د.ل</span></div>', unsafe_allow_html=True)
             
             st.write("")
