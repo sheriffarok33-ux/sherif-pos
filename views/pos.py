@@ -171,7 +171,6 @@ def show_page():
         .btn-red > button { background-color: #dc2626 !important; }
         .rtl-container { direction: rtl !important; text-align: right !important; }
         
-        /* 🌟 جعل النصوص داخل أزرار الواجهة باللون الأبيض الناصع دائماً */
         div.stButton > button p, div.stButton > button span, div.stButton > button div {
             color: #ffffff !important;
         }
@@ -204,7 +203,6 @@ def show_page():
         
     st.session_state["branch_id"] = b_id
 
-    # 🌟 رسالة الترحيب وتأكيد استلام التزويد للكاشير مباشرة
     if b_id and b_id != "ALL":
         pending_logs = conn.execute("SELECT * FROM transfer_logs WHERE (to_branch_id = ? OR to_branch_id IN (SELECT id FROM branches WHERE branch_name LIKE '%مصراتة%' OR id = ?)) AND status NOT LIKE 'مكتملة ومستلمة%'", (b_id, b_id)).fetchall()
         if pending_logs:
@@ -476,21 +474,19 @@ def show_page():
             else: st.warning("يرجى إدخال سعر صحيح للصنف الحر.")
 
     # ==========================================
-    # 3. الأرشيف وإعادة الطباعة الآمن (مع فواتير التزويد، تقارير Z السابقة، وفواتير المبيعات)
+    # 3. الأرشيف وإعادة الطباعة (يحتوي على فواتير التزويد، تقارير Z، وفواتير المبيعات)
     # ==========================================
     elif st.session_state["pos_active_view"] == "الأرشيف":
         
-        # أ) أرشيف فواتير التزويد الواردة للفرع (تم إصلاح استعلام البحث تماماً لمنع أي خطأ)
-        st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك وإعادة الطباعة</h3>', unsafe_allow_html=True)
+        # أ) أرشيف فواتير التزويد الواردة للفرع (الاستعلام مصحح وآمن تماماً باستخدام b_id)
+        st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك</h3>', unsafe_allow_html=True)
         branch_transfers = conn.execute("""
-            SELECT id, items_details, status, transfer_date 
-            FROM transfer_logs 
-            WHERE to_branch_id = ? 
-            ORDER BY id DESC
+            SELECT id AS 'رقم التزويد', items_details AS 'تفاصيل الأصناف والكميات', status AS 'حالة الاستلام', transfer_date AS 'تاريخ الإرسال'
+            FROM transfer_logs WHERE to_branch_id = ? ORDER BY id DESC
         """, (b_id,)).fetchall()
         
         if branch_transfers:
-            trans_dict = {f"فاتورة تزويد #{r['id']} | التاريخ: {r['transfer_date']} | الحالة: {r['status']}": r['id'] for r in branch_transfers}
+            trans_dict = {f"فاتورة تزويد #{r['رقم التزويد']} | التاريخ: {r['تاريخ الإرسال']} | الحالة: {r['حالة الاستلام']}": r['رقم التزويد'] for r in branch_transfers}
             sel_trans_str = st.selectbox("🔍 اختر فاتورة التزويد لعرضها وإعادة طباعتها:", ["-- اختر فاتورة التزويد --"] + list(trans_dict.keys()), key="sel_trans_reprint_box")
             
             if sel_trans_str != "-- اختر فاتورة التزويد --":
@@ -498,21 +494,35 @@ def show_page():
                 trans_data = conn.execute("SELECT * FROM transfer_logs WHERE id = ?", (target_trans_id,)).fetchone()
                 
                 if trans_data:
-                    # جلب اسم الفرع بشكل آمن تماماً بدون أخطاء
                     b_info = conn.execute("SELECT branch_name, phone FROM branches WHERE id = ?", (b_id,)).fetchone()
+                    b_phone_rep = b_info.get('phone', 'غير متوفر') if b_info else 'غير متوفر'
                     
+                    items_text = trans_data['items_details']
+                    items_html_reprint = ""
+                    notes_reprint = ""
+                    
+                    for line in items_text.split(" -- ملاحظات: "):
+                        if " -- ملاحظات: " in items_text:
+                            parts = items_text.split(" -- ملاحظات: ")
+                            items_part = parts[0]
+                            notes_reprint = parts[1] if len(parts) > 1 else ""
+                        else:
+                            items_part = items_text
+
                     trans_html_content = f"""
                     <html dir="rtl"><head><meta charset="utf-8"></head>
                     <body style="font-family: Arial; text-align: center; max-width: 350px; margin: auto; padding: 20px; border: 1px solid #000; background-color: #fdfdfd;">
                         <h2>مجموعة أبو زيد التجارية</h2>
                         <p style="margin-top: 0; font-weight: bold; background-color: #e2e8f0; padding: 5px;">فاتورة تزويد واردة للفرع</p><hr>
                         <p style="text-align: right;">
-                        <b>فرع الاستلام:</b> {b_info['branch_name'] if b_info else branch_name_display} | هاتف: {b_info.get('phone', 'غير متوفر') if b_info else 'غير متوفر'}<br>
+                        <b>فرع الاستلام:</b> {branch_name_display} | هاتف: {b_phone_rep}<br>
                         <b>رقم حركة التزويد:</b> #{trans_data['id']}<br>
                         <b>التاريخ:</b> {trans_data['transfer_date']}<br>
                         <b>المرسل:</b> المخزن الرئيسي<br>
                         <b>حالة الاستلام:</b> {trans_data['status']}</p><hr>
-                        <p style="text-align: right; font-size: 15px;"><b>الأصناف والكميات الواردة:</b><br>{trans_data['items_details']}</p><hr>
+                        <p style="text-align: right; font-size: 15px;"><b>الأصناف والكميات الواردة:</b><br>{items_part}</p>
+                        {f"<p style='text-align: right;'><b>ملاحظات:</b> {notes_reprint}</p>" if notes_reprint else ""}
+                        <hr>
                         <p style="font-size: 12px; margin-top: 20px;">الرجاء مراجعة الكميات، توقيع المستلم: ........................</p>
                     </body></html>
                     """
@@ -530,7 +540,7 @@ def show_page():
 
         st.markdown("---")
 
-        # ب) أرشيف تقارير الإغلاق المالي اليومي (Z-Read) السابقة (محفوظة بالكامل كما طلبت)
+        # ب) أرشيف تقارير الإغلاق المالي اليومي (Z-Read) السابقة (محفوظة بالكامل)
         st.markdown('<h3 class="rtl-container">🔒 أرشيف تقارير الإغلاق المالي اليومي (Z-Read) السابقة</h3>', unsafe_allow_html=True)
         z_closed_dates = conn.execute("""
             SELECT DISTINCT DATE(created_at) as closed_date 
