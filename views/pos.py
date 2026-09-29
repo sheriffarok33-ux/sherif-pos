@@ -222,7 +222,7 @@ def show_page():
                 
             st.markdown('</div>', unsafe_allow_html=True)
             
-            if st.button("✅ اضغط للموافقة وتأكيد استلام البضاعة وبدء العمل", type="primary", use_container_width=True):
+            if st.button("✅ اضغط للموافقة وتأكيد استلاستلام البضاعة وبدء العمل", type="primary", use_container_width=True):
                 cur_pt = conn.cursor()
                 for pt in pending_logs:
                     cur_pt.execute("""
@@ -474,12 +474,12 @@ def show_page():
             else: st.warning("يرجى إدخال سعر صحيح للصنف الحر.")
 
     # ==========================================
-    # 3. الأرشيف وإعادة الطباعة
+    # 3. الأرشيف وإعادة الطباعة (فواتير التزويد، تقارير Z السابقة، وفواتير المبيعات)
     # ==========================================
     elif st.session_state["pos_active_view"] == "الأرشيف":
         
         # أ) أرشيف فواتير التزويد الواردة للفرع
-        st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك وإعادة الطباعة</h3>', unsafe_allow_html=True)
+        st.markdown('<h3 class="rtl-container">📦 أرشيف فواتير التزويد الواردة لفرعك</h3>', unsafe_allow_html=True)
         branch_transfers = conn.execute("""
             SELECT id, items_details, status, transfer_date 
             FROM transfer_logs 
