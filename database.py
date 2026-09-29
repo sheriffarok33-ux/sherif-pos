@@ -11,7 +11,7 @@ DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "abu_zaid_new_system.db"
 BACKUP_DIR = BASE_DIR / "backups"
 
-# التأكد من إنشاء المجلدات تلقائياً
+# التأكد من إنشاء المجلدات تلقائياً (بما فيها مجلد data الذي أنشأته حديثاً)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -23,12 +23,14 @@ DEFAULT_MENUS = [
 ]
 
 def get_db_connection():
+    """إنشاء اتصال آمن وقوي مع قاعدة البيانات SQLite"""
     conn = sqlite3.connect(str(DB_PATH), timeout=15)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.row_factory = sqlite3.Row
     return conn
 
 def create_desktop_backup():
+    """أخذ نسخة احتياطية محلية للنسخة المكتبية وتجنب الأجهزة المحمولة"""
     try:
         user_agent = str(st.context.headers.get("User-Agent", "")).lower() if hasattr(st, "context") else ""
         is_mobile = any(m in user_agent for m in ["iphone", "android", "ipad", "mobile", "tablet"])
@@ -51,8 +53,10 @@ def initialize_database():
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    # جدول الفروع والمخازن
     cursor.execute("CREATE TABLE IF NOT EXISTS branches (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_name TEXT UNIQUE NOT NULL, branch_type TEXT DEFAULT 'فرع')")
     
+    # جدول المستخدمين والصلاحيات
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,6 +72,7 @@ def initialize_database():
         )
     """)
     
+    # جدول الأصناف والمخزون
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,9 +90,11 @@ def initialize_database():
         )
     """)
     
+    # جدول الموردين والعملاء
     cursor.execute("CREATE TABLE IF NOT EXISTS suppliers (id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_name TEXT UNIQUE NOT NULL, phone TEXT, balance REAL DEFAULT 0.0)")
     cursor.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL, phone TEXT UNIQUE NOT NULL, total_purchases REAL DEFAULT 0.0, balance REAL DEFAULT 0.0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
     
+    # جدول المشتريات
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS purchases (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,6 +110,7 @@ def initialize_database():
         )
     """)
     
+    # جدول حركات وتزويد الفروع
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS transfer_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,8 +123,10 @@ def initialize_database():
         )
     """)
     
+    # جدول المصروفات
     cursor.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, amount REAL NOT NULL, description TEXT NOT NULL, is_general_store INTEGER DEFAULT 0, expense_date TEXT)")
     
+    # جدول الفواتير والمبيعات
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS invoices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,6 +142,7 @@ def initialize_database():
         )
     """)
     
+    # جدول تسويات المخزون
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS stock_adjustments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -147,11 +158,13 @@ def initialize_database():
         )
     """)
 
+    # جداول السجلات الإضافية والصلاحيات
     cursor.execute("CREATE TABLE IF NOT EXISTS negative_sales_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
     cursor.execute("CREATE TABLE IF NOT EXISTS role_permissions (role TEXT PRIMARY KEY, allowed_menus TEXT)")
     cursor.execute("CREATE TABLE IF NOT EXISTS custom_labels (original_name TEXT PRIMARY KEY, custom_name TEXT NOT NULL)")
     cursor.execute("CREATE TABLE IF NOT EXISTS activity_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
+    # إدراج الصلاحيات الافتراضية
     try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Admin', ?)", (",".join(DEFAULT_MENUS),))
     except: pass
     try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('General_Supervisor', ?)", (",".join(DEFAULT_MENUS),))
@@ -159,6 +172,7 @@ def initialize_database():
     try: cursor.execute("INSERT OR IGNORE INTO role_permissions (role, allowed_menus) VALUES ('Cashier', '🏠 الرئيسية واللوحة,🛒 نقطة البيع (POS),🔄 تزويد الفروع والأرشيف')")
     except: pass
 
+    # الفروع الافتراضية إذا كان النظام فارغاً
     branch_count = cursor.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
     if branch_count == 0:
         default_branches = [("المخزن الرئيسي", "مخزن"), ("فرع الجزيرة", "فرع"), ("فرع 2", "فرع")]
