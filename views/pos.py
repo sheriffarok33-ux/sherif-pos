@@ -244,7 +244,7 @@ def show_page():
 
     # ---     قسم تقارير الإغلاق المالي وتسليم الورديات      ---
     if role in ["Admin", "General_Supervisor", "Branch_Supervisor"]:
-        with st.expander("تقارير الإغلاق المالي وتسليم الورديات"):
+        with st.expander("  تقارير الإغلاق المالي وتسليم الورديات  "):
             c_x, c_z = st.columns(2)
             
             # تقرير X-Read (الوردية الحالية بدون تصفير المبيعات اليومية)[cite: 4]
