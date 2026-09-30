@@ -1,12 +1,39 @@
 import os
 import re
 import io
+import shutil
 import sqlite3
 import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
 from database import initialize_database, get_db_connection
 import streamlit.components.v1 as components
+
+# --- 🔄 نظام المزامنة والنسخ الاحتياطي التلقائي لقاعدة البيانات ---
+LOCAL_DB = "abu_zaid_database.db"
+# يمكنك تعديل مسار النسخة المركزية المشتركة أو السحابية حسب رغبتك (مثلاً مجلد مشترك بين الأجهزة في الفرع)
+REMOTE_BACKUP_PATH = "abu_zaid_database.db"  # أو مسار مجلد الشبكة الداخلية
+
+def sync_database_on_startup():
+    """تتأكد من مزامنة قاعدة البيانات وجلب أحدث نسخة عند تشغيل البرنامج على أي جهاز"""
+    try:
+        # إذا كانت النسخة المركزية / المرجعية موجودة في مسار شبكي أو مجلد آخر غير المحلي
+        if os.path.exists(REMOTE_BACKUP_PATH) and REMOTE_BACKUP_PATH != LOCAL_DB:
+            if os.path.abspath(REMOTE_BACKUP_PATH) != os.path.abspath(LOCAL_DB):
+                shutil.copy2(REMOTE_BACKUP_PATH, LOCAL_DB)
+    except Exception as e:
+        pass
+
+# تشغيل المزامنة أولاً
+sync_database_on_startup()
+
+def save_and_overwrite_backup():
+    """تقوم بعمل Overwrite وتحديث النسخة المركزية بشكل دوري لضمان توفر البيانات لأي جهاز"""
+    try:
+        if os.path.exists(LOCAL_DB) and REMOTE_BACKUP_PATH != LOCAL_DB:
+            shutil.copy2(LOCAL_DB, REMOTE_BACKUP_PATH)
+    except Exception as e:
+        pass
 
 # تهيئة قاعدة البيانات وإنشاء حساب الأدمن تلقائياً لحل مشكلة الدخول فوراً
 def init_default_admin():
@@ -33,6 +60,8 @@ def init_default_admin():
             """, ("admin", "0910000000", "admin123", "Admin", 1))
             conn.commit()
         conn.close()
+        # تحديث النسخة الاحتياطية بعد التهيئة
+        save_and_overwrite_backup()
     except Exception as e:
         pass
 
