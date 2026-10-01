@@ -173,47 +173,68 @@ if not st.session_state["logged_in"]:
     st.stop()
 
 
-# --- القائمة الجانبية (Navigation Menu) ---
+# --- القائمة الجانبية الجديدة (أقسام رئيسية فقط) ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
-st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
+st.sidebar.markdown(
+    f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>",
+    unsafe_allow_html=True
+)
 st.sidebar.markdown("---")
 
-# نسخة تجريبية لتنظيم القائمة فقط — لا تغيّر وظائف الشاشات الداخلية
 MENU_GROUPS = {
-    "🏠 الرئيسية": [("🏠 لوحة التحكم", "🏠 الرئيسية واللوحة")],
+    "🏠 الرئيسية": [
+        ("🏠 الرئيسية واللوحة", "🏠 لوحة التحكم"),
+    ],
     "🛒 المبيعات والعملاء": [
-        ("🛒 نقطة البيع", "🛒 نقطة البيع (POS)"),
-        ("👥 العملاء والحسابات", "👥 جهات التعامل"),
+        ("🛒 نقطة البيع (POS)", "🛒 فاتورة بيع"),
+        ("👥 جهات التعامل", "👥 العملاء والحسابات"),
+        ("📊 التقارير والأرباح", "📋 تقارير وأرشيف المبيعات"),
     ],
     "📥 المشتريات والموردون": [
-        ("➕ فاتورة توريد / شراء", "📥 المشتريات"),
-        ("👥 الموردون والحسابات", "👥 جهات التعامل"),
+        ("📥 المشتريات", "➕ فاتورة توريد"),
+        ("👥 جهات التعامل", "👥 الموردون والحسابات"),
+        ("📊 التقارير والأرباح", "📋 أرشيف وتقارير المشتريات"),
     ],
     "📦 المخزون والأصناف": [
-        ("📦 الأصناف والأرصدة", "📦 إدارة المخزن والفروع"),
-        ("📁 استيراد Excel", "📁 استيراد Excel"),
-        ("➕ التالف والمرتجعات والتسويات", "➕ الفائض والتوالف والمرتجعات وتعديل السعر"),
+        ("📦 إدارة المخزن والفروع", "📦 الأصناف والأرصدة"),
+        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "♻️ التالف والمرتجع والتسويات"),
+        ("📁 استيراد Excel", "📥 استيراد Excel"),
     ],
-    "☕ التحميص والخلط": [("🔥 التحميص والخلط", "🥜 التحميص والخلط")],
-    "🔄 التحويلات والفروع": [("🔄 التحويلات والأرشيف", "🔄 تزويد الفروع والأرشيف")],
-    "💰 المالية": [("💰 المصروفات", "💰 المصروفات")],
-    "📊 التقارير": [("📊 التقارير والأرباح", "📊 التقارير والأرباح")],
-    "⚙️ الإدارة والإعدادات": [
+    "☕ التحميص والخلط": [
+        ("🥜 التحميص والخلط", "🔥 التحميص والخلط"),
+    ],
+    "🔄 التحويلات والفروع": [
+        ("🔄 تزويد الفروع والأرشيف", "🔄 التزويد والتحويلات"),
         ("🏢 إدارة الفروع", "🏢 إدارة الفروع"),
-        ("👥 إدارة المستخدمين", "👥 إدارة المستخدمين"),
-        ("⚙️ الإقفال السنوي", "⚙️ الجرد والتصفير السنوي"),
-        ("🧹 تهيئة النظام لأول تشغيل", "🧹 تهيئة النظام لأول تشغيل"),
+    ],
+    "💰 المالية": [
+        ("💰 المصروفات", "💰 المصروفات والإيرادات"),
+    ],
+    "📊 التقارير": [
+        ("📊 التقارير والأرباح", "📊 التقارير والأرباح"),
+    ],
+    "⚙️ الإدارة والإعدادات": [
+        ("👥 إدارة المستخدمين", "👥 المستخدمون والصلاحيات"),
+        ("⚙️ الجرد والتصفير السنوي", "📆 إقفال وأرشفة السنة"),
+        ("🧹 تهيئة النظام لأول تشغيل", "🧹 تهيئة النظام"),
     ],
 }
 
-if "menu_group" not in st.session_state:
-    st.session_state["menu_group"] = "🏠 الرئيسية"
+def allowed_group_entries(group_name):
+    return [
+        (target, label)
+        for target, label in MENU_GROUPS.get(group_name, [])
+        if check_user_permission(target)
+    ]
 
-for group_name, entries in MENU_GROUPS.items():
-    if any(check_user_permission(target) for _, target in entries):
-        if st.sidebar.button(group_name, use_container_width=True, key=f"group_{group_name}"):
-            st.session_state["menu_group"] = group_name
-            # الرئيسية تفتح مباشرة، وباقي الأقسام تعرض أزرارها في الشاشة
+for group_name in MENU_GROUPS:
+    entries = allowed_group_entries(group_name)
+    if entries:
+        if st.sidebar.button(
+            group_name,
+            use_container_width=True,
+            key=f"sidebar_group_{group_name}"
+        ):
             if group_name == "🏠 الرئيسية":
                 set_page("🏠 الرئيسية واللوحة")
             else:
@@ -231,22 +252,31 @@ st.sidebar.text("ENG: SHERIF M. FAROK")
 # --- منطقة توجيه الشاشات واللوحة الرئيسية ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
 
-# لوحة أزرار داخل كل قسم رئيسي
+# لو المستخدم داخل قسم رئيسي، نعرض لوحة أزرار داخلية.
 if choice.startswith("__GROUP__::"):
     group_name = choice.split("::", 1)[1]
-    st.markdown(f"## {group_name}")
-    st.caption("اختر العملية المطلوبة")
-    allowed_entries = [
-        (label, target)
-        for label, target in MENU_GROUPS.get(group_name, [])
-        if check_user_permission(target)
-    ]
-    for start in range(0, len(allowed_entries), 3):
-        cols = st.columns(3)
-        for idx, (label, target) in enumerate(allowed_entries[start:start + 3]):
-            with cols[idx]:
-                if st.button(label, use_container_width=True, key=f"inside_{group_name}_{target}_{start}_{idx}"):
-                    set_page(target)
+    entries = allowed_group_entries(group_name)
+
+    st.markdown(
+        f"<h2 style='direction:rtl;text-align:right;'>"
+        f"{group_name}</h2>",
+        unsafe_allow_html=True
+    )
+    st.caption("اختر العملية المطلوبة من الأزرار التالية.")
+
+    if not entries:
+        st.warning("⚠️ لا توجد عمليات متاحة لك داخل هذا القسم حسب صلاحياتك.")
+        st.stop()
+
+    cols = st.columns(3)
+    for idx, (target, label) in enumerate(entries):
+        if cols[idx % 3].button(
+            label,
+            use_container_width=True,
+            key=f"group_action_{group_name}_{target}_{idx}"
+        ):
+            set_page(target)
+
     st.stop()
 
 if not check_user_permission(choice):
