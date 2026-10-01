@@ -197,6 +197,149 @@ def get_dashboard_stats():
 
 
 # ============================================================
+# تنبيهات صلاحية دفعات المخزون
+# ============================================================
+
+def ensure_expiry_batches_table():
+    conn = None
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS inventory_batches
+            (
+                id BIGSERIAL PRIMARY KEY,
+                item_id INTEGER NOT NULL,
+                branch_id INTEGER NOT NULL,
+                quantity NUMERIC DEFAULT 0,
+                remaining_quantity NUMERIC DEFAULT 0,
+                received_date DATE DEFAULT CURRENT_DATE,
+                expiry_date DATE,
+                unit_cost NUMERIC DEFAULT 0,
+                source_type TEXT DEFAULT 'inventory',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+                FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_inventory_batches_expiry
+            ON inventory_batches(branch_id, expiry_date)
+            """
+        )
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_expiry_alerts():
+    conn = None
+    try:
+        conn = get_db_connection()
+        role = st.session_state.get("role", "")
+        branch_id = st.session_state.get("branch_id")
+
+        where_branch = ""
+        params = []
+
+        if role not in ["Admin", "General_Supervisor"]:
+            if branch_id is None:
+                return []
+            where_branch = "AND b.branch_id = ?"
+            params.append(branch_id)
+
+        return conn.execute(
+            f"""
+            SELECT
+                b.id,
+                i.item_code,
+                i.item_name,
+                br.branch_name,
+                b.remaining_quantity,
+                b.expiry_date,
+                (b.expiry_date - CURRENT_DATE) AS days_left
+            FROM inventory_batches b
+            JOIN items i ON i.id = b.item_id
+            JOIN branches br ON br.id = b.branch_id
+            WHERE b.expiry_date IS NOT NULL
+              AND COALESCE(b.remaining_quantity, 0) > 0
+              AND b.expiry_date <= CURRENT_DATE + INTERVAL '30 days'
+              {where_branch}
+            ORDER BY b.expiry_date ASC, i.item_name ASC
+            """,
+            tuple(params)
+        ).fetchall()
+    finally:
+        if conn:
+            conn.close()
+
+
+def show_expiry_alerts():
+    try:
+        ensure_expiry_batches_table()
+        alerts = get_expiry_alerts()
+    except Exception as e:
+        st.error("❌ تعذر تحميل تنبيهات تواريخ الصلاحية.")
+        st.code(str(e))
+        return
+
+    if not alerts:
+        st.success("✅ لا توجد دفعات مسجلة منتهية أو ستنتهي خلال 30 يوماً.")
+        return
+
+    expired = [r for r in alerts if int(r["days_left"]) < 0]
+    seven_days = [r for r in alerts if 0 <= int(r["days_left"]) <= 7]
+    thirty_days = [r for r in alerts if 8 <= int(r["days_left"]) <= 30]
+
+    st.markdown("### ⏰ تنبيهات صلاحية المخزون")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("🔴 منتهي الصلاحية", len(expired))
+    c2.metric("🟠 خلال 7 أيام", len(seven_days))
+    c3.metric("🟡 خلال 30 يوماً", len(thirty_days))
+
+    if expired:
+        st.error(
+            f"🚨 يوجد {len(expired)} دفعة منتهية الصلاحية "
+            "وبها رصيد متبقٍ."
+        )
+    if seven_days:
+        st.warning(
+            f"⚠️ يوجد {len(seven_days)} دفعة ستنتهي خلال 7 أيام."
+        )
+    if thirty_days:
+        st.info(
+            f"📅 يوجد {len(thirty_days)} دفعة ستنتهي خلال 30 يوماً."
+        )
+
+    with st.expander("عرض تفاصيل تنبيهات الصلاحية", expanded=bool(expired)):
+        for row in alerts:
+            days = int(row["days_left"])
+            if days < 0:
+                status = f"🔴 منتهي منذ {abs(days)} يوم"
+            elif days == 0:
+                status = "🔴 ينتهي اليوم"
+            elif days <= 7:
+                status = f"🟠 متبقي {days} يوم"
+            else:
+                status = f"🟡 متبقي {days} يوم"
+
+            st.write(
+                f"**{row['item_name']}** — {row['item_code']} | "
+                f"{row['branch_name']} | "
+                f"الرصيد بالدفعة: {float(row['remaining_quantity'] or 0):,.3f} | "
+                f"الانتهاء: {row['expiry_date']} | {status}"
+            )
+
+
+# ============================================================
 # الصفحة
 # ============================================================
 
@@ -220,6 +363,14 @@ def show_page():
         "إليك ملخصاً فورياً لحركة العمل "
         "والأداء المالي."
     )
+
+    # ========================================================
+    # تنبيهات الصلاحية
+    # ========================================================
+
+    show_expiry_alerts()
+
+    st.markdown("---")
 
     # ========================================================
     # الإحصائيات
