@@ -116,16 +116,64 @@ def show_page():
 
     st.markdown("---")
 
-    tab_view, tab_add = st.tabs([
-        "📋 عرض وتعديل الفروع الحالية",
-        "➕ إضافة فرع أو مخزن جديد"
-    ])
+    if "branches_ui_mode" not in st.session_state:
+
+
+        st.session_state["branches_ui_mode"] = "manage"
+
+
+
+    bnav1, bnav2 = st.columns(2)
+
+
+    if bnav1.button(
+
+
+        '📋 عرض وتعديل الفروع الحالية',
+
+
+        use_container_width=True,
+
+
+        type="primary" if st.session_state["branches_ui_mode"] == "manage" else "secondary"
+
+
+    ):
+
+
+        st.session_state["branches_ui_mode"] = "manage"
+
+
+        st.rerun()
+
+
+
+    if bnav2.button(
+
+
+        '➕ إضافة فرع أو مخزن جديد',
+
+
+        use_container_width=True,
+
+
+        type="primary" if st.session_state["branches_ui_mode"] == "add" else "secondary"
+
+
+    ):
+
+
+        st.session_state["branches_ui_mode"] = "add"
+
+
+        st.rerun()
+
 
     # ========================================================
     # إضافة فرع
     # ========================================================
 
-    with tab_add:
+    if st.session_state["branches_ui_mode"] == "add":
 
         st.subheader("➕ إضافة فرع أو مخزن جديد للنظام")
 
@@ -211,7 +259,7 @@ def show_page():
     # عرض الفروع
     # ========================================================
 
-    with tab_view:
+    if st.session_state["branches_ui_mode"] == "manage":
 
         st.subheader(
             "📋 الفروع والمخازن المسجلة حالياً"
