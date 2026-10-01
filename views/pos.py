@@ -1099,6 +1099,71 @@ def build_shift_report_html(report_title, branch_name, username, shift_num, summ
     return make_printable_html(body, report_title)
 
 
+
+# ============================================================
+# أرشيف تقارير Z السابقة
+# ============================================================
+
+def get_z_archive_dates(conn, branch_id):
+    return conn.execute(
+        """
+        SELECT
+            DATE(created_at) AS z_date,
+            COUNT(*) AS invoice_count,
+            COALESCE(SUM(total_amount), 0) AS net_total
+        FROM invoices
+        WHERE branch_id = ?
+          AND shift_status = 'Z_Closed'
+        GROUP BY DATE(created_at)
+        ORDER BY DATE(created_at) DESC
+        LIMIT 180
+        """,
+        (branch_id,)
+    ).fetchall()
+
+
+def build_historical_z_html(
+    conn,
+    branch_id,
+    branch_name,
+    selected_date
+):
+    rows = conn.execute(
+        """
+        SELECT total_amount, notes
+        FROM invoices
+        WHERE branch_id = ?
+          AND DATE(created_at) = ?
+          AND shift_status = 'Z_Closed'
+        ORDER BY id ASC
+        """,
+        (branch_id, selected_date)
+    ).fetchall()
+
+    summary = summarize_invoice_rows(rows)
+
+    body = f"""
+        <h2>مجموعة أبو زيد التجارية</h2>
+        <p>فرع: {branch_name}</p>
+        <hr>
+        <h3>تقرير Z سابق - الإغلاق المالي</h3>
+        <p style="text-align:right;">
+            <b>تاريخ التقرير:</b> {selected_date}<br>
+            <b>الحالة:</b> مغلق
+        </p>
+        <hr>
+        <p class="left">عدد الفواتير: <b>{summary["invoice_count"]}</b></p>
+        <p class="left">إجمالي قبل الخصم: <b>{summary["gross_total"]:,.2f} د.ل</b></p>
+        <p class="left">إجمالي الخصومات: <b>{summary["discount_total"]:,.2f} د.ل</b></p>
+        <p class="left">عدد فواتير الخصم: <b>{summary["discounted_count"]}</b></p>
+        <h3 class="left">صافي المبيعات: {summary["net_total"]:,.2f} د.ل</h3>
+    """
+    return make_printable_html(
+        body,
+        f"Z Report {branch_name} {selected_date}"
+    ), summary
+
+
 # ============================================================
 # الصفحة الرئيسية
 # ============================================================
@@ -1374,135 +1439,8 @@ def show_page():
             + 1
         )
 
-        # ====================================================
-        # تقارير الوردية والإغلاق
-        # ====================================================
-
-        if role in [
-            "Admin",
-            "General_Supervisor",
-            "Branch_Supervisor"
-        ]:
-
-            st.markdown("---")
-
-            st.markdown(
-                "### 📊 تقارير الإغلاق المالي "
-                "وتسليم الورديات"
-            )
-
-            c_x, c_z = st.columns(2)
-
-            with c_x:
-
-                shift_invoice_rows = conn.execute(
-                    """
-                    SELECT total_amount, notes
-                    FROM invoices
-                    WHERE branch_id = ?
-                      AND DATE(created_at) = ?
-                      AND shift_status = ?
-                    ORDER BY id ASC
-                    """,
-                    (b_id, today_date, str(current_shift_num))
-                ).fetchall()
-
-                x_summary = summarize_invoice_rows(shift_invoice_rows)
-
-                st.metric(
-                    f"صافي مبيعات الوردية رقم {current_shift_num}",
-                    f"{x_summary['net_total']:,.2f} د.ل"
-                )
-
-                st.caption(
-                    f"قبل الخصم: {x_summary['gross_total']:,.2f} د.ل | "
-                    f"الخصومات: {x_summary['discount_total']:,.2f} د.ل | "
-                    f"فواتير عليها خصم: {x_summary['discounted_count']}"
-                )
-
-                x_html = build_shift_report_html(
-                    "تقرير X - تسليم الوردية",
-                    branch_name_display,
-                    username,
-                    current_shift_num,
-                    x_summary
-                )
-
-                st.components.v1.html(x_html, height=180, scrolling=True)
-
-            with c_z:
-
-                z_invoice_rows = conn.execute(
-                    """
-                    SELECT total_amount, notes
-                    FROM invoices
-                    WHERE branch_id = ?
-                      AND DATE(created_at) = ?
-                      AND shift_status != 'Z_Closed'
-                    ORDER BY id ASC
-                    """,
-                    (b_id, today_date)
-                ).fetchall()
-
-                z_summary = summarize_invoice_rows(z_invoice_rows)
-
-                st.metric(
-                    "صافي مبيعات اليوم غير المغلقة",
-                    f"{z_summary['net_total']:,.2f} د.ل"
-                )
-
-                st.caption(
-                    f"قبل الخصم: {z_summary['gross_total']:,.2f} د.ل | "
-                    f"الخصومات: {z_summary['discount_total']:,.2f} د.ل | "
-                    f"فواتير عليها خصم: {z_summary['discounted_count']}"
-                )
-
-                z_html = build_shift_report_html(
-                    "تقرير Z - الإغلاق المالي",
-                    branch_name_display,
-                    username,
-                    current_shift_num,
-                    z_summary
-                )
-
-                st.components.v1.html(z_html, height=180, scrolling=True)
-
-                if st.button(
-                    "⚙️ تنفيذ الإغلاق المالي لليوم",
-                    type="primary",
-                    use_container_width=True
-                ):
-                    try:
-                        st.session_state["last_z_report_html"] = z_html
-
-                        conn.execute(
-                            """
-                            UPDATE invoices
-                            SET shift_status = 'Z_Closed'
-                            WHERE branch_id = ?
-                              AND DATE(created_at) = ?
-                              AND shift_status != 'Z_Closed'
-                            """,
-                            (b_id, today_date)
-                        )
-
-                        conn.commit()
-                        st.success("✅ تم إغلاق مبيعات اليوم.")
-                        st.rerun()
-
-                    except Exception:
-                        conn.rollback()
-                        raise
-
-                if st.session_state.get("last_z_report_html"):
-                    st.markdown("#### 🧾 آخر تقرير Z تم إغلاقه")
-                    st.components.v1.html(
-                        st.session_state["last_z_report_html"],
-                        height=180,
-                        scrolling=True
-                    )
-
-            st.markdown("---")
+        # تقارير X و Z تم نقلها إلى زر "التقارير والإغلاق"
+        # لتبقى شاشة البيع الرئيسية خفيفة وغير مزدحمة.
 
         # ====================================================
         # آخر فاتورة - عرض وطباعة مباشرة
@@ -1546,47 +1484,68 @@ def show_page():
                     st.rerun()
 
         # ====================================================
-        # اختيار الشاشة
+        # مركز الإجراءات السريع
         # ====================================================
 
-        if (
-            "pos_active_view"
-            not in st.session_state
-        ):
-
-            st.session_state[
-                "pos_active_view"
-            ] = "الكاشير السريع"
+        if "pos_active_view" not in st.session_state:
+            st.session_state["pos_active_view"] = "الكاشير السريع"
 
         st.markdown("---")
-
-        t_col1, t_col2, t_col3 = (
-            st.columns(3)
+        st.markdown("### ⚡ مركز إجراءات نقطة البيع")
+        st.caption(
+            "اختر القسم المطلوب فقط؛ ستظهر أدواته عند الحاجة "
+            "بدلاً من عرض كل الخيارات في شاشة واحدة."
         )
 
-        if t_col1.button(
-            "🛒 الكاشير السريع والباركود",
-            use_container_width=True
-        ):
-            st.session_state[
-                "pos_active_view"
-            ] = "الكاشير السريع"
+        nav1, nav2, nav3, nav4 = st.columns(4)
 
-        if t_col2.button(
-            "🔍 البحث اليدوي والصنف الحر",
-            use_container_width=True
+        if nav1.button(
+            "🛒 البيع السريع",
+            use_container_width=True,
+            type=(
+                "primary"
+                if st.session_state["pos_active_view"] == "الكاشير السريع"
+                else "secondary"
+            )
         ):
-            st.session_state[
-                "pos_active_view"
-            ] = "البحث اليدوي"
+            st.session_state["pos_active_view"] = "الكاشير السريع"
+            st.rerun()
 
-        if t_col3.button(
-            "📋 الأرشيف وإعادة الطباعة",
-            use_container_width=True
+        if nav2.button(
+            "🔎 بيع يدوي",
+            use_container_width=True,
+            type=(
+                "primary"
+                if st.session_state["pos_active_view"] == "البحث اليدوي"
+                else "secondary"
+            )
         ):
-            st.session_state[
-                "pos_active_view"
-            ] = "الأرشيف"
+            st.session_state["pos_active_view"] = "البحث اليدوي"
+            st.rerun()
+
+        if nav3.button(
+            "📊 التقارير والإغلاق",
+            use_container_width=True,
+            type=(
+                "primary"
+                if st.session_state["pos_active_view"] == "التقارير"
+                else "secondary"
+            )
+        ):
+            st.session_state["pos_active_view"] = "التقارير"
+            st.rerun()
+
+        if nav4.button(
+            "🗂️ الأرشيف والطباعة",
+            use_container_width=True,
+            type=(
+                "primary"
+                if st.session_state["pos_active_view"] == "الأرشيف"
+                else "secondary"
+            )
+        ):
+            st.session_state["pos_active_view"] = "الأرشيف"
+            st.rerun()
 
         st.markdown("---")
 
@@ -1798,6 +1757,165 @@ def show_page():
                     ] = []
 
                     st.rerun()
+
+        # ====================================================
+        # التقارير والإغلاق
+        # ====================================================
+
+        elif (
+            st.session_state["pos_active_view"]
+            == "التقارير"
+        ):
+
+            st.markdown("### 📊 التقارير والإغلاق المالي")
+
+            if role not in [
+                "Admin",
+                "General_Supervisor",
+                "Branch_Supervisor"
+            ]:
+                st.warning("🔒 لا توجد صلاحية لعرض تقارير الإغلاق.")
+
+            else:
+                report_action = st.selectbox(
+                    "اختر التقرير أو العملية:",
+                    [
+                        "تقرير X - الوردية الحالية",
+                        "تقرير Z - إغلاق اليوم"
+                    ],
+                    key="pos_report_action"
+                )
+
+                if report_action == "تقرير X - الوردية الحالية":
+
+                    shift_invoice_rows = conn.execute(
+                        """
+                        SELECT total_amount, notes
+                        FROM invoices
+                        WHERE branch_id = ?
+                          AND DATE(created_at) = ?
+                          AND shift_status = ?
+                        ORDER BY id ASC
+                        """,
+                        (
+                            b_id,
+                            today_date,
+                            str(current_shift_num)
+                        )
+                    ).fetchall()
+
+                    x_summary = summarize_invoice_rows(
+                        shift_invoice_rows
+                    )
+
+                    x1, x2, x3 = st.columns(3)
+                    x1.metric(
+                        "صافي الوردية",
+                        f"{x_summary['net_total']:,.2f} د.ل"
+                    )
+                    x2.metric(
+                        "الخصومات",
+                        f"{x_summary['discount_total']:,.2f} د.ل"
+                    )
+                    x3.metric(
+                        "عدد الفواتير",
+                        f"{x_summary['invoice_count']}"
+                    )
+
+                    x_html = build_shift_report_html(
+                        "تقرير X - تسليم الوردية",
+                        branch_name_display,
+                        username,
+                        current_shift_num,
+                        x_summary
+                    )
+
+                    st.components.v1.html(
+                        x_html,
+                        height=360,
+                        scrolling=True
+                    )
+
+                else:
+
+                    z_invoice_rows = conn.execute(
+                        """
+                        SELECT total_amount, notes
+                        FROM invoices
+                        WHERE branch_id = ?
+                          AND DATE(created_at) = ?
+                          AND shift_status != 'Z_Closed'
+                        ORDER BY id ASC
+                        """,
+                        (b_id, today_date)
+                    ).fetchall()
+
+                    z_summary = summarize_invoice_rows(
+                        z_invoice_rows
+                    )
+
+                    z1, z2, z3 = st.columns(3)
+                    z1.metric(
+                        "صافي غير المغلق",
+                        f"{z_summary['net_total']:,.2f} د.ل"
+                    )
+                    z2.metric(
+                        "الخصومات",
+                        f"{z_summary['discount_total']:,.2f} د.ل"
+                    )
+                    z3.metric(
+                        "عدد الفواتير",
+                        f"{z_summary['invoice_count']}"
+                    )
+
+                    z_html = build_shift_report_html(
+                        "تقرير Z - الإغلاق المالي",
+                        branch_name_display,
+                        username,
+                        current_shift_num,
+                        z_summary
+                    )
+
+                    st.components.v1.html(
+                        z_html,
+                        height=360,
+                        scrolling=True
+                    )
+
+                    if not z_invoice_rows:
+                        st.info(
+                            "لا توجد فواتير غير مغلقة لهذا اليوم."
+                        )
+                    elif st.button(
+                        "🔒 تنفيذ إغلاق Z لليوم",
+                        type="primary",
+                        use_container_width=True
+                    ):
+                        try:
+                            st.session_state[
+                                "last_z_report_html"
+                            ] = z_html
+
+                            conn.execute(
+                                """
+                                UPDATE invoices
+                                SET shift_status = 'Z_Closed'
+                                WHERE branch_id = ?
+                                  AND DATE(created_at) = ?
+                                  AND shift_status != 'Z_Closed'
+                                """,
+                                (b_id, today_date)
+                            )
+                            conn.commit()
+                            st.success(
+                                "✅ تم إغلاق مبيعات اليوم "
+                                "وحفظها في أرشيف Z."
+                            )
+                            st.rerun()
+
+                        except Exception:
+                            conn.rollback()
+                            raise
 
         # ====================================================
         # البحث اليدوي
@@ -2012,364 +2130,310 @@ def show_page():
                     )
 
         # ====================================================
-        # الأرشيف
+        # الأرشيف وإعادة الطباعة
         # ====================================================
 
         elif (
-            st.session_state[
-                "pos_active_view"
-            ]
+            st.session_state["pos_active_view"]
             == "الأرشيف"
         ):
 
-            st.markdown(
-                "### 📋 أرشيف مبيعات الفرع "
-                "وإعادة الطباعة"
+            st.markdown("### 🗂️ الأرشيف وإعادة الطباعة")
+
+            archive_action = st.selectbox(
+                "ماذا تريد عرض أو إعادة طباعته؟",
+                [
+                    "🧾 فاتورة مبيعات سابقة",
+                    "📊 تقرير Z سابق",
+                    "📦 سجل التزويد"
+                ],
+                key="pos_archive_action"
             )
 
-            recent_invs = conn.execute(
-                """
-                SELECT
-                    id,
-                    customer_name,
-                    total_amount,
-                    created_at
-                FROM invoices
-                WHERE branch_id = ?
-                ORDER BY id DESC
-                LIMIT 100
-                """,
-                (b_id,)
-            ).fetchall()
+            # ------------------------------------------------
+            # فواتير المبيعات
+            # ------------------------------------------------
+            if archive_action == "🧾 فاتورة مبيعات سابقة":
 
-            if recent_invs:
+                recent_invs = conn.execute(
+                    """
+                    SELECT
+                        id,
+                        customer_name,
+                        total_amount,
+                        created_at
+                    FROM invoices
+                    WHERE branch_id = ?
+                    ORDER BY id DESC
+                    LIMIT 100
+                    """,
+                    (b_id,)
+                ).fetchall()
 
-                inv_dict = {
-                    (
-                        f"فاتورة #{r['id']} "
-                        f"| {r['customer_name']} "
-                        f"| "
-                        f"{float(r['total_amount'] or 0):,.2f} "
-                        f"د.ل "
-                        f"| {r['created_at']}"
-                    ): r["id"]
+                if not recent_invs:
+                    st.info("📭 لا توجد فواتير مبيعات سابقة.")
 
-                    for r in recent_invs
-                }
+                else:
+                    inv_dict = {
+                        (
+                            f"فاتورة #{r['id']} | "
+                            f"{r['customer_name']} | "
+                            f"{float(r['total_amount'] or 0):,.2f} د.ل | "
+                            f"{r['created_at']}"
+                        ): r["id"]
+                        for r in recent_invs
+                    }
 
-                sel_inv_str = st.selectbox(
-                    "اختر الفاتورة:",
-                    [
-                        "-- اختر الفاتورة --"
-                    ]
-                    + list(
-                        inv_dict.keys()
+                    sel_inv_str = st.selectbox(
+                        "اختر الفاتورة:",
+                        ["-- اختر الفاتورة --"]
+                        + list(inv_dict.keys()),
+                        key="archive_invoice_select"
                     )
+
+                    if sel_inv_str != "-- اختر الفاتورة --":
+
+                        target_inv_id = inv_dict[sel_inv_str]
+
+                        inv_data = conn.execute(
+                            """
+                            SELECT *
+                            FROM invoices
+                            WHERE id = ?
+                              AND branch_id = ?
+                            """,
+                            (target_inv_id, b_id)
+                        ).fetchone()
+
+                        if inv_data:
+                            details = parse_invoice_notes(
+                                inv_data["notes"],
+                                inv_data["total_amount"]
+                            )
+
+                            archive_print_inv = {
+                                "inv_id": inv_data["id"],
+                                "daily_inv_num": "-",
+                                "branch": branch_name_display,
+                                "cashier": "-",
+                                "shift": inv_data["shift_status"],
+                                "date_time": inv_data["created_at"],
+                                "customer": inv_data["customer_name"],
+                                "items": details["items"],
+                                "gross_total": float(
+                                    details.get(
+                                        "gross_total",
+                                        inv_data["total_amount"]
+                                    ) or 0
+                                ),
+                                "discount_amount": float(
+                                    details.get(
+                                        "discount_amount",
+                                        0
+                                    ) or 0
+                                ),
+                                "total": float(
+                                    inv_data["total_amount"] or 0
+                                ),
+                                "method": inv_data["payment_method"]
+                            }
+
+                            html_reprint_content = (
+                                build_invoice_print_html(
+                                    archive_print_inv
+                                )
+                            )
+
+                            st.components.v1.html(
+                                html_reprint_content,
+                                height=620,
+                                scrolling=True
+                            )
+
+                            st.download_button(
+                                "📥 تحميل الفاتورة",
+                                data=html_reprint_content.encode(
+                                    "utf-8"
+                                ),
+                                file_name=(
+                                    f"Invoice_Reprint_"
+                                    f"{target_inv_id}.html"
+                                ),
+                                mime="text/html",
+                                use_container_width=True
+                            )
+
+            # ------------------------------------------------
+            # أرشيف Z
+            # ------------------------------------------------
+            elif archive_action == "📊 تقرير Z سابق":
+
+                z_dates = get_z_archive_dates(
+                    conn,
+                    b_id
                 )
 
-                if (
-                    sel_inv_str
-                    != "-- اختر الفاتورة --"
-                ):
-
-                    target_inv_id = (
-                        inv_dict[
-                            sel_inv_str
-                        ]
+                if not z_dates:
+                    st.info(
+                        "📭 لا توجد تقارير Z مغلقة "
+                        "مسجلة لهذا الفرع."
                     )
 
-                    inv_data = conn.execute(
-                        """
-                        SELECT *
-                        FROM invoices
-                        WHERE id = ?
-                        """,
-                        (target_inv_id,)
-                    ).fetchone()
+                else:
+                    z_options = {
+                        (
+                            f"{r['z_date']} | "
+                            f"{int(r['invoice_count'] or 0)} فاتورة | "
+                            f"{float(r['net_total'] or 0):,.2f} د.ل"
+                        ): r["z_date"]
+                        for r in z_dates
+                    }
 
-                    if inv_data:
+                    selected_z_label = st.selectbox(
+                        "اختر تقرير Z السابق:",
+                        ["-- اختر تقرير Z --"]
+                        + list(z_options.keys()),
+                        key="archive_z_select"
+                    )
 
-                        details = (
-                            parse_invoice_notes(
-                                inv_data[
-                                    "notes"
-                                ],
-                                inv_data[
-                                    "total_amount"
-                                ]
-                            )
-                        )
+                    if selected_z_label != "-- اختر تقرير Z --":
 
-                        saved_items = details[
-                            "items"
+                        selected_z_date = z_options[
+                            selected_z_label
                         ]
 
-                        items_html = "".join(
-                            [
-                                (
-                                    "<tr>"
-                                    f"<td>{i.get('name', '-')}</td>"
-                                    f"<td>{i.get('qty', '-')}</td>"
-                                    f"<td>{i.get('price', '-')}</td>"
-                                    f"<td>{i.get('total', '-')}</td>"
-                                    "</tr>"
-                                )
-                                for i in saved_items
-                            ]
-                        )
-
-                        discount_html = ""
-
-                        if float(
-                            details.get(
-                                "discount_amount",
-                                0
+                        historical_z_html, historical_summary = (
+                            build_historical_z_html(
+                                conn,
+                                b_id,
+                                branch_name_display,
+                                selected_z_date
                             )
-                            or 0
-                        ) > 0:
-
-                            discount_html = f"""
-                            <p>
-                                الإجمالي قبل الخصم:
-                                {
-                                    float(
-                                        details.get(
-                                            "gross_total",
-                                            inv_data[
-                                                "total_amount"
-                                            ]
-                                        )
-                                    )
-                                    :,.2f
-                                }
-                                د.ل
-                            </p>
-
-                            <p>
-                                الخصم:
-                                {
-                                    float(
-                                        details.get(
-                                            "discount_amount",
-                                            0
-                                        )
-                                    )
-                                    :,.2f
-                                }
-                                د.ل
-                            </p>
-                            """
-
-                        html_reprint_content = f"""
-                        <html dir="rtl">
-
-                        <head>
-                            <meta charset="utf-8">
-                        </head>
-
-                        <body style="
-                            font-family:Arial;
-                            text-align:center;
-                            max-width:350px;
-                            margin:auto;
-                            padding:20px;
-                            border:1px solid #000;
-                        ">
-
-                            <h2>
-                                مجموعة أبو زيد التجارية
-                            </h2>
-
-                            <p>
-                                فرع:
-                                {branch_name_display}
-                            </p>
-
-                            <hr>
-
-                            <p style="
-                                text-align:right;
-                            ">
-                                <b>
-                                رقم الفاتورة:
-                                </b>
-                                #{inv_data['id']}
-                                <br>
-
-                                <b>
-                                التاريخ:
-                                </b>
-                                {
-                                    inv_data[
-                                        'created_at'
-                                    ]
-                                }
-                                <br>
-
-                                <b>
-                                طريقة الدفع:
-                                </b>
-                                {
-                                    inv_data[
-                                        'payment_method'
-                                    ]
-                                }
-                            </p>
-
-                            <hr>
-
-                            <table style="
-                                width:100%;
-                                text-align:right;
-                            ">
-
-                                <tr>
-                                    <th>الصنف</th>
-                                    <th>الكمية</th>
-                                    <th>السعر</th>
-                                    <th>المجموع</th>
-                                </tr>
-
-                                {items_html}
-
-                            </table>
-
-                            <hr>
-
-                            {discount_html}
-
-                            <h3>
-                                الصافي:
-                                {
-                                    float(
-                                        inv_data[
-                                            'total_amount'
-                                        ]
-                                    )
-                                    :,.2f
-                                }
-                                د.ل
-                            </h3>
-
-                        </body>
-                        </html>
-                        """
-
-                        archive_print_inv = {
-                            "inv_id": inv_data["id"],
-                            "daily_inv_num": "-",
-                            "branch": branch_name_display,
-                            "cashier": "-",
-                            "shift": inv_data["shift_status"],
-                            "date_time": inv_data["created_at"],
-                            "customer": inv_data["customer_name"],
-                            "items": saved_items,
-                            "gross_total": float(
-                                details.get(
-                                    "gross_total",
-                                    inv_data["total_amount"]
-                                ) or 0
-                            ),
-                            "discount_amount": float(
-                                details.get("discount_amount", 0) or 0
-                            ),
-                            "total": float(inv_data["total_amount"] or 0),
-                            "method": inv_data["payment_method"]
-                        }
-
-                        html_reprint_content = build_invoice_print_html(
-                            archive_print_inv
                         )
 
-                        st.info(
-                            "🖨️ اضغط «طباعة الآن» داخل الفاتورة "
-                            "لإعادة طباعتها."
+                        zc1, zc2, zc3 = st.columns(3)
+                        zc1.metric(
+                            "الصافي",
+                            f"{historical_summary['net_total']:,.2f} د.ل"
+                        )
+                        zc2.metric(
+                            "الخصومات",
+                            f"{historical_summary['discount_total']:,.2f} د.ل"
+                        )
+                        zc3.metric(
+                            "الفواتير",
+                            historical_summary["invoice_count"]
                         )
 
                         st.components.v1.html(
-                            html_reprint_content,
-                            height=620,
+                            historical_z_html,
+                            height=420,
                             scrolling=True
                         )
 
                         st.download_button(
-                            "📥 تحميل الفاتورة "
-                            "المسترجعة",
-                            data=(
-                                html_reprint_content
-                                .encode(
-                                    "utf-8"
-                                )
-                            ),
+                            "📥 تحميل تقرير Z",
+                            data=historical_z_html.encode("utf-8"),
                             file_name=(
-                                f"Invoice_Reprint_"
-                                f"{target_inv_id}.html"
+                                f"Z_Report_{b_id}_"
+                                f"{selected_z_date}.html"
                             ),
                             mime="text/html",
                             use_container_width=True
                         )
 
+            # ------------------------------------------------
+            # سجل التزويد
+            # ------------------------------------------------
             else:
 
-                st.info(
-                    "📭 لا توجد فواتير "
-                    "مبيعات سابقة."
-                )
+                branch_transfers = conn.execute(
+                    """
+                    SELECT
+                        id,
+                        items_details,
+                        status,
+                        transfer_date
+                    FROM transfer_logs
+                    WHERE to_branch_id = ?
+                    ORDER BY id DESC
+                    LIMIT 100
+                    """,
+                    (b_id,)
+                ).fetchall()
 
-            st.markdown("---")
+                if not branch_transfers:
+                    st.info(
+                        "لا توجد حركات تزويد "
+                        "مسجلة لهذا الفرع."
+                    )
 
-            # =================================================
-            # أرشيف التزويد
-            # =================================================
-
-            st.markdown(
-                "### 📦 أرشيف التزويد "
-                "الوارد للفرع"
-            )
-
-            branch_transfers = conn.execute(
-                """
-                SELECT
-                    id,
-                    items_details,
-                    status,
-                    transfer_date
-                FROM transfer_logs
-                WHERE to_branch_id = ?
-                ORDER BY id DESC
-                LIMIT 100
-                """,
-                (b_id,)
-            ).fetchall()
-
-            if branch_transfers:
-
-                transfer_data = [
-                    {
-                        "رقم التزويد":
-                            r["id"],
-                        "التاريخ":
-                            r["transfer_date"],
-                        "الحالة":
-                            r["status"],
-                        "التفاصيل":
-                            r["items_details"]
+                else:
+                    transfer_options = {
+                        (
+                            f"تزويد #{r['id']} | "
+                            f"{r['transfer_date']} | "
+                            f"{r['status']}"
+                        ): r
+                        for r in branch_transfers
                     }
-                    for r in branch_transfers
-                ]
 
-                st.dataframe(
-                    transfer_data,
-                    use_container_width=True,
-                    hide_index=True
-                )
+                    selected_transfer_label = st.selectbox(
+                        "اختر حركة التزويد:",
+                        ["-- اختر حركة التزويد --"]
+                        + list(transfer_options.keys()),
+                        key="archive_transfer_select"
+                    )
 
-            else:
+                    if (
+                        selected_transfer_label
+                        != "-- اختر حركة التزويد --"
+                    ):
+                        transfer_row = transfer_options[
+                            selected_transfer_label
+                        ]
 
-                st.info(
-                    "لا توجد حركات تزويد "
-                    "مسجلة لهذا الفرع."
-                )
+                        transfer_body = f"""
+                            <h2>مجموعة أبو زيد التجارية</h2>
+                            <p>فرع: {branch_name_display}</p>
+                            <hr>
+                            <h3>إيصال تزويد #{transfer_row['id']}</h3>
+                            <p style="text-align:right;">
+                                <b>التاريخ:</b>
+                                {transfer_row['transfer_date']}<br>
+                                <b>الحالة:</b>
+                                {transfer_row['status']}
+                            </p>
+                            <hr>
+                            <div style="
+                                white-space:pre-wrap;
+                                text-align:right;
+                            ">
+                                {transfer_row['items_details']}
+                            </div>
+                        """
+
+                        transfer_html = make_printable_html(
+                            transfer_body,
+                            f"Transfer {transfer_row['id']}"
+                        )
+
+                        st.components.v1.html(
+                            transfer_html,
+                            height=480,
+                            scrolling=True
+                        )
+
+                        st.download_button(
+                            "📥 تحميل إيصال التزويد",
+                            data=transfer_html.encode("utf-8"),
+                            file_name=(
+                                f"Transfer_"
+                                f"{transfer_row['id']}.html"
+                            ),
+                            mime="text/html",
+                            use_container_width=True
+                        )
 
     except Exception as e:
 
