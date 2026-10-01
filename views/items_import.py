@@ -277,9 +277,42 @@ def show_page():
                     use_container_width=True
                 )
 
+                st.markdown("### ⚙️ نوع عملية الاستيراد")
+                import_mode = st.radio(
+                    "اختر ما الذي تريد أن يفعله الملف بالأصناف الموجودة:",
+                    [
+                        "➕ رصيد افتتاحي / إضافة مخزون",
+                        "💲 تحديث البيانات والأسعار فقط",
+                        "🔄 استبدال الرصيد بالكمية الموجودة في الملف",
+                    ],
+                    help=(
+                        "الإضافة تجمع الكمية الجديدة مع الحالية وتحسب متوسط التكلفة. "
+                        "تحديث الأسعار لا يغير المخزون. "
+                        "استبدال الرصيد يجعل الرصيد مساويًا للكمية الموجودة في الملف."
+                    ),
+                    key="items_import_mode",
+                )
+
+                if "رصيد افتتاحي" in import_mode:
+                    st.info(
+                        "➕ الكمية في الملف ستُضاف إلى الرصيد الحالي. "
+                        "تكلفة الشراء ستُحسب بمتوسط مرجح، وسعر البيع سيُحدّث من الملف."
+                    )
+                elif "تحديث البيانات" in import_mode:
+                    st.info(
+                        "💲 لن تتغير الكميات. سيتم تحديث اسم الصنف والوحدة "
+                        "وسعر الشراء وسعر البيع والبيانات الأساسية فقط."
+                    )
+                else:
+                    st.warning(
+                        "🔄 هذا الوضع يستبدل الرصيد الحالي بالكمية الموجودة في الملف. "
+                        "استخدمه فقط عند التأسيس أو بعد جرد فعلي."
+                    )
+
                 import_clicked = st.button(
                     "🚀 اعتماد وترحيل الأصناف من الملف",
-                    type="primary"
+                    type="primary",
+                    key="items_import_execute",
                 )
 
                 if import_clicked:
@@ -288,8 +321,13 @@ def show_page():
                         conn_imp = get_db_connection()
                         ensure_import_schema(conn_imp)
 
-                        success_count = 0
                         processed_rows = 0
+                        inserted_count = 0
+                        updated_count = 0
+                        inventory_added_count = 0
+                        price_only_count = 0
+                        replaced_count = 0
+                        records_count = 0
 
                         for excel_index, row in df.iterrows():
                             excel_row = int(excel_index) + 2
@@ -354,7 +392,7 @@ def show_page():
                                 if loose_pieces < 0 or not float(loose_pieces).is_integer():
                                     raise ValueError(
                                         f"الصف {excel_row}: الكمية المفردة/كجم يجب "
-                                        "أن يكون عدداً صحيحاً غير سالب."
+                                        "أن تكون عدداً صحيحاً غير سالب."
                                     )
                                 if carton_buy_price < 0 or unit_sale_price < 0:
                                     raise ValueError(
@@ -426,37 +464,101 @@ def show_page():
                                     if old_avg <= 0:
                                         old_avg = old_buy
 
-                                    new_qty = old_qty + float(qty)
-                                    if new_qty > 0:
-                                        new_avg = (
-                                            (old_qty * old_avg)
-                                            + (float(qty) * float(buy_p))
-                                        ) / new_qty
-                                    else:
-                                        new_avg = float(buy_p)
+                                    if "رصيد افتتاحي" in import_mode:
+                                        new_qty = old_qty + float(qty)
+                                        if new_qty > 0:
+                                            new_avg = (
+                                                (old_qty * old_avg)
+                                                + (float(qty) * float(buy_p))
+                                            ) / new_qty
+                                        else:
+                                            new_avg = float(buy_p)
 
-                                    conn_imp.execute(
-                                        """
-                                        UPDATE items
-                                        SET quantity = ?,
-                                            sale_price = ?,
-                                            buy_price = ?,
-                                            avg_cost = ?,
-                                            unit_type = ?,
-                                            pieces_per_carton = ?
-                                        WHERE id = ?
-                                        """,
-                                        (
-                                            new_qty,
-                                            sale_p,
-                                            buy_p,
-                                            new_avg,
-                                            unit_type,
-                                            pieces_per_carton,
-                                            existing["id"]
+                                        conn_imp.execute(
+                                            """
+                                            UPDATE items
+                                            SET item_code = ?,
+                                                item_name = ?,
+                                                quantity = ?,
+                                                sale_price = ?,
+                                                buy_price = ?,
+                                                avg_cost = ?,
+                                                unit_type = ?,
+                                                pieces_per_carton = ?
+                                            WHERE id = ?
+                                            """,
+                                            (
+                                                code_value, name, new_qty,
+                                                sale_p, buy_p, new_avg,
+                                                unit_type, pieces_per_carton,
+                                                existing["id"]
+                                            )
                                         )
-                                    )
+                                        add_import_batch(
+                                            conn_imp, existing["id"], b_id,
+                                            qty, buy_p, expiry,
+                                            source_type="items_import_add"
+                                        )
+                                        inventory_added_count += 1
+
+                                    elif "تحديث البيانات" in import_mode:
+                                        conn_imp.execute(
+                                            """
+                                            UPDATE items
+                                            SET item_code = ?,
+                                                item_name = ?,
+                                                sale_price = ?,
+                                                buy_price = ?,
+                                                unit_type = ?,
+                                                pieces_per_carton = ?
+                                            WHERE id = ?
+                                            """,
+                                            (
+                                                code_value, name, sale_p, buy_p,
+                                                unit_type, pieces_per_carton,
+                                                existing["id"]
+                                            )
+                                        )
+                                        price_only_count += 1
+
+                                    else:
+                                        conn_imp.execute(
+                                            """
+                                            UPDATE items
+                                            SET item_code = ?,
+                                                item_name = ?,
+                                                quantity = ?,
+                                                sale_price = ?,
+                                                buy_price = ?,
+                                                avg_cost = ?,
+                                                unit_type = ?,
+                                                pieces_per_carton = ?
+                                            WHERE id = ?
+                                            """,
+                                            (
+                                                code_value, name, qty,
+                                                sale_p, buy_p, buy_p,
+                                                unit_type, pieces_per_carton,
+                                                existing["id"]
+                                            )
+                                        )
+                                        conn_imp.execute(
+                                            """
+                                            DELETE FROM inventory_batches
+                                            WHERE item_id = ? AND branch_id = ?
+                                            """,
+                                            (existing["id"], b_id)
+                                        )
+                                        add_import_batch(
+                                            conn_imp, existing["id"], b_id,
+                                            qty, buy_p, expiry,
+                                            source_type="items_import_replace"
+                                        )
+                                        replaced_count += 1
+
+                                    updated_count += 1
                                     item_id = existing["id"]
+
                                 else:
                                     inserted = conn_imp.execute(
                                         """
@@ -477,24 +579,44 @@ def show_page():
                                     ).fetchone()
                                     item_id = inserted[0]
 
-                                add_import_batch(
-                                    conn_imp,
-                                    item_id,
-                                    b_id,
-                                    qty,
-                                    buy_p,
-                                    expiry
-                                )
-                                success_count += 1
+                                    add_import_batch(
+                                        conn_imp, item_id, b_id, qty,
+                                        buy_p, expiry,
+                                        source_type="items_import_new"
+                                    )
+                                    inserted_count += 1
+
+                                records_count += 1
 
                             processed_rows += 1
 
                         conn_imp.commit()
+
                         st.success(
-                            f"✅ تم اعتماد {processed_rows} صف وترحيل "
-                            f"{success_count} سجل بنجاح. "
-                            "تم تحويل الكراتين إلى قطع وتكلفة الوحدة تلقائياً."
+                            f"✅ تم استيراد {processed_rows} صنف من الملف بنجاح."
                         )
+
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("🆕 أصناف جديدة", inserted_count)
+                        c2.metric("✏️ أصناف موجودة تم تحديثها", updated_count)
+                        c3.metric("🏪 سجلات الفروع المنفذة", records_count)
+
+                        if "رصيد افتتاحي" in import_mode:
+                            st.info(
+                                f"➕ تم إضافة الكمية إلى الرصيد الحالي لـ "
+                                f"{inventory_added_count} سجل موجود، "
+                                "مع حساب متوسط تكلفة الشراء المرجح."
+                            )
+                        elif "تحديث البيانات" in import_mode:
+                            st.info(
+                                f"💲 تم تحديث البيانات والأسعار فقط لـ "
+                                f"{price_only_count} سجل موجود دون تغيير الكمية."
+                            )
+                        else:
+                            st.warning(
+                                f"🔄 تم استبدال الرصيد لـ {replaced_count} "
+                                "سجل موجود بالكمية الواردة في الملف."
+                            )
 
                     except Exception as e:
                         if conn_imp:
