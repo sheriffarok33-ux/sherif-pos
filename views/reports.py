@@ -1531,89 +1531,94 @@ def show_page():
 
         return
 
-    (
-        tab_financial,
-        tab_sales,
-        tab_purchases,
-        tab_expenses,
-        tab_revenues,
-        tab_adjustments,
-        tab_transfers,
-        tab_production,
-        tab_inventory
-    ) = st.tabs(
-        [
-            "💰 الملخص المالي",
-            "🧾 المبيعات",
-            "📥 المشتريات",
-            "💸 المصروفات",
-            "💵 الإيرادات",
-            "✍️ الحركات اليدوية",
-            "🔄 التحويلات",
-            "🔥🥜 الخلط والتحميص",
-            "📦 المخزون والتكلفة"
-        ]
-    )
+    report_pages = [
+        ("financial", "💰 الملخص المالي"),
+        ("sales", "🧾 المبيعات"),
+        ("purchases", "📥 المشتريات"),
+        ("expenses", "💸 المصروفات"),
+        ("revenues", "💵 الإيرادات"),
+        ("adjustments", "✍️ الحركات اليدوية"),
+        ("transfers", "🔄 التحويلات"),
+        ("production", "🔥🥜 الخلط والتحميص"),
+        ("inventory", "📦 المخزون والتكلفة"),
+    ]
 
-    with tab_financial:
+    if "reports_page_mode" not in st.session_state:
+        st.session_state["reports_page_mode"] = "financial"
 
+    st.markdown("### 📊 اختر التقرير")
+
+    for row_start in range(0, len(report_pages), 3):
+        current = report_pages[row_start:row_start + 3]
+        cols = st.columns(len(current))
+
+        for idx, (page_key, page_label) in enumerate(current):
+            if cols[idx].button(
+                page_label,
+                use_container_width=True,
+                type="primary"
+                if st.session_state["reports_page_mode"] == page_key
+                else "secondary",
+                key=f"reports_nav_{page_key}"
+            ):
+                st.session_state["reports_page_mode"] = page_key
+                st.rerun()
+
+    st.markdown("---")
+
+    selected_report = st.session_state["reports_page_mode"]
+
+    if selected_report == "financial":
         show_financial_summary(
             branches,
             is_admin_or_supervisor
         )
 
-    with tab_sales:
-
+    elif selected_report == "sales":
         show_sales_report(
             branches,
             is_admin_or_supervisor
         )
 
-    with tab_purchases:
-
+    elif selected_report == "purchases":
         show_purchases_report(
             branches,
             is_admin_or_supervisor
         )
 
-    with tab_expenses:
-
+    elif selected_report == "expenses":
         show_expenses_report(
             branches,
             is_admin_or_supervisor
         )
 
-    with tab_revenues:
-
+    elif selected_report == "revenues":
         show_revenues_report(
             branches,
             is_admin_or_supervisor
         )
 
-    with tab_adjustments:
-
+    elif selected_report == "adjustments":
         show_adjustments_report(
             branches,
             is_admin_or_supervisor
         )
 
-    with tab_transfers:
-
+    elif selected_report == "transfers":
         show_transfers_report(
             branches,
             is_admin_or_supervisor
         )
 
-    with tab_production:
-
+    elif selected_report == "production":
         show_production_report(
             branches,
             is_admin_or_supervisor
         )
 
-    with tab_inventory:
-
+    elif selected_report == "inventory":
         show_inventory_report(
             branches,
             is_admin_or_supervisor
         )
+
