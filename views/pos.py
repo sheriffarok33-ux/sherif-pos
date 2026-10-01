@@ -27,6 +27,111 @@ def ensure_cart():
 
 
 # ============================================================
+# دفعات الصلاحية والصرف بطريقة FEFO
+# ============================================================
+
+def ensure_inventory_batches_table(conn):
+    """
+    تجهيز جدول دفعات الصلاحية فقط إذا لم يكن موجوداً.
+    لا يغيّر منطق POS الحالي ولا بيانات الفواتير.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inventory_batches
+        (
+            id BIGSERIAL PRIMARY KEY,
+            item_id INTEGER NOT NULL,
+            branch_id INTEGER NOT NULL,
+            quantity NUMERIC DEFAULT 0,
+            remaining_quantity NUMERIC DEFAULT 0,
+            received_date DATE DEFAULT CURRENT_DATE,
+            expiry_date DATE,
+            unit_cost NUMERIC DEFAULT 0,
+            source_type TEXT DEFAULT 'inventory',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+            FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_inventory_batches_expiry
+        ON inventory_batches(branch_id, expiry_date)
+        """
+    )
+
+
+def get_expired_tracked_quantity(conn, item_id, branch_id):
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(remaining_quantity), 0) AS expired_qty
+        FROM inventory_batches
+        WHERE item_id = ?
+          AND branch_id = ?
+          AND COALESCE(remaining_quantity, 0) > 0
+          AND expiry_date IS NOT NULL
+          AND expiry_date < CURRENT_DATE
+        """,
+        (item_id, branch_id)
+    ).fetchone()
+
+    return float(row["expired_qty"] or 0) if row else 0.0
+
+
+def deduct_batches_fefo(conn, item_id, branch_id, requested_qty):
+    """
+    يخصم من الدفعات غير المنتهية ذات تاريخ الصلاحية الأقرب أولاً.
+    الكمية القديمة التي لم تكن مسجلة كدفعة تبقى متاحة كرصيد legacy.
+    """
+    remaining_to_deduct = float(requested_qty)
+
+    batches = conn.execute(
+        """
+        SELECT id, remaining_quantity, expiry_date
+        FROM inventory_batches
+        WHERE item_id = ?
+          AND branch_id = ?
+          AND COALESCE(remaining_quantity, 0) > 0
+          AND (
+                expiry_date IS NULL
+                OR expiry_date >= CURRENT_DATE
+              )
+        ORDER BY
+            CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END,
+            expiry_date ASC NULLS LAST,
+            id ASC
+        FOR UPDATE
+        """,
+        (item_id, branch_id)
+    ).fetchall()
+
+    for batch in batches:
+        if remaining_to_deduct <= 0:
+            break
+
+        batch_remaining = float(batch["remaining_quantity"] or 0)
+        if batch_remaining <= 0:
+            continue
+
+        deducted = min(batch_remaining, remaining_to_deduct)
+
+        conn.execute(
+            """
+            UPDATE inventory_batches
+            SET remaining_quantity = remaining_quantity - ?
+            WHERE id = ?
+            """,
+            (deducted, batch["id"])
+        )
+
+        remaining_to_deduct -= deducted
+
+    # أي كمية متبقية هنا تخص مخزوناً قديماً لم يكن مسجلاً كدفعات.
+    return max(0.0, remaining_to_deduct)
+
+
+# ============================================================
 # إضافة صنف غير موجود
 # ============================================================
 
@@ -450,6 +555,8 @@ def checkout_payment_dialog(
         # التأكد من المخزون قبل البيع
         # ====================================================
 
+        ensure_inventory_batches_table(conn)
+
         for cart_item in st.session_state["cart"]:
 
             if cart_item.get("id") == 99999:
@@ -479,8 +586,19 @@ def checkout_payment_dialog(
                     "غير موجود في هذا الفرع."
                 )
 
-            available_qty = float(
+            total_stock_qty = float(
                 stock_row["quantity"] or 0
+            )
+
+            expired_tracked_qty = get_expired_tracked_quantity(
+                conn,
+                cart_item["id"],
+                b_id
+            )
+
+            available_qty = max(
+                0.0,
+                total_stock_qty - expired_tracked_qty
             )
 
             requested_qty = float(
@@ -489,11 +607,19 @@ def checkout_payment_dialog(
 
             if requested_qty > available_qty:
 
+                expiry_note = (
+                    f" ويوجد {expired_tracked_qty:,.2f} "
+                    "منتهي الصلاحية وغير متاح للبيع."
+                    if expired_tracked_qty > 0
+                    else ""
+                )
+
                 raise ValueError(
                     f"الكمية غير كافية للصنف "
                     f"({cart_item['name']}). "
-                    f"المتاح: "
+                    f"المتاح للبيع: "
                     f"{available_qty:,.2f}"
+                    f"{expiry_note}"
                 )
 
         # ====================================================
@@ -576,6 +702,16 @@ def checkout_payment_dialog(
 
             if cart_item.get("id") == 99999:
                 continue
+
+            # خصم دفعات الصلاحية بالأقرب انتهاءً أولاً (FEFO).
+            # إذا كان جزء من المخزون قديماً وغير مسجل كدفعات،
+            # يبقى الخصم المتبقي محسوباً من رصيد items كالمعتاد.
+            deduct_batches_fefo(
+                conn,
+                cart_item["id"],
+                b_id,
+                cart_item["qty"]
+            )
 
             conn.execute(
                 """
