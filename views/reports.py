@@ -426,17 +426,56 @@ def show_financial_summary(
     )
 
     # ========================================================
+    # الإيرادات الأخرى
+    # ========================================================
+
+    revenue_params = [
+        from_date,
+        to_date
+    ]
+
+    revenue_branch_sql = ""
+
+    if branch_id:
+        revenue_branch_sql = (
+            " AND branch_id = ? "
+        )
+        revenue_params.append(branch_id)
+
+    revenues_df = query_dataframe(
+        f"""
+        SELECT
+            COALESCE(SUM(amount), 0)
+                AS total_revenues
+        FROM revenues
+        WHERE DATE(revenue_date)
+              BETWEEN ? AND ?
+        {revenue_branch_sql}
+        """,
+        tuple(revenue_params)
+    )
+
+    total_revenues = (
+        float(
+            revenues_df.iloc[0]["total_revenues"] or 0
+        )
+        if not revenues_df.empty
+        else 0.0
+    )
+
+    # ========================================================
     # الناتج التشغيلي
     # ========================================================
 
     operating_result = (
         total_sales
+        + total_revenues
         - total_expenses
         - total_damages
     )
 
-    c1, c2, c3, c4 = (
-        st.columns(4)
+    c1, c2, c3, c4, c5 = (
+        st.columns(5)
     )
 
     c1.metric(
@@ -445,23 +484,29 @@ def show_financial_summary(
     )
 
     c2.metric(
+        "💵 الإيرادات الأخرى",
+        f"{total_revenues:,.2f} د.ل"
+    )
+
+    c3.metric(
         "💸 المصروفات",
         f"{total_expenses:,.2f} د.ل"
     )
 
-    c3.metric(
+    c4.metric(
         "🗑️ التوالف",
         f"{total_damages:,.2f} د.ل"
     )
 
-    c4.metric(
+    c5.metric(
         "📊 الناتج التشغيلي",
         f"{operating_result:,.2f} د.ل"
     )
 
     st.info(
         "ℹ️ الناتج التشغيلي هنا = "
-        "المبيعات - المصروفات - التوالف. "
+        "المبيعات + الإيرادات الأخرى "
+        "- المصروفات - التوالف. "
         "ولا نسميه صافي الربح النهائي "
         "لأن تكلفة البضاعة المباعة "
         "تحتاج حساباً مستقلاً."
@@ -481,6 +526,9 @@ def show_financial_summary(
 
                 "إجمالي المبيعات":
                     total_sales,
+
+                "إجمالي الإيرادات الأخرى":
+                    total_revenues,
 
                 "إجمالي المصروفات":
                     total_expenses,
@@ -966,6 +1014,259 @@ def show_adjustments_report(
     )
 
 
+
+# ============================================================
+# تقرير الإيرادات
+# ============================================================
+
+def show_revenues_report(branches, is_admin_or_supervisor):
+
+    st.markdown("### 💵 تقرير الإيرادات")
+
+    if not is_admin_or_supervisor:
+        st.warning("🔒 تقرير الإيرادات مخصص للإدارة.")
+        return
+
+    branch_id, branch_name = get_branch_filter(
+        branches,
+        "اختر الفرع:",
+        "revenues_branch"
+    )
+
+    from_date, to_date = date_filter("revenues", 30)
+
+    if not from_date:
+        return
+
+    params = [from_date, to_date]
+    branch_sql = ""
+
+    if branch_id:
+        branch_sql = " AND r.branch_id = ? "
+        params.append(branch_id)
+
+    df = query_dataframe(
+        f"""
+        SELECT
+            r.id AS "رقم الإيراد",
+            r.revenue_date AS "التاريخ",
+            b.branch_name AS "الفرع",
+            r.amount AS "المبلغ",
+            r.description AS "البيان"
+        FROM revenues r
+        LEFT JOIN branches b
+            ON b.id = r.branch_id
+        WHERE DATE(r.revenue_date)
+              BETWEEN ? AND ?
+        {branch_sql}
+        ORDER BY r.revenue_date DESC, r.id DESC
+        """,
+        tuple(params)
+    )
+
+    if df.empty:
+        st.info("لا توجد إيرادات في الفترة المحددة.")
+        return
+
+    total_revenues = pd.to_numeric(
+        df["المبلغ"],
+        errors="coerce"
+    ).fillna(0).sum()
+
+    st.metric(
+        "إجمالي الإيرادات",
+        f"{total_revenues:,.2f} د.ل"
+    )
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    excel_button(
+        df,
+        "📥 تحميل تقرير الإيرادات Excel",
+        f"Revenues_{from_date}_to_{to_date}.xlsx",
+        "Revenues",
+        "revenues_excel"
+    )
+
+
+# ============================================================
+# تقرير التحويلات / التزويد
+# ============================================================
+
+def show_transfers_report(branches, is_admin_or_supervisor):
+
+    st.markdown("### 🔄 تقرير تحويلات وتزويد الفروع")
+
+    branch_id, branch_name = get_branch_filter(
+        branches,
+        "اختر الفرع المستلم:",
+        "reports_transfers_branch"
+    )
+
+    from_date, to_date = date_filter(
+        "reports_transfers",
+        30
+    )
+
+    if not from_date:
+        return
+
+    params = [from_date, to_date]
+    branch_sql = ""
+
+    if branch_id:
+        branch_sql = " AND t.to_branch_id = ? "
+        params.append(branch_id)
+
+    df = query_dataframe(
+        f"""
+        SELECT
+            t.id AS "رقم التحويل",
+            t.transfer_date AS "التاريخ والوقت",
+            b1.branch_name AS "من",
+            b2.branch_name AS "إلى",
+            t.transfer_type AS "نوع التحويل",
+            t.items_details AS "تفاصيل الأصناف",
+            t.status AS "الحالة"
+        FROM transfer_logs t
+        LEFT JOIN branches b1
+            ON b1.id = t.from_branch_id
+        LEFT JOIN branches b2
+            ON b2.id = t.to_branch_id
+        WHERE DATE(t.transfer_date)
+              BETWEEN ? AND ?
+        {branch_sql}
+        ORDER BY t.transfer_date DESC, t.id DESC
+        """,
+        tuple(params)
+    )
+
+    if df.empty:
+        st.info("لا توجد تحويلات في الفترة المحددة.")
+        return
+
+    st.metric("عدد التحويلات", f"{len(df):,}")
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    excel_button(
+        df,
+        "📥 تحميل تقرير التحويلات Excel",
+        f"Transfers_{from_date}_to_{to_date}.xlsx",
+        "Transfers",
+        "reports_transfers_excel"
+    )
+
+
+# ============================================================
+# تقرير الإنتاج: الخلط والتحميص
+# ============================================================
+
+def show_production_report(branches, is_admin_or_supervisor):
+
+    st.markdown("### 🔥🥜 تقرير الخلط والتحميص")
+
+    if not is_admin_or_supervisor:
+        st.warning("🔒 تقرير تكلفة الإنتاج مخصص للإدارة.")
+        return
+
+    branch_id, branch_name = get_branch_filter(
+        branches,
+        "اختر المخزن / الفرع:",
+        "production_branch"
+    )
+
+    from_date, to_date = date_filter(
+        "production",
+        30
+    )
+
+    if not from_date:
+        return
+
+    params = [from_date, to_date]
+    branch_sql = ""
+
+    if branch_id:
+        branch_sql = " AND p.branch_id = ? "
+        params.append(branch_id)
+
+    df = query_dataframe(
+        f"""
+        SELECT
+            p.id AS "رقم العملية",
+            p.created_at AS "التاريخ والوقت",
+            b.branch_name AS "المخزن / الفرع",
+            p.production_type AS "نوع العملية",
+            p.source_item_name AS "الخامة / المصدر",
+            p.target_item_name AS "الصنف الناتج",
+            p.input_quantity AS "الكمية الداخلة",
+            p.output_quantity AS "الكمية الناتجة",
+            p.loss_quantity AS "الفقد",
+            p.total_cost AS "إجمالي التكلفة",
+            p.unit_cost AS "تكلفة الوحدة",
+            p.sale_price AS "سعر البيع",
+            p.notes AS "التفاصيل"
+        FROM production_logs p
+        LEFT JOIN branches b
+            ON b.id = p.branch_id
+        WHERE DATE(p.created_at)
+              BETWEEN ? AND ?
+        {branch_sql}
+        ORDER BY p.created_at DESC, p.id DESC
+        """,
+        tuple(params)
+    )
+
+    if df.empty:
+        st.info("لا توجد عمليات خلط أو تحميص في الفترة المحددة.")
+        return
+
+    total_input = pd.to_numeric(
+        df["الكمية الداخلة"], errors="coerce"
+    ).fillna(0).sum()
+
+    total_output = pd.to_numeric(
+        df["الكمية الناتجة"], errors="coerce"
+    ).fillna(0).sum()
+
+    total_loss = pd.to_numeric(
+        df["الفقد"], errors="coerce"
+    ).fillna(0).sum()
+
+    total_cost = pd.to_numeric(
+        df["إجمالي التكلفة"], errors="coerce"
+    ).fillna(0).sum()
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("الكمية الداخلة", f"{total_input:,.2f}")
+    c2.metric("الكمية الناتجة", f"{total_output:,.2f}")
+    c3.metric("إجمالي الفقد", f"{total_loss:,.2f}")
+    c4.metric("تكلفة العمليات", f"{total_cost:,.2f} د.ل")
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    excel_button(
+        df,
+        "📥 تحميل تقرير الإنتاج Excel",
+        f"Production_{from_date}_to_{to_date}.xlsx",
+        "Production",
+        "production_excel"
+    )
+
+
 # ============================================================
 # تقرير المخزون والتكلفة
 # ============================================================
@@ -1231,7 +1532,10 @@ def show_page():
         tab_sales,
         tab_purchases,
         tab_expenses,
+        tab_revenues,
         tab_adjustments,
+        tab_transfers,
+        tab_production,
         tab_inventory
     ) = st.tabs(
         [
@@ -1239,7 +1543,10 @@ def show_page():
             "🧾 المبيعات",
             "📥 المشتريات",
             "💸 المصروفات",
+            "💵 الإيرادات",
             "✍️ الحركات اليدوية",
+            "🔄 التحويلات",
+            "🔥🥜 الخلط والتحميص",
             "📦 المخزون والتكلفة"
         ]
     )
@@ -1272,9 +1579,30 @@ def show_page():
             is_admin_or_supervisor
         )
 
+    with tab_revenues:
+
+        show_revenues_report(
+            branches,
+            is_admin_or_supervisor
+        )
+
     with tab_adjustments:
 
         show_adjustments_report(
+            branches,
+            is_admin_or_supervisor
+        )
+
+    with tab_transfers:
+
+        show_transfers_report(
+            branches,
+            is_admin_or_supervisor
+        )
+
+    with tab_production:
+
+        show_production_report(
             branches,
             is_admin_or_supervisor
         )
