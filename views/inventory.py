@@ -33,6 +33,31 @@ def ensure_inventory_columns():
             WHERE pieces_per_carton IS NULL OR pieces_per_carton < 1
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS inventory_batches
+            (
+                id BIGSERIAL PRIMARY KEY,
+                item_id INTEGER NOT NULL,
+                branch_id INTEGER NOT NULL,
+                quantity NUMERIC DEFAULT 0,
+                remaining_quantity NUMERIC DEFAULT 0,
+                received_date DATE DEFAULT CURRENT_DATE,
+                expiry_date DATE,
+                unit_cost NUMERIC DEFAULT 0,
+                source_type TEXT DEFAULT 'inventory',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+                FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_inventory_batches_expiry
+            ON inventory_batches(branch_id, expiry_date)
+            """
+        )
         conn.commit()
     except Exception:
         if conn:
@@ -99,7 +124,7 @@ def get_branch_items(branch_id):
 
 def add_stock_to_existing_item(
     branch_id, item_id, added_quantity, unit_buy_price, unit_type,
-    pieces_per_carton=None
+    pieces_per_carton=None, expiry_date=None
 ):
     conn = None
     try:
@@ -166,6 +191,22 @@ def add_stock_to_existing_item(
                 (new_qty, unit_buy_price, new_avg, item_id, branch_id)
             )
 
+        if expiry_date:
+            conn.execute(
+                """
+                INSERT INTO inventory_batches
+                (
+                    item_id, branch_id, quantity, remaining_quantity,
+                    expiry_date, unit_cost, source_type
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 'inventory')
+                """,
+                (
+                    item_id, branch_id, added_quantity, added_quantity,
+                    expiry_date, unit_buy_price
+                )
+            )
+
         conn.commit()
         label = "كجم" if stored_type == "kg" else "قطعة"
         st.success(
@@ -186,7 +227,8 @@ def add_stock_to_existing_item(
 
 def create_new_inventory_item(
     branch_id, item_code, item_name, initial_quantity,
-    unit_buy_price, sale_price, unit_type, pieces_per_carton
+    unit_buy_price, sale_price, unit_type, pieces_per_carton,
+    expiry_date=None
 ):
     conn = None
     try:
@@ -227,7 +269,7 @@ def create_new_inventory_item(
                 "استخدم «إضافة كمية لصنف موجود»."
             )
 
-        conn.execute(
+        inserted = conn.execute(
             """
             INSERT INTO items
             (
@@ -236,13 +278,33 @@ def create_new_inventory_item(
                 unit_type, pieces_per_carton
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (
                 item_code, item_name, branch_id, initial_quantity,
                 unit_buy_price, sale_price, unit_buy_price,
                 unit_type, int(pieces_per_carton or 1)
             )
-        )
+        ).fetchone()
+
+        new_item_id = inserted[0]
+
+        if expiry_date:
+            conn.execute(
+                """
+                INSERT INTO inventory_batches
+                (
+                    item_id, branch_id, quantity, remaining_quantity,
+                    expiry_date, unit_cost, source_type
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 'inventory')
+                """,
+                (
+                    new_item_id, branch_id, initial_quantity,
+                    initial_quantity, expiry_date, unit_buy_price
+                )
+            )
+
         conn.commit()
 
         label = "كجم" if unit_type == "kg" else "قطعة"
@@ -481,6 +543,17 @@ def show_page():
                     added_qty, unit_cost = weight_input_fields("existing")
                     ppc = 1
 
+                has_expiry = st.checkbox(
+                    "هذه الدفعة لها تاريخ انتهاء صلاحية",
+                    key="existing_has_expiry"
+                )
+                expiry_date = None
+                if has_expiry:
+                    expiry_date = st.date_input(
+                        "تاريخ انتهاء الصلاحية:",
+                        key="existing_expiry_date"
+                    )
+
                 submit = st.form_submit_button(
                     "➕ إضافة الكمية للصنف",
                     type="primary",
@@ -490,7 +563,7 @@ def show_page():
             if submit:
                 add_stock_to_existing_item(
                     branch_id, selected["id"], added_qty,
-                    unit_cost, unit_type, ppc
+                    unit_cost, unit_type, ppc, expiry_date
                 )
 
     else:
@@ -516,6 +589,17 @@ def show_page():
                 ppc = 1
                 sale_label = "سعر بيع الكيلو (د.ل):"
 
+            has_expiry_new = st.checkbox(
+                "هذا الرصيد الأولي له تاريخ انتهاء صلاحية",
+                key="new_has_expiry"
+            )
+            expiry_date_new = None
+            if has_expiry_new:
+                expiry_date_new = st.date_input(
+                    "تاريخ انتهاء الصلاحية:",
+                    key="new_expiry_date"
+                )
+
             sale_price = st.number_input(
                 sale_label, min_value=0.0, value=0.0,
                 step=0.5, format="%.2f", key="new_sale_price"
@@ -530,7 +614,8 @@ def show_page():
         if submit_new:
             create_new_inventory_item(
                 branch_id, item_code, item_name, qty,
-                cost, sale_price, unit_type, ppc
+                cost, sale_price, unit_type, ppc,
+                expiry_date_new
             )
 
     st.markdown("---")
