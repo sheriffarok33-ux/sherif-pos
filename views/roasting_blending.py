@@ -970,21 +970,69 @@ def show_page():
 
         return
 
-    (
-        mix_tab,
-        roast_tab
-    ) = st.tabs(
-        [
-            "🥜 خلط المكسرات",
-            "🔥 التحميص"
-        ]
-    )
+    if "production_screen_mode" not in st.session_state:
+        st.session_state["production_screen_mode"] = "mix"
+
+    nav1, nav2, nav3 = st.columns(3)
+
+    if nav1.button(
+        "🧪 خلط",
+        use_container_width=True,
+        type="primary" if st.session_state["production_screen_mode"] == "mix" else "secondary"
+    ):
+        st.session_state["production_screen_mode"] = "mix"
+        st.rerun()
+
+    if nav2.button(
+        "🔥 تحميص",
+        use_container_width=True,
+        type="primary" if st.session_state["production_screen_mode"] == "roast" else "secondary"
+    ):
+        st.session_state["production_screen_mode"] = "roast"
+        st.rerun()
+
+    if nav3.button(
+        "📋 سجل الإنتاج",
+        use_container_width=True,
+        type="primary" if st.session_state["production_screen_mode"] == "log" else "secondary"
+    ):
+        st.session_state["production_screen_mode"] = "log"
+        st.rerun()
+
+    if st.session_state["production_screen_mode"] == "log":
+        conn_log = get_db_connection()
+        try:
+            rows_log = conn_log.execute(
+                "SELECT * FROM production_logs ORDER BY id DESC LIMIT 500"
+            ).fetchall()
+            if rows_log:
+                df_log = pd.DataFrame([dict(r) for r in rows_log])
+                st.markdown("### 📋 سجل عمليات التحميص والخلط")
+                st.dataframe(df_log, use_container_width=True, hide_index=True)
+
+                import io
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                    df_log.to_excel(writer, index=False, sheet_name="Production_Log")
+
+                st.download_button(
+                    "📥 تصدير سجل الإنتاج Excel",
+                    output.getvalue(),
+                    "production_log.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            else:
+                st.info("لا توجد عمليات إنتاج مسجلة حتى الآن.")
+        finally:
+            conn_log.close()
+        return
 
     # ========================================================
     # الخلط
     # ========================================================
 
-    with mix_tab:
+    if st.session_state["production_screen_mode"] == "mix":
 
         st.markdown(
             "### 🥜 تكوين خلطة جديدة"
@@ -1450,7 +1498,7 @@ def show_page():
     # التحميص
     # ========================================================
 
-    with roast_tab:
+    if st.session_state["production_screen_mode"] == "roast":
 
         st.markdown(
             "### 🔥 عملية تحميص جديدة"
