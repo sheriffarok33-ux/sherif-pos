@@ -2573,7 +2573,7 @@ def show_page():
 
     except Exception as e:
 
-        st.error(س
+        st.error(
             "❌ حدث خطأ داخل شاشة "
             "نقطة البيع."
         )
