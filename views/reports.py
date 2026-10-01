@@ -448,7 +448,7 @@ def show_financial_summary(
             COALESCE(SUM(amount), 0)
                 AS total_revenues
         FROM revenues
-        WHERE DATE(revenue_date)
+        WHERE DATE(created_at)
               BETWEEN ? AND ?
         {revenue_branch_sql}
         """,
@@ -1049,17 +1049,21 @@ def show_revenues_report(branches, is_admin_or_supervisor):
         f"""
         SELECT
             r.id AS "رقم الإيراد",
-            r.revenue_date AS "التاريخ",
+            DATE(r.created_at) AS "التاريخ",
             b.branch_name AS "الفرع",
             r.amount AS "المبلغ",
-            r.description AS "البيان"
+            COALESCE(
+                NULLIF(r.notes, ''),
+                NULLIF(r.revenue_source, ''),
+                'إيراد'
+            ) AS "البيان"
         FROM revenues r
         LEFT JOIN branches b
             ON b.id = r.branch_id
-        WHERE DATE(r.revenue_date)
+        WHERE DATE(r.created_at)
               BETWEEN ? AND ?
         {branch_sql}
-        ORDER BY r.revenue_date DESC, r.id DESC
+        ORDER BY r.created_at DESC, r.id DESC
         """,
         tuple(params)
     )
