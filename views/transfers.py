@@ -347,33 +347,29 @@ def execute_transfer(
                     """
                     UPDATE items
                     SET
-                        quantity =
-                            quantity + ?,
+                        avg_cost =
+                            CASE
+                                WHEN (quantity + ?) > 0
+                                THEN (
+                                    (quantity * COALESCE(avg_cost, buy_price, 0))
+                                    + (? * ?)
+                                ) / (quantity + ?)
+                                ELSE ?
+                            END,
+                        quantity = quantity + ?,
                         buy_price = ?,
-                        avg_cost = ?,
                         sale_price = ?
                     WHERE id = ?
                     """,
                     (
                         qty,
-                        float(
-                            source[
-                                "buy_price"
-                            ] or 0
-                        ),
-                        float(
-                            source[
-                                "avg_cost"
-                            ] or
-                            source[
-                                "buy_price"
-                            ] or 0
-                        ),
-                        float(
-                            source[
-                                "sale_price"
-                            ] or 0
-                        ),
+                        qty,
+                        float(source["avg_cost"] or source["buy_price"] or 0),
+                        qty,
+                        float(source["avg_cost"] or source["buy_price"] or 0),
+                        qty,
+                        float(source["buy_price"] or 0),
+                        float(source["sale_price"] or 0),
                         target_item["id"]
                     )
                 )
@@ -474,7 +470,7 @@ def execute_transfer(
                 target_branch_id,
                 "فاتورة تزويد مجمعة",
                 items_details,
-                "تم الترحيل"
+                "بانتظار تأكيد الكاشير"
             )
         )
 
@@ -1468,6 +1464,22 @@ def show_page():
 
             <head>
                 <meta charset="utf-8">
+                <title>فاتورة تزويد #{selected_row['رقم الفاتورة']}</title>
+                <style>
+                    @page {{
+                        size: 80mm auto;
+                        margin: 3mm;
+                    }}
+                    @media print {{
+                        .no-print {{
+                            display: none !important;
+                        }}
+                        body {{
+                            border: none !important;
+                            padding: 0 !important;
+                        }}
+                    }}
+                </style>
             </head>
 
             <body style="
@@ -1551,6 +1563,21 @@ def show_page():
                     توقيع المستلم:
                     ........................
                 </p>
+
+                <div class="no-print" style="margin-top:15px;">
+                    <button
+                        onclick="window.print()"
+                        style="
+                            width:100%;
+                            padding:10px;
+                            font-size:16px;
+                            font-weight:bold;
+                            cursor:pointer;
+                        "
+                    >
+                        🖨️ طباعة الآن
+                    </button>
+                </div>
 
             </body>
 
