@@ -1,805 +1,234 @@
 import streamlit as st
 import pandas as pd
+import io
 from database import get_db_connection
 
 
-# ============================================================
-# تحميل الموردين
-# ============================================================
+def _excel_bytes(df, sheet_name):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+    return output.getvalue()
 
-def get_suppliers():
 
-    conn = None
+def _set_mode(mode):
+    st.session_state["parties_mode"] = mode
+    st.rerun()
 
-    try:
-        conn = get_db_connection()
-
-        return conn.execute(
-            """
-            SELECT
-                id,
-                supplier_name,
-                phone,
-                balance
-            FROM suppliers
-            ORDER BY supplier_name ASC
-            """
-        ).fetchall()
-
-    finally:
-        if conn:
-            conn.close()
-
-
-# ============================================================
-# تحميل الزبائن
-# ============================================================
-
-def get_customers():
-
-    conn = None
-
-    try:
-        conn = get_db_connection()
-
-        return conn.execute(
-            """
-            SELECT
-                id,
-                customer_name,
-                phone,
-                total_purchases,
-                balance,
-                created_at
-            FROM customers
-            ORDER BY total_purchases DESC,
-                     customer_name ASC
-            """
-        ).fetchall()
-
-    finally:
-        if conn:
-            conn.close()
-
-
-# ============================================================
-# إضافة جهة تعامل
-# ============================================================
-
-def add_party(
-    party_type,
-    name,
-    phone
-):
-
-    conn = None
-
-    try:
-
-        name = name.strip()
-        phone = phone.strip()
-
-        if not name:
-            raise ValueError(
-                "يجب إدخال اسم الجهة."
-            )
-
-        if not phone:
-            raise ValueError(
-                "يجب إدخال رقم الهاتف."
-            )
-
-        conn = get_db_connection()
-
-        # ====================================================
-        # مورد
-        # ====================================================
-
-        if "مورد" in party_type:
-
-            duplicate = conn.execute(
-                """
-                SELECT id
-                FROM suppliers
-                WHERE supplier_name = ?
-                   OR phone = ?
-                LIMIT 1
-                """,
-                (
-                    name,
-                    phone
-                )
-            ).fetchone()
-
-            if duplicate:
-                raise ValueError(
-                    "اسم المورد أو رقم الهاتف "
-                    "مسجل مسبقاً."
-                )
-
-            conn.execute(
-                """
-                INSERT INTO suppliers
-                (
-                    supplier_name,
-                    phone,
-                    balance
-                )
-                VALUES (?, ?, ?)
-                """,
-                (
-                    name,
-                    phone,
-                    0.0
-                )
-            )
-
-            success_message = (
-                f"✅ تمت إضافة المورد "
-                f"({name}) بنجاح."
-            )
-
-        # ====================================================
-        # زبون آجل
-        # ====================================================
-
-        else:
-
-            duplicate = conn.execute(
-                """
-                SELECT id
-                FROM customers
-                WHERE customer_name = ?
-                   OR phone = ?
-                LIMIT 1
-                """,
-                (
-                    name,
-                    phone
-                )
-            ).fetchone()
-
-            if duplicate:
-                raise ValueError(
-                    "اسم الزبون أو رقم الهاتف "
-                    "مسجل مسبقاً."
-                )
-
-            conn.execute(
-                """
-                INSERT INTO customers
-                (
-                    customer_name,
-                    phone,
-                    total_purchases,
-                    balance
-                )
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    name,
-                    phone,
-                    0.0,
-                    0.0
-                )
-            )
-
-            success_message = (
-                f"✅ تم اعتماد الزبون الآجل "
-                f"({name}) بنجاح."
-            )
-
-        conn.commit()
-
-        st.success(
-            success_message
-        )
-
-        st.rerun()
-
-    except ValueError as e:
-
-        if conn:
-            conn.rollback()
-
-        st.warning(
-            f"⚠️ {e}"
-        )
-
-    except Exception as e:
-
-        if conn:
-            conn.rollback()
-
-        st.error(
-            "❌ تعذر إضافة جهة التعامل."
-        )
-
-        st.code(str(e))
-
-    finally:
-
-        if conn:
-            conn.close()
-
-
-# ============================================================
-# سداد مورد
-# ============================================================
-
-def pay_supplier(
-    supplier_id,
-    amount
-):
-
-    conn = None
-
-    try:
-
-        if amount <= 0:
-            raise ValueError(
-                "يجب إدخال مبلغ صحيح."
-            )
-
-        conn = get_db_connection()
-
-        supplier = conn.execute(
-            """
-            SELECT
-                id,
-                supplier_name,
-                balance
-            FROM suppliers
-            WHERE id = ?
-            FOR UPDATE
-            """,
-            (supplier_id,)
-        ).fetchone()
-
-        if not supplier:
-            raise ValueError(
-                "المورد غير موجود."
-            )
-
-        current_balance = float(
-            supplier["balance"] or 0
-        )
-
-        if current_balance <= 0:
-            raise ValueError(
-                "لا يوجد رصيد مستحق "
-                "لهذا المورد."
-            )
-
-        if amount > current_balance:
-            raise ValueError(
-                f"المبلغ المدفوع "
-                f"({amount:,.2f} د.ل) "
-                f"أكبر من الرصيد المستحق "
-                f"({current_balance:,.2f} د.ل)."
-            )
-
-        new_balance = (
-            current_balance
-            - float(amount)
-        )
-
-        conn.execute(
-            """
-            UPDATE suppliers
-            SET balance = ?
-            WHERE id = ?
-            """,
-            (
-                new_balance,
-                supplier_id
-            )
-        )
-
-        conn.commit()
-
-        st.success(
-            f"✅ تم تسجيل دفعة "
-            f"{amount:,.2f} د.ل للمورد "
-            f"({supplier['supplier_name']}). "
-            f"الرصيد المتبقي: "
-            f"{new_balance:,.2f} د.ل."
-        )
-
-        st.rerun()
-
-    except ValueError as e:
-
-        if conn:
-            conn.rollback()
-
-        st.warning(
-            f"⚠️ {e}"
-        )
-
-    except Exception as e:
-
-        if conn:
-            conn.rollback()
-
-        st.error(
-            "❌ تعذر تسجيل دفعة المورد."
-        )
-
-        st.code(str(e))
-
-    finally:
-
-        if conn:
-            conn.close()
-
-
-# ============================================================
-# تحصيل من زبون
-# ============================================================
-
-def collect_customer_payment(
-    customer_id,
-    amount
-):
-
-    conn = None
-
-    try:
-
-        if amount <= 0:
-            raise ValueError(
-                "يجب إدخال مبلغ صحيح."
-            )
-
-        conn = get_db_connection()
-
-        customer = conn.execute(
-            """
-            SELECT
-                id,
-                customer_name,
-                balance
-            FROM customers
-            WHERE id = ?
-            FOR UPDATE
-            """,
-            (customer_id,)
-        ).fetchone()
-
-        if not customer:
-            raise ValueError(
-                "الزبون غير موجود."
-            )
-
-        current_balance = float(
-            customer["balance"] or 0
-        )
-
-        if current_balance <= 0:
-            raise ValueError(
-                "لا توجد مديونية مستحقة "
-                "على هذا الزبون."
-            )
-
-        if amount > current_balance:
-            raise ValueError(
-                f"المبلغ المحصل "
-                f"({amount:,.2f} د.ل) "
-                f"أكبر من المديونية الحالية "
-                f"({current_balance:,.2f} د.ل)."
-            )
-
-        new_balance = (
-            current_balance
-            - float(amount)
-        )
-
-        conn.execute(
-            """
-            UPDATE customers
-            SET balance = ?
-            WHERE id = ?
-            """,
-            (
-                new_balance,
-                customer_id
-            )
-        )
-
-        conn.commit()
-
-        st.success(
-            f"✅ تم تحصيل "
-            f"{amount:,.2f} د.ل من "
-            f"({customer['customer_name']}). "
-            f"الرصيد المتبقي: "
-            f"{new_balance:,.2f} د.ل."
-        )
-
-        st.rerun()
-
-    except ValueError as e:
-
-        if conn:
-            conn.rollback()
-
-        st.warning(
-            f"⚠️ {e}"
-        )
-
-    except Exception as e:
-
-        if conn:
-            conn.rollback()
-
-        st.error(
-            "❌ تعذر تسجيل تحصيل الزبون."
-        )
-
-        st.code(str(e))
-
-    finally:
-
-        if conn:
-            conn.close()
-
-
-# ============================================================
-# الصفحة
-# ============================================================
 
 def show_page():
+    st.header("👥 الموردون والعملاء والحسابات")
+    st.info("الإضافة، التعديل، الحذف، السداد والتحصيل والتصدير من شاشة واحدة.")
 
-    st.header(
-        "👥 جهات التعامل المعتمدة "
-        "(الموردين والزبائن الآجلين)"
-    )
+    if "parties_mode" not in st.session_state:
+        st.session_state["parties_mode"] = "suppliers"
 
-    st.info(
-        "💡 إدارة الموردين وديون المشتريات، "
-        "والزبائن المعتمدين للبيع الآجل "
-        "والتحصيل في مكان واحد."
-    )
+    r1 = st.columns(5)
+    if r1[0].button("🚛 الموردون", use_container_width=True):
+        _set_mode("suppliers")
+    if r1[1].button("🤝 العملاء", use_container_width=True):
+        _set_mode("customers")
+    if r1[2].button("➕ إضافة جهة", use_container_width=True):
+        _set_mode("add")
+    if r1[3].button("💳 دفع لمورد", use_container_width=True):
+        _set_mode("supplier_payment")
+    if r1[4].button("💵 تحصيل عميل", use_container_width=True):
+        _set_mode("customer_collection")
 
-    # ========================================================
-    # إضافة جهة
-    # ========================================================
+    conn = get_db_connection()
+    try:
+        mode = st.session_state["parties_mode"]
 
-    st.markdown(
-        "### ➕ إضافة جهة تعامل جديدة "
-        "(مورد أو زبون آجل)"
-    )
+        if mode == "add":
+            if "party_add_type" not in st.session_state:
+                st.session_state["party_add_type"] = "supplier"
 
-    with st.form(
-        "unified_party_form",
-        clear_on_submit=True
-    ):
+            t1, t2 = st.columns(2)
+            if t1.button("🚛 مورد جديد", use_container_width=True):
+                st.session_state["party_add_type"] = "supplier"
+                st.rerun()
+            if t2.button("🤝 عميل آجل جديد", use_container_width=True):
+                st.session_state["party_add_type"] = "customer"
+                st.rerun()
 
-        col_u1, col_u2, col_u3 = (
-            st.columns(3)
-        )
+            kind = st.session_state["party_add_type"]
+            with st.form("party_add_form", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                name = c1.text_input("الاسم:")
+                phone = c2.text_input("رقم الهاتف:")
+                submit = st.form_submit_button("💾 حفظ", type="primary", use_container_width=True)
 
-        party_type = col_u1.selectbox(
-            "اختر نوع جهة التعامل:",
-            [
-                "🚛 مورد (تاجر جملة)",
-                "🤝 زبون آجل "
-                "(مسموح له بالدين)"
-            ]
-        )
-
-        p_name = col_u2.text_input(
-            "اسم الجهة / الشخص:"
-        )
-
-        p_phone = col_u3.text_input(
-            "رقم الهاتف:"
-        )
-
-        add_submit = (
-            st.form_submit_button(
-                "💾 حفظ واعتماد جهة التعامل",
-                type="primary"
-            )
-        )
-
-    if add_submit:
-
-        add_party(
-            party_type,
-            p_name,
-            p_phone
-        )
-
-    st.markdown("---")
-
-    # ========================================================
-    # التبويبات
-    # ========================================================
-
-    tab_sup, tab_cust = st.tabs(
-        [
-            "🚛 جدول الموردين والديون",
-            "🤝 جدول الزبائن الآجلين والتحصيل"
-        ]
-    )
-
-    # ========================================================
-    # الموردون
-    # ========================================================
-
-    with tab_sup:
-
-        st.markdown(
-            "### 📋 كشف حساب الموردين "
-            "والديون المستحقة"
-        )
-
-        try:
-
-            suppliers = get_suppliers()
-
-        except Exception as e:
-
-            st.error(
-                "❌ تعذر تحميل الموردين."
-            )
-
-            st.code(str(e))
-
-            suppliers = []
-
-        if suppliers:
-
-            supp_df = pd.DataFrame(
-                [
-                    {
-                        "رقم المورد":
-                            s["id"],
-
-                        "اسم المورد":
-                            s["supplier_name"],
-
-                        "الهاتف":
-                            s["phone"],
-
-                        "الرصيد المستحق (د.ل)":
-                            float(
-                                s["balance"] or 0
+            if submit:
+                if not name.strip():
+                    st.warning("أدخل الاسم.")
+                else:
+                    try:
+                        if kind == "supplier":
+                            conn.execute(
+                                "INSERT INTO suppliers (supplier_name, phone, balance) VALUES (?, ?, 0.0)",
+                                (name.strip(), phone.strip())
                             )
-                    }
+                        else:
+                            conn.execute(
+                                "INSERT INTO customers (customer_name, phone, total_purchases, balance) VALUES (?, ?, 0.0, 0.0)",
+                                (name.strip(), phone.strip())
+                            )
+                        conn.commit()
+                        st.success("✅ تم الحفظ.")
+                        st.rerun()
+                    except Exception as e:
+                        conn.rollback()
+                        st.error("تعذر الحفظ؛ قد يكون الاسم أو الهاتف مسجلاً.")
+                        st.code(str(e))
 
-                    for s in suppliers
-                ]
-            )
-
-            st.dataframe(
-                supp_df,
-                use_container_width=True,
-                hide_index=True
-            )
-
-            total_supplier_debt = sum(
-                max(
-                    float(
-                        s["balance"] or 0
-                    ),
-                    0
+        elif mode == "suppliers":
+            rows = conn.execute(
+                "SELECT id, supplier_name, phone, balance FROM suppliers ORDER BY supplier_name"
+            ).fetchall()
+            if not rows:
+                st.info("لا يوجد موردون.")
+            else:
+                df = pd.DataFrame([{
+                    "id": r["id"], "اسم المورد": r["supplier_name"],
+                    "الهاتف": r["phone"] or "", "الرصيد": float(r["balance"] or 0)
+                } for r in rows])
+                edited = st.data_editor(
+                    df, hide_index=True, use_container_width=True, num_rows="fixed",
+                    disabled=["id", "الرصيد"],
+                    key="suppliers_editor"
                 )
-                for s in suppliers
-            )
-
-            st.metric(
-                "إجمالي المستحق للموردين",
-                f"{total_supplier_debt:,.2f} د.ل"
-            )
-
-            st.markdown("---")
-
-            st.markdown(
-                "**💰 سداد دفعة لمورد "
-                "(إرسال نقدية):**"
-            )
-
-            sup_list = {
-                (
-                    f"{s['supplier_name']} "
-                    f"(الرصيد: "
-                    f"{float(s['balance'] or 0):,.2f} د.ل)"
-                ): s
-
-                for s in suppliers
-            }
-
-            col_pay1, col_pay2 = (
-                st.columns(2)
-            )
-
-            sel_pay_sup = col_pay1.selectbox(
-                "اختر المورد للسداد:",
-                list(sup_list.keys()),
-                key="sel_sup_pay_box"
-            )
-
-            selected_supplier = (
-                sup_list[
-                    sel_pay_sup
-                ]
-            )
-
-            pay_amount = (
-                col_pay2.number_input(
-                    "المبلغ المدفوع له (د.ل):",
-                    min_value=0.0,
-                    step=10.0,
-                    format="%.2f",
-                    key="sup_pay_val_input"
-                )
-            )
-
-            if st.button(
-                "✅ تسجيل الدفعة "
-                "وخصمها من حساب المورد",
-                key="btn_execute_sup_pay",
-                type="primary"
-            ):
-
-                pay_supplier(
-                    selected_supplier["id"],
-                    pay_amount
+                c1, c2 = st.columns(2)
+                if c1.button("💾 حفظ تعديلات الموردين", type="primary", use_container_width=True):
+                    try:
+                        for _, r in edited.iterrows():
+                            conn.execute(
+                                "UPDATE suppliers SET supplier_name=?, phone=? WHERE id=?",
+                                (str(r["اسم المورد"]).strip(), str(r["الهاتف"]).strip(), int(r["id"]))
+                            )
+                        conn.commit()
+                        st.success("✅ تم حفظ التعديلات.")
+                        st.rerun()
+                    except Exception as e:
+                        conn.rollback()
+                        st.error(str(e))
+                c2.download_button(
+                    "📥 تصدير الموردين Excel",
+                    _excel_bytes(df.drop(columns=["id"]), "Suppliers"),
+                    "suppliers.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
                 )
 
-        else:
+                labels = {f"{r['supplier_name']} | {r['phone'] or '-'}": r for r in rows}
+                sel = labels[st.selectbox("اختر موردًا للحذف:", list(labels), key="delete_supplier_select")]
+                if st.button("🗑️ حذف المورد المختار", use_container_width=True):
+                    if abs(float(sel["balance"] or 0)) > 1e-9:
+                        st.error("لا يمكن حذف مورد له رصيد غير مسفّر. صفّر الحساب أولاً.")
+                    else:
+                        try:
+                            used = conn.execute(
+                                "SELECT 1 FROM purchases WHERE supplier_id=? LIMIT 1", (sel["id"],)
+                            ).fetchone()
+                            if used:
+                                st.error("لا يمكن حذف المورد لأنه مرتبط بفواتير مشتريات محفوظة.")
+                            else:
+                                conn.execute("DELETE FROM suppliers WHERE id=?", (sel["id"],))
+                                conn.commit()
+                                st.success("✅ تم حذف المورد.")
+                                st.rerun()
+                        except Exception as e:
+                            conn.rollback()
+                            st.error(str(e))
 
-            st.info(
-                "لا يوجد موردون مسجلون."
-            )
-
-    # ========================================================
-    # الزبائن
-    # ========================================================
-
-    with tab_cust:
-
-        st.markdown(
-            "### 📊 قائمة الزبائن المعتمدين "
-            "والديون المستحقة"
-        )
-
-        try:
-
-            customers = get_customers()
-
-        except Exception as e:
-
-            st.error(
-                "❌ تعذر تحميل الزبائن."
-            )
-
-            st.code(str(e))
-
-            customers = []
-
-        if customers:
-
-            cust_df = pd.DataFrame(
-                [
-                    {
-                        "رقم الزبون":
-                            c["id"],
-
-                        "اسم الزبون":
-                            c["customer_name"],
-
-                        "الهاتف":
-                            c["phone"],
-
-                        "إجمالي المشتريات (د.ل)":
-                            float(
-                                c[
-                                    "total_purchases"
-                                ] or 0
-                            ),
-
-                        "الرصيد الآجل المستحق (د.ل)":
-                            float(
-                                c["balance"] or 0
-                            ),
-
-                        "تاريخ التسجيل":
-                            c["created_at"]
-                    }
-
-                    for c in customers
-                ]
-            )
-
-            st.dataframe(
-                cust_df,
-                use_container_width=True,
-                hide_index=True
-            )
-
-            total_customer_debt = sum(
-                max(
-                    float(
-                        c["balance"] or 0
-                    ),
-                    0
+        elif mode == "customers":
+            rows = conn.execute(
+                "SELECT id, customer_name, phone, total_purchases, balance, created_at "
+                "FROM customers ORDER BY customer_name"
+            ).fetchall()
+            if not rows:
+                st.info("لا يوجد عملاء.")
+            else:
+                df = pd.DataFrame([{
+                    "id": r["id"], "اسم العميل": r["customer_name"],
+                    "الهاتف": r["phone"] or "",
+                    "إجمالي المشتريات": float(r["total_purchases"] or 0),
+                    "الرصيد": float(r["balance"] or 0),
+                    "تاريخ التسجيل": r["created_at"]
+                } for r in rows])
+                edited = st.data_editor(
+                    df, hide_index=True, use_container_width=True, num_rows="fixed",
+                    disabled=["id", "إجمالي المشتريات", "الرصيد", "تاريخ التسجيل"],
+                    key="customers_editor"
                 )
-                for c in customers
-            )
-
-            st.metric(
-                "إجمالي مديونية الزبائن",
-                f"{total_customer_debt:,.2f} د.ل"
-            )
-
-            st.markdown("---")
-
-            st.markdown(
-                "**💵 تحصيل دفعة من زبون آجل "
-                "(قبض نقدية):**"
-            )
-
-            cust_list = {
-                (
-                    f"{c['customer_name']} "
-                    f"({c['phone'] or '-'}) "
-                    f"- المديونية: "
-                    f"{float(c['balance'] or 0):,.2f} د.ل"
-                ): c
-
-                for c in customers
-            }
-
-            col_cp1, col_cp2 = (
-                st.columns(2)
-            )
-
-            sel_pay_cust = (
-                col_cp1.selectbox(
-                    "اختر الزبون للتحصيل منه:",
-                    list(
-                        cust_list.keys()
-                    ),
-                    key="sel_cust_pay_box"
-                )
-            )
-
-            selected_customer = (
-                cust_list[
-                    sel_pay_cust
-                ]
-            )
-
-            cust_pay_amount = (
-                col_cp2.number_input(
-                    "المبلغ المحصل "
-                    "والمقبوض (د.ل):",
-                    min_value=0.0,
-                    step=10.0,
-                    format="%.2f",
-                    key="cust_pay_val_input"
-                )
-            )
-
-            if st.button(
-                "✅ تسجيل القبض "
-                "وخصمه من مديونية الزبون",
-                key="btn_execute_cust_pay",
-                type="primary"
-            ):
-
-                collect_customer_payment(
-                    selected_customer["id"],
-                    cust_pay_amount
+                c1, c2 = st.columns(2)
+                if c1.button("💾 حفظ تعديلات العملاء", type="primary", use_container_width=True):
+                    try:
+                        for _, r in edited.iterrows():
+                            conn.execute(
+                                "UPDATE customers SET customer_name=?, phone=? WHERE id=?",
+                                (str(r["اسم العميل"]).strip(), str(r["الهاتف"]).strip(), int(r["id"]))
+                            )
+                        conn.commit()
+                        st.success("✅ تم حفظ التعديلات.")
+                        st.rerun()
+                    except Exception as e:
+                        conn.rollback()
+                        st.error(str(e))
+                c2.download_button(
+                    "📥 تصدير العملاء Excel",
+                    _excel_bytes(df.drop(columns=["id"]), "Customers"),
+                    "customers.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
                 )
 
-        else:
+        elif mode == "supplier_payment":
+            rows = conn.execute(
+                "SELECT id, supplier_name, balance FROM suppliers ORDER BY supplier_name"
+            ).fetchall()
+            if not rows:
+                st.info("لا يوجد موردون.")
+            else:
+                opts = {f"{r['supplier_name']} | الرصيد: {float(r['balance'] or 0):,.2f}": r for r in rows}
+                label = st.selectbox("اختر المورد:", list(opts))
+                supplier = opts[label]
+                amount = st.number_input("المبلغ المدفوع (د.ل):", min_value=0.0, step=10.0)
+                if st.button("✅ تسجيل الدفعة", type="primary", use_container_width=True):
+                    if amount <= 0:
+                        st.warning("أدخل مبلغًا أكبر من صفر.")
+                    else:
+                        conn.execute(
+                            "UPDATE suppliers SET balance = balance - ? WHERE id = ?",
+                            (amount, supplier["id"])
+                        )
+                        conn.commit()
+                        st.success("✅ تم تسجيل الدفعة وتحديث رصيد المورد.")
+                        st.rerun()
 
-            st.info(
-                "لا يوجد زبائن آجلون "
-                "مسجلون حالياً."
-            )
+        elif mode == "customer_collection":
+            rows = conn.execute(
+                "SELECT id, customer_name, phone, balance FROM customers ORDER BY customer_name"
+            ).fetchall()
+            if not rows:
+                st.info("لا يوجد عملاء.")
+            else:
+                opts = {
+                    f"{r['customer_name']} ({r['phone'] or '-'}) | الرصيد: {float(r['balance'] or 0):,.2f}": r
+                    for r in rows
+                }
+                label = st.selectbox("اختر العميل:", list(opts))
+                customer = opts[label]
+                amount = st.number_input("المبلغ المحصل (د.ل):", min_value=0.0, step=10.0)
+                if st.button("✅ تسجيل التحصيل", type="primary", use_container_width=True):
+                    if amount <= 0:
+                        st.warning("أدخل مبلغًا أكبر من صفر.")
+                    else:
+                        conn.execute(
+                            "UPDATE customers SET balance = balance - ? WHERE id = ?",
+                            (amount, customer["id"])
+                        )
+                        conn.commit()
+                        st.success("✅ تم تسجيل التحصيل وتحديث رصيد العميل.")
+                        st.rerun()
+    finally:
+        conn.close()
