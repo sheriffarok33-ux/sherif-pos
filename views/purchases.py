@@ -1,6 +1,43 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, date
 from database import get_db_connection
+
+
+# ============================================================
+# دفعات الصلاحية
+# ============================================================
+
+def ensure_inventory_batches_table(conn):
+    """
+    نفس جدول الدفعات المستخدم في المخزون وPOS.
+    يتم إنشاؤه فقط إذا لم يكن موجوداً.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inventory_batches
+        (
+            id BIGSERIAL PRIMARY KEY,
+            item_id INTEGER NOT NULL,
+            branch_id INTEGER NOT NULL,
+            quantity NUMERIC DEFAULT 0,
+            remaining_quantity NUMERIC DEFAULT 0,
+            received_date DATE DEFAULT CURRENT_DATE,
+            expiry_date DATE,
+            unit_cost NUMERIC DEFAULT 0,
+            source_type TEXT DEFAULT 'inventory',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+            FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_inventory_batches_expiry
+        ON inventory_batches(branch_id, expiry_date)
+        """
+    )
 
 
 # ============================================================
@@ -319,6 +356,7 @@ def post_purchase_invoice(
             )
 
         conn = get_db_connection()
+        ensure_inventory_batches_table(conn)
 
         # ====================================================
         # التحقق من المورد
@@ -491,6 +529,51 @@ def post_purchase_invoice(
                 )
             )
 
+            expiry_date = purchase_item.get("expiry_date")
+
+            if expiry_date:
+                if hasattr(expiry_date, "isoformat"):
+                    expiry_date_value = expiry_date
+                else:
+                    expiry_date_value = datetime.strptime(
+                        str(expiry_date),
+                        "%Y-%m-%d"
+                    ).date()
+
+                if expiry_date_value < date.today():
+                    raise ValueError(
+                        f"تاريخ انتهاء الصنف "
+                        f"({purchase_item['name']}) "
+                        "منتهي بالفعل."
+                    )
+
+                conn.execute(
+                    """
+                    INSERT INTO inventory_batches
+                    (
+                        item_id,
+                        branch_id,
+                        quantity,
+                        remaining_quantity,
+                        received_date,
+                        expiry_date,
+                        unit_cost,
+                        source_type
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item_id,
+                        branch_id,
+                        purchased_qty,
+                        purchased_qty,
+                        datetime.now().date(),
+                        expiry_date_value,
+                        purchase_price,
+                        "purchase"
+                    )
+                )
+
             details.append(
                 (
                     f"{purchase_item['name']} "
@@ -501,6 +584,11 @@ def post_purchase_invoice(
                     f"{purchase_price:,.2f} د.ل "
                     f"- إجمالي: "
                     f"{purchased_qty * purchase_price:,.2f} د.ل"
+                    + (
+                        f" - انتهاء: {expiry_date_value}"
+                        if expiry_date
+                        else " - بدون تاريخ انتهاء"
+                    )
                 )
             )
 
@@ -1052,8 +1140,8 @@ def show_page():
             clear_on_submit=True
         ):
 
-            col_i1, col_i2, col_i3 = (
-                st.columns([2, 1, 1])
+            col_i1, col_i2, col_i3, col_i4 = (
+                st.columns([2, 1, 1, 1.25])
             )
 
             selected_item_label = (
@@ -1083,6 +1171,21 @@ def show_page():
                     format="%.2f"
                 )
             )
+
+            has_expiry = col_i4.checkbox(
+                "له تاريخ انتهاء",
+                value=False
+            )
+
+            purchase_expiry_date = None
+
+            if has_expiry:
+                purchase_expiry_date = st.date_input(
+                    "📅 تاريخ انتهاء هذه الدفعة:",
+                    value=date.today(),
+                    min_value=date.today(),
+                    key="purchase_expiry_date"
+                )
 
             add_item_btn = (
                 st.form_submit_button(
@@ -1137,8 +1240,13 @@ def show_page():
                 ):
 
                     if (
-                        cart_item["id"]
-                        == selected_item["id"]
+                        cart_item["id"] == selected_item["id"]
+                        and cart_item.get("expiry_date")
+                        == (
+                            purchase_expiry_date.isoformat()
+                            if purchase_expiry_date
+                            else None
+                        )
                     ):
 
                         existing_cart_item = (
@@ -1224,6 +1332,13 @@ def show_page():
                                     purchase_price
                                 ),
 
+                            "expiry_date":
+                                (
+                                    purchase_expiry_date.isoformat()
+                                    if purchase_expiry_date
+                                    else None
+                                ),
+
                             "total":
                                 (
                                     float(
@@ -1279,10 +1394,16 @@ def show_page():
                 [2, 1, 1, 1, 0.6]
             )
 
+            expiry_display = (
+                purchase_item.get("expiry_date")
+                or "بدون انتهاء"
+            )
+
             p_col1.write(
                 f"🏷️ "
                 f"{purchase_item['name']} "
-                f"({purchase_item['code']})"
+                f"({purchase_item['code']}) "
+                f"\n📅 {expiry_display}"
             )
 
             p_col2.write(
