@@ -323,10 +323,10 @@ elif choice == "📦 إدارة المخزن والفروع":
         st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
 elif choice == "⚙️ الجرد والتصفير السنوي":
     try:
-        from views import adjustments
-        adjustments.show_page()
+        from views import annual_reset
+        annual_reset.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة الجرد والتسويات غير موجود.")
+        st.warning("⚠️ ملف شاشة الجرد والتصفير السنوي غير موجود.")
 elif choice == "🥜 التحميص والخلط":
     try:
         from views import roasting_blending
