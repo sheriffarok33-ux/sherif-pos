@@ -1485,7 +1485,7 @@ def show_page():
                     "purch_cart_supplier_id",
                     None
                 )
-ش
+
                 st.rerun()
 
         # ====================================================
