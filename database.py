@@ -1139,6 +1139,14 @@ def initialize_database():
         # ====================================================
         # ترقيات سجل الإنتاج للتوافق مع الخلط والتحميص والتقارير
         # ====================================================
+        # توافق قواعد البيانات القديمة مع كود الإنتاج الحديث
+        cursor.execute(
+            """
+            ALTER TABLE production_logs
+            ALTER COLUMN operation_type DROP NOT NULL
+            """
+        )
+
 
         production_columns = [
             ("production_type", "TEXT"),
@@ -1175,27 +1183,27 @@ def initialize_database():
         cursor.execute(
             """
             UPDATE production_logs
-            SET input_quantity =
-                COALESCE(input_quantity, input_weight, 0)
-            WHERE input_quantity IS NULL
+            SET input_quantity = COALESCE(input_weight, 0)
+            WHERE COALESCE(input_quantity, 0) = 0
+              AND COALESCE(input_weight, 0) <> 0
             """
         )
 
         cursor.execute(
             """
             UPDATE production_logs
-            SET output_quantity =
-                COALESCE(output_quantity, output_weight, 0)
-            WHERE output_quantity IS NULL
+            SET output_quantity = COALESCE(output_weight, 0)
+            WHERE COALESCE(output_quantity, 0) = 0
+              AND COALESCE(output_weight, 0) <> 0
             """
         )
 
         cursor.execute(
             """
             UPDATE production_logs
-            SET loss_quantity =
-                COALESCE(loss_quantity, loss_weight, 0)
-            WHERE loss_quantity IS NULL
+            SET loss_quantity = COALESCE(loss_weight, 0)
+            WHERE COALESCE(loss_quantity, 0) = 0
+              AND COALESCE(loss_weight, 0) <> 0
             """
         )
 
