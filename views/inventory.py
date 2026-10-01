@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import io
 from datetime import date
 from database import get_db_connection
 
@@ -482,6 +483,189 @@ def change_legacy_unit(item_id, branch_id, new_type, pieces_per_carton=1):
             conn.close()
 
 
+
+def _set_inventory_mode(mode):
+    st.session_state["inventory_mode"] = mode
+    st.rerun()
+
+
+def _excel_bytes(df, sheet_name="Inventory"):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+    return output.getvalue()
+
+
+def _update_items_from_editor(branch_id, original_rows, edited_df):
+    """يحفظ تعديلات جدول الأصناف، ويسجل أي تغيير مباشر في الكمية."""
+    conn = None
+    try:
+        original = {int(r["id"]): r for r in original_rows}
+        conn = get_db_connection()
+
+        for _, row in edited_df.iterrows():
+            item_id = int(row["id"])
+            old = original.get(item_id)
+            if not old:
+                continue
+
+            item_code = str(row["كود الصنف"] or "").strip()
+            item_name = str(row["اسم الصنف"] or "").strip()
+            unit_ar = str(row["الوحدة"] or "قطعة").strip()
+            unit_type = "kg" if unit_ar == "كجم" else "piece"
+            ppc = 1 if unit_type == "kg" else max(1, int(float(row["قطع/كرتون"] or 1)))
+            new_qty = float(row["الكمية"] or 0)
+            buy_price = float(row["سعر الشراء"] or 0)
+            avg_cost = float(row["متوسط التكلفة"] or 0)
+            sale_price = float(row["سعر البيع"] or 0)
+
+            if not item_code or not item_name:
+                raise ValueError("كود الصنف واسم الصنف لا يمكن أن يكونا فارغين.")
+            if new_qty < 0 or buy_price < 0 or avg_cost < 0 or sale_price < 0:
+                raise ValueError(f"لا يمكن إدخال قيمة سالبة للصنف: {item_name}")
+
+            duplicate = conn.execute(
+                """
+                SELECT id FROM items
+                WHERE branch_id = ?
+                  AND id <> ?
+                  AND (
+                        item_code = ?
+                        OR LOWER(TRIM(item_name)) = LOWER(TRIM(?))
+                      )
+                LIMIT 1
+                """,
+                (branch_id, item_id, item_code, item_name)
+            ).fetchone()
+            if duplicate:
+                raise ValueError(
+                    f"يوجد صنف آخر بنفس الكود أو الاسم: {item_name} / {item_code}"
+                )
+
+            old_qty = float(old["quantity"] or 0)
+            delta = new_qty - old_qty
+
+            conn.execute(
+                """
+                UPDATE items
+                SET item_code = ?,
+                    item_name = ?,
+                    quantity = ?,
+                    buy_price = ?,
+                    avg_cost = ?,
+                    sale_price = ?,
+                    unit_type = ?,
+                    pieces_per_carton = ?
+                WHERE id = ? AND branch_id = ?
+                """,
+                (
+                    item_code, item_name, new_qty, buy_price, avg_cost,
+                    sale_price, unit_type, ppc, item_id, branch_id
+                )
+            )
+
+            if abs(delta) > 1e-9:
+                conn.execute(
+                    """
+                    INSERT INTO stock_adjustments
+                    (
+                        branch_id, item_id, item_name, quantity,
+                        adjustment_type, loss_or_gain_value, notes
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        branch_id, item_id, item_name, abs(delta),
+                        "تعديل يدوي للكمية - زيادة" if delta > 0
+                        else "تعديل يدوي للكمية - نقص",
+                        (-abs(delta) * avg_cost) if delta < 0 else 0.0,
+                        "تعديل مباشر من شاشة الأصناف"
+                    )
+                )
+
+        conn.commit()
+        st.success("✅ تم حفظ تعديلات الأصناف بنجاح.")
+        st.rerun()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        st.error("❌ تعذر حفظ تعديلات الأصناف.")
+        st.code(str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+def _delete_inventory_item(branch_id, item_id):
+    conn = None
+    try:
+        conn = get_db_connection()
+        row = conn.execute(
+            """
+            SELECT item_name, quantity, COALESCE(avg_cost, buy_price, 0) AS cost
+            FROM items
+            WHERE id = ? AND branch_id = ?
+            FOR UPDATE
+            """,
+            (item_id, branch_id)
+        ).fetchone()
+        if not row:
+            raise ValueError("الصنف غير موجود.")
+
+        qty = float(row["quantity"] or 0)
+        cost = float(row["cost"] or 0)
+        if qty > 0:
+            conn.execute(
+                """
+                INSERT INTO stock_adjustments
+                (
+                    branch_id, item_id, item_name, quantity,
+                    adjustment_type, loss_or_gain_value, notes
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    branch_id, item_id, row["item_name"], qty,
+                    "حذف صنف من المخزون", -(qty * cost),
+                    "حذف يدوي من شاشة الأصناف"
+                )
+            )
+
+        # inventory_batches تحذف تلقائياً بسبب ON DELETE CASCADE.
+        conn.execute(
+            "DELETE FROM items WHERE id = ? AND branch_id = ?",
+            (item_id, branch_id)
+        )
+        conn.commit()
+        st.success("✅ تم حذف الصنف.")
+        st.rerun()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        st.error("❌ تعذر حذف الصنف.")
+        st.code(str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+def _editable_inventory_dataframe(rows):
+    data = []
+    for row in rows:
+        data.append({
+            "id": int(row["id"]),
+            "كود الصنف": row["item_code"] or "",
+            "اسم الصنف": row["item_name"] or "",
+            "الوحدة": "كجم" if (row["unit_type"] or "piece") == "kg" else "قطعة",
+            "قطع/كرتون": int(row["pieces_per_carton"] or 1),
+            "الكمية": float(row["quantity"] or 0),
+            "سعر الشراء": float(row["buy_price"] or 0),
+            "متوسط التكلفة": float(row["avg_cost"] or 0),
+            "سعر البيع": float(row["sale_price"] or 0),
+        })
+    return pd.DataFrame(data)
+
+
 def show_page():
     try:
         ensure_inventory_columns()
@@ -490,10 +674,10 @@ def show_page():
         st.code(str(e))
         return
 
-    st.markdown("## 📦 إدارة المخزن - الأصناف والكميات والباركود")
+    st.markdown("## 📦 المخزون والأصناف")
     st.caption(
-        "كل صنف يُحفظ بوحدته الأساسية: قطعة أو كجم. "
-        "الجرام يتحول إلى كجم داخلياً."
+        "إدارة الأصناف والكميات والأسعار والوحدات والصلاحية. "
+        "يمكن النسخ واللصق والتعديل داخل جدول الأصناف ثم الضغط على حفظ."
     )
 
     try:
@@ -509,7 +693,9 @@ def show_page():
 
     b_dict = {b["branch_name"]: b["id"] for b in branches}
     selected_branch = st.selectbox(
-        "اختر المخزن أو الفرع الحالي:", list(b_dict.keys())
+        "🏢 اختر المخزن أو الفرع:",
+        list(b_dict.keys()),
+        key="inventory_branch"
     )
     branch_id = b_dict[selected_branch]
 
@@ -520,230 +706,381 @@ def show_page():
         st.code(str(e))
         existing_items = []
 
-    operation = st.radio(
-        "ماذا تريد أن تفعل؟",
-        ["📦 إضافة كمية لصنف موجود", "➕ إنشاء صنف جديد"],
-        horizontal=True
-    )
+    if "inventory_mode" not in st.session_state:
+        st.session_state["inventory_mode"] = "list"
+
+    st.markdown("### اختر العملية")
+    c1, c2, c3, c4 = st.columns(4)
+    if c1.button("📋 الأصناف والتعديل", use_container_width=True):
+        _set_inventory_mode("list")
+    if c2.button("📦 إضافة كمية", use_container_width=True):
+        _set_inventory_mode("add")
+    if c3.button("➕ صنف جديد", use_container_width=True):
+        _set_inventory_mode("new")
+    if c4.button("📅 الصلاحيات", use_container_width=True):
+        _set_inventory_mode("expiry")
+
+    mode = st.session_state["inventory_mode"]
     st.markdown("---")
 
-    if operation == "📦 إضافة كمية لصنف موجود":
-        st.markdown("### 📦 إضافة مخزون لصنف مسجل")
+    # =========================================================
+    # جدول الأصناف + تعديل + حذف + نسخ + Excel
+    # =========================================================
+    if mode == "list":
+        st.markdown("### 📋 الأصناف والتعديل المباشر")
         if not existing_items:
             st.info("لا توجد أصناف في هذا الفرع حتى الآن.")
-        else:
-            item_map = {}
-            for item in existing_items:
-                unit = "كجم" if item["unit_type"] == "kg" else "قطعة"
-                label = (
-                    f"{item['item_name']} — {item['item_code']} — "
-                    f"الرصيد: {float(item['quantity'] or 0):,.3f} {unit}"
-                )
-                item_map[label] = item
+            return
 
-            selected = item_map[
-                st.selectbox("اختر الصنف:", list(item_map.keys()))
-            ]
-            unit_type = selected["unit_type"] or "piece"
-            unit_label = "كجم" if unit_type == "kg" else "قطعة"
+        original_df = _editable_inventory_dataframe(existing_items)
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric(
-                "الرصيد الحالي",
-                f"{float(selected['quantity'] or 0):,.3f} {unit_label}"
-            )
-            c2.metric(
-                "متوسط التكلفة",
-                f"{float(selected['avg_cost'] or 0):,.2f} د.ل/{unit_label}"
-            )
-            c3.metric(
-                "سعر البيع الحالي",
-                f"{float(selected['sale_price'] or 0):,.2f} د.ل/{unit_label}"
-            )
+        st.info(
+            "💡 يمكنك تحديد الخلايا ثم النسخ واللصق مباشرة داخل الجدول. "
+            "اضغط Enter بعد تحرير الخلية، ثم اضغط «حفظ كل التعديلات»."
+        )
 
-            # أداة تصحيح لمرة واحدة للأصناف القديمة.
-            st.markdown("#### 🛠️ تصحيح وحدة صنف قديم")
-            st.caption(
-                "استخدم هذا الجزء فقط إذا كانت وحدة الصنف القديمة "
-                "مسجلة بشكل غير صحيح."
-            )
+        edited_df = st.data_editor(
+            original_df,
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+            key=f"inventory_editor_{branch_id}",
+            disabled=["id"],
+            column_config={
+                "id": st.column_config.NumberColumn("ID", disabled=True),
+                "الوحدة": st.column_config.SelectboxColumn(
+                    "الوحدة", options=["قطعة", "كجم"], required=True
+                ),
+                "قطع/كرتون": st.column_config.NumberColumn(
+                    "قطع/كرتون", min_value=1, step=1
+                ),
+                "الكمية": st.column_config.NumberColumn(
+                    "الكمية", min_value=0.0, format="%.3f"
+                ),
+                "سعر الشراء": st.column_config.NumberColumn(
+                    "سعر الشراء", min_value=0.0, format="%.2f"
+                ),
+                "متوسط التكلفة": st.column_config.NumberColumn(
+                    "متوسط التكلفة", min_value=0.0, format="%.2f"
+                ),
+                "سعر البيع": st.column_config.NumberColumn(
+                    "سعر البيع", min_value=0.0, format="%.2f"
+                ),
+            }
+        )
 
-            legacy_box = st.container(border=True)
-            with legacy_box:
-                corrected = st.selectbox(
-                    "الوحدة الصحيحة:",
-                    ["قطعة", "كجم"],
-                    index=1 if unit_type == "kg" else 0,
-                    key=f"legacy_unit_{selected['id']}"
-                )
+        a1, a2, a3 = st.columns(3)
+        if a1.button(
+            "💾 حفظ كل التعديلات",
+            type="primary",
+            use_container_width=True
+        ):
+            _update_items_from_editor(branch_id, existing_items, edited_df)
 
-                legacy_ppc = 1
-                if corrected == "قطعة":
-                    legacy_ppc = st.number_input(
-                        "عدد القطع في الكرتون:",
-                        min_value=1,
-                        value=max(
-                            1,
-                            int(selected["pieces_per_carton"] or 1)
-                        ),
-                        step=1,
-                        key=f"legacy_ppc_{selected['id']}"
-                    )
+        a2.download_button(
+            "📥 تصدير الأصناف إلى Excel",
+            data=_excel_bytes(edited_df.drop(columns=["id"]), "Items"),
+            file_name=f"inventory_{branch_id}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
-                if st.button(
-                    "💾 حفظ تصحيح الوحدة",
-                    key=f"save_legacy_unit_{selected['id']}"
-                ):
-                    change_legacy_unit(
-                        selected["id"],
-                        branch_id,
-                        "kg" if corrected == "كجم" else "piece",
-                        legacy_ppc
-                    )
+        item_map = {
+            f"[{r['item_code']}] {r['item_name']}": r
+            for r in existing_items
+        }
+        selected_label = st.selectbox(
+            "اختر صنفًا لعمليات النسخ أو الحذف:",
+            list(item_map.keys()),
+            key=f"inventory_manage_item_{branch_id}"
+        )
+        selected = item_map[selected_label]
 
-            with st.form("add_existing_stock_form", clear_on_submit=True):
-                if unit_type == "piece":
-                    added_qty, unit_cost, ppc = piece_input_fields(
-                        "existing",
-                        selected["pieces_per_carton"]
-                    )
-                else:
-                    added_qty, unit_cost = weight_input_fields("existing")
-                    ppc = 1
-
-                st.markdown("#### 📅 صلاحية الدفعة الجديدة")
-                expiry_mode = st.radio(
-                    "هل لهذه الدفعة تاريخ انتهاء؟",
-                    ["بدون تاريخ انتهاء", "تحديد تاريخ انتهاء"],
-                    horizontal=True,
-                    key="existing_expiry_mode"
-                )
-
-                expiry_date = None
-                if expiry_mode == "تحديد تاريخ انتهاء":
-                    expiry_date = st.date_input(
-                        "تاريخ انتهاء الصلاحية:",
-                        value=date.today(),
-                        min_value=date.today(),
-                        key="existing_expiry_date"
-                    )
-
-                submit = st.form_submit_button(
-                    "➕ إضافة الكمية للصنف",
-                    type="primary",
-                    use_container_width=True
-                )
-
-            if submit:
-                add_stock_to_existing_item(
-                    branch_id, selected["id"], added_qty,
-                    unit_cost, unit_type, ppc, expiry_date
-                )
-
-    else:
-        st.markdown("### ➕ إنشاء صنف جديد لأول مرة")
-        with st.form("create_new_item_form", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            item_code = c1.text_input("كود الصنف / الباركود:")
-            item_name = c2.text_input("اسم الصنف:")
-
-            unit_choice = st.radio(
-                "الوحدة الأساسية للصنف:",
-                ["📦 قطعة / كرتون", "⚖️ وزن (كجم / جرام)"],
-                horizontal=True
+        b1, b2 = st.columns(2)
+        if b1.button("📋 تجهيز بيانات الصنف للنسخ", use_container_width=True):
+            st.session_state["inventory_copy_text"] = (
+                f"{selected['item_code']}\t{selected['item_name']}\t"
+                f"{selected['quantity']}\t{selected['buy_price']}\t"
+                f"{selected['avg_cost']}\t{selected['sale_price']}"
             )
 
-            if unit_choice == "📦 قطعة / كرتون":
-                unit_type = "piece"
-                qty, cost, ppc = piece_input_fields("new", 1)
-                sale_label = "سعر بيع القطعة (د.ل):"
-            else:
-                unit_type = "kg"
-                qty, cost = weight_input_fields("new")
-                ppc = 1
-                sale_label = "سعر بيع الكيلو (د.ل):"
-
-            st.markdown("#### 📅 صلاحية الرصيد الأولي")
-            expiry_mode_new = st.radio(
-                "هل لهذا الرصيد تاريخ انتهاء؟",
-                ["بدون تاريخ انتهاء", "تحديد تاريخ انتهاء"],
-                horizontal=True,
-                key="new_expiry_mode"
+        if st.session_state.get("inventory_copy_text"):
+            st.code(
+                st.session_state["inventory_copy_text"],
+                language=None
             )
 
-            expiry_date_new = None
-            if expiry_mode_new == "تحديد تاريخ انتهاء":
-                expiry_date_new = st.date_input(
-                    "تاريخ انتهاء الصلاحية:",
-                    value=date.today(),
-                    min_value=date.today(),
-                    key="new_expiry_date"
-                )
+        if b2.button(
+            "🗑️ حذف الصنف المختار",
+            use_container_width=True
+        ):
+            st.session_state["inventory_delete_id"] = int(selected["id"])
 
-            sale_price = st.number_input(
-                sale_label, min_value=0.0, value=0.0,
-                step=0.5, format="%.2f", key="new_sale_price"
+        if st.session_state.get("inventory_delete_id") == int(selected["id"]):
+            st.warning(
+                f"⚠️ سيتم حذف الصنف «{selected['item_name']}» من هذا الفرع. "
+                "دفعات الصلاحية المرتبطة به ستحذف أيضًا."
             )
-
-            submit_new = st.form_submit_button(
-                "💾 إنشاء الصنف وحفظ الرصيد",
+            d1, d2 = st.columns(2)
+            if d1.button(
+                "✅ تأكيد الحذف",
                 type="primary",
-                use_container_width=True
+                use_container_width=True,
+                key=f"confirm_delete_item_{selected['id']}"
+            ):
+                _delete_inventory_item(branch_id, int(selected["id"]))
+            if d2.button(
+                "↩️ إلغاء",
+                use_container_width=True,
+                key=f"cancel_delete_item_{selected['id']}"
+            ):
+                st.session_state.pop("inventory_delete_id", None)
+                st.rerun()
+
+    # =========================================================
+    # إضافة كمية
+    # =========================================================
+    elif mode == "add":
+        st.markdown("### 📦 إضافة كمية لصنف موجود")
+        if not existing_items:
+            st.info("لا توجد أصناف في هذا الفرع حتى الآن.")
+            return
+
+        item_map = {}
+        for item in existing_items:
+            unit = "كجم" if item["unit_type"] == "kg" else "قطعة"
+            label = (
+                f"{item['item_name']} — {item['item_code']} — "
+                f"الرصيد: {float(item['quantity'] or 0):,.3f} {unit}"
+            )
+            item_map[label] = item
+
+        selected = item_map[
+            st.selectbox(
+                "اختر الصنف:",
+                list(item_map.keys()),
+                key="inventory_add_item"
+            )
+        ]
+        unit_type = selected["unit_type"] or "piece"
+        unit_label = "كجم" if unit_type == "kg" else "قطعة"
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("الرصيد الحالي", f"{float(selected['quantity'] or 0):,.3f} {unit_label}")
+        m2.metric("متوسط التكلفة", f"{float(selected['avg_cost'] or 0):,.2f} د.ل/{unit_label}")
+        m3.metric("سعر البيع", f"{float(selected['sale_price'] or 0):,.2f} د.ل/{unit_label}")
+
+        if unit_type == "piece":
+            added_qty, unit_cost, ppc = piece_input_fields(
+                "existing_btn", selected["pieces_per_carton"]
+            )
+        else:
+            if "existing_btn_weight_mode" not in st.session_state:
+                st.session_state["existing_btn_weight_mode"] = "kg"
+
+            w1, w2 = st.columns(2)
+            if w1.button("⚖️ إدخال بالكيلو", use_container_width=True):
+                st.session_state["existing_btn_weight_mode"] = "kg"
+                st.rerun()
+            if w2.button("⚖️ إدخال بالجرام", use_container_width=True):
+                st.session_state["existing_btn_weight_mode"] = "gram"
+                st.rerun()
+
+            if st.session_state["existing_btn_weight_mode"] == "kg":
+                q1, q2 = st.columns(2)
+                added_qty = q1.number_input(
+                    "الوزن المضاف (كجم):", min_value=0.001,
+                    value=1.0, step=0.1, format="%.3f",
+                    key="existing_btn_kg"
+                )
+                unit_cost = q2.number_input(
+                    "سعر شراء الكيلو:", min_value=0.0,
+                    value=0.0, step=0.5, format="%.2f",
+                    key="existing_btn_kg_cost"
+                )
+            else:
+                q1, q2 = st.columns(2)
+                grams = q1.number_input(
+                    "الوزن المضاف (جرام):", min_value=1.0,
+                    value=1000.0, step=50.0,
+                    key="existing_btn_grams"
+                )
+                total_cost = q2.number_input(
+                    "إجمالي سعر شراء الكمية:", min_value=0.0,
+                    value=0.0, step=0.5, format="%.2f",
+                    key="existing_btn_grams_cost"
+                )
+                added_qty = float(grams) / 1000.0
+                unit_cost = float(total_cost) / added_qty if added_qty > 0 else 0.0
+            ppc = 1
+
+        if "existing_has_expiry" not in st.session_state:
+            st.session_state["existing_has_expiry"] = False
+
+        st.markdown("#### 📅 تاريخ الصلاحية")
+        e1, e2 = st.columns(2)
+        if e1.button("🚫 بدون تاريخ انتهاء", use_container_width=True):
+            st.session_state["existing_has_expiry"] = False
+            st.rerun()
+        if e2.button("📅 تحديد تاريخ انتهاء", use_container_width=True):
+            st.session_state["existing_has_expiry"] = True
+            st.rerun()
+
+        expiry_date = None
+        if st.session_state["existing_has_expiry"]:
+            expiry_date = st.date_input(
+                "تاريخ انتهاء الصلاحية:",
+                value=date.today(),
+                min_value=date.today(),
+                key="existing_btn_expiry_date"
             )
 
-        if submit_new:
+        if st.button(
+            "➕ إضافة الكمية للصنف",
+            type="primary",
+            use_container_width=True
+        ):
+            add_stock_to_existing_item(
+                branch_id, selected["id"], added_qty,
+                unit_cost, unit_type, ppc, expiry_date
+            )
+
+    # =========================================================
+    # صنف جديد
+    # =========================================================
+    elif mode == "new":
+        st.markdown("### ➕ إنشاء صنف جديد")
+        c1, c2 = st.columns(2)
+        item_code = c1.text_input("كود الصنف / الباركود:", key="new_btn_code")
+        item_name = c2.text_input("اسم الصنف:", key="new_btn_name")
+
+        if "new_unit_type" not in st.session_state:
+            st.session_state["new_unit_type"] = "piece"
+
+        u1, u2 = st.columns(2)
+        if u1.button("📦 قطعة / كرتون", use_container_width=True):
+            st.session_state["new_unit_type"] = "piece"
+            st.rerun()
+        if u2.button("⚖️ وزن", use_container_width=True):
+            st.session_state["new_unit_type"] = "kg"
+            st.rerun()
+
+        unit_type = st.session_state["new_unit_type"]
+        if unit_type == "piece":
+            qty, cost, ppc = piece_input_fields("new_btn", 1)
+            sale_label = "سعر بيع القطعة (د.ل):"
+        else:
+            if "new_btn_weight_mode" not in st.session_state:
+                st.session_state["new_btn_weight_mode"] = "kg"
+            w1, w2 = st.columns(2)
+            if w1.button("⚖️ بالكيلو", use_container_width=True):
+                st.session_state["new_btn_weight_mode"] = "kg"
+                st.rerun()
+            if w2.button("⚖️ بالجرام", use_container_width=True):
+                st.session_state["new_btn_weight_mode"] = "gram"
+                st.rerun()
+
+            if st.session_state["new_btn_weight_mode"] == "kg":
+                q1, q2 = st.columns(2)
+                qty = q1.number_input(
+                    "الوزن الأولي (كجم):", min_value=0.001,
+                    value=1.0, step=0.1, format="%.3f",
+                    key="new_btn_kg"
+                )
+                cost = q2.number_input(
+                    "سعر شراء الكيلو:", min_value=0.0,
+                    value=0.0, step=0.5, format="%.2f",
+                    key="new_btn_kg_cost"
+                )
+            else:
+                q1, q2 = st.columns(2)
+                grams = q1.number_input(
+                    "الوزن الأولي (جرام):", min_value=1.0,
+                    value=1000.0, step=50.0,
+                    key="new_btn_grams"
+                )
+                total_cost = q2.number_input(
+                    "إجمالي سعر شراء الكمية:", min_value=0.0,
+                    value=0.0, step=0.5, format="%.2f",
+                    key="new_btn_grams_cost"
+                )
+                qty = float(grams) / 1000.0
+                cost = float(total_cost) / qty if qty > 0 else 0.0
+            ppc = 1
+            sale_label = "سعر بيع الكيلو (د.ل):"
+
+        sale_price = st.number_input(
+            sale_label, min_value=0.0, value=0.0,
+            step=0.5, format="%.2f", key="new_btn_sale_price"
+        )
+
+        if "new_has_expiry" not in st.session_state:
+            st.session_state["new_has_expiry"] = False
+        e1, e2 = st.columns(2)
+        if e1.button("🚫 بدون صلاحية", use_container_width=True):
+            st.session_state["new_has_expiry"] = False
+            st.rerun()
+        if e2.button("📅 تحديد الصلاحية", use_container_width=True):
+            st.session_state["new_has_expiry"] = True
+            st.rerun()
+
+        expiry_date_new = None
+        if st.session_state["new_has_expiry"]:
+            expiry_date_new = st.date_input(
+                "تاريخ انتهاء الصلاحية:",
+                value=date.today(),
+                min_value=date.today(),
+                key="new_btn_expiry_date"
+            )
+
+        if st.button(
+            "💾 إنشاء الصنف وحفظ الرصيد",
+            type="primary",
+            use_container_width=True
+        ):
             create_new_inventory_item(
                 branch_id, item_code, item_name, qty,
                 cost, sale_price, unit_type, ppc,
                 expiry_date_new
             )
 
-    st.markdown("---")
-    st.markdown("### 📋 جدول الأصناف المسجلة في هذا المخزن")
-
-    try:
-        df = get_branch_items(branch_id)
-    except Exception as e:
-        st.error("❌ تعذر تحميل أصناف المخزن.")
-        st.code(str(e))
-        df = pd.DataFrame()
-
-    if not df.empty:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    # =========================================================
+    # الصلاحيات
+    # =========================================================
     else:
-        st.info("لا توجد أصناف مسجلة في هذا المخزن حتى الآن.")
+        st.markdown("### 📅 دفعات الصلاحية")
+        conn = None
+        try:
+            conn = get_db_connection()
+            batch_rows = conn.execute(
+                """
+                SELECT
+                    b.id,
+                    i.item_code,
+                    i.item_name,
+                    b.received_date,
+                    b.expiry_date,
+                    b.quantity,
+                    b.remaining_quantity,
+                    b.unit_cost,
+                    b.source_type
+                FROM inventory_batches b
+                JOIN items i ON i.id = b.item_id
+                WHERE b.branch_id = ?
+                  AND b.expiry_date IS NOT NULL
+                ORDER BY b.expiry_date ASC, i.item_name ASC
+                """,
+                (branch_id,)
+            ).fetchall()
 
-    st.markdown("### 📅 دفعات الصلاحية المسجلة")
+            if not batch_rows:
+                st.info("لا توجد دفعات لها تاريخ انتهاء في هذا الفرع.")
+                return
 
-    conn = None
-    try:
-        conn = get_db_connection()
-        batch_rows = conn.execute(
-            """
-            SELECT
-                i.item_code,
-                i.item_name,
-                b.received_date,
-                b.expiry_date,
-                b.quantity,
-                b.remaining_quantity,
-                b.source_type
-            FROM inventory_batches b
-            JOIN items i ON i.id = b.item_id
-            WHERE b.branch_id = ?
-              AND b.expiry_date IS NOT NULL
-            ORDER BY b.expiry_date ASC, i.item_name ASC
-            """,
-            (branch_id,)
-        ).fetchall()
-
-        if batch_rows:
-            batch_data = []
             today = date.today()
-
+            batch_data = []
             for row in batch_rows:
                 days_left = (row["expiry_date"] - today).days
-
                 if days_left < 0:
                     status = f"🔴 منتهي منذ {abs(days_left)} يوم"
                 elif days_left == 0:
@@ -756,33 +1093,31 @@ def show_page():
                     status = f"🟢 متبقي {days_left} يوم"
 
                 batch_data.append({
+                    "رقم الدفعة": row["id"],
                     "الكود": row["item_code"],
                     "اسم الصنف": row["item_name"],
                     "تاريخ الدخول": row["received_date"],
                     "تاريخ الانتهاء": row["expiry_date"],
                     "كمية الدفعة": float(row["quantity"] or 0),
                     "المتبقي": float(row["remaining_quantity"] or 0),
+                    "تكلفة الوحدة": float(row["unit_cost"] or 0),
                     "الحالة": status,
-                    "المصدر": (
-                        "مشتريات"
-                        if row["source_type"] == "purchase"
-                        else "إضافة مخزون"
-                    ),
+                    "المصدر": "مشتريات" if row["source_type"] == "purchase" else "إضافة مخزون",
                 })
 
-            st.dataframe(
-                pd.DataFrame(batch_data),
-                use_container_width=True,
-                hide_index=True
+            batch_df = pd.DataFrame(batch_data)
+            st.dataframe(batch_df, use_container_width=True, hide_index=True)
+            st.download_button(
+                "📥 تصدير دفعات الصلاحية إلى Excel",
+                data=_excel_bytes(batch_df, "Expiry_Batches"),
+                file_name=f"expiry_batches_{branch_id}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
             )
-        else:
-            st.info(
-                "لا توجد دفعات لها تاريخ انتهاء مسجلة في هذا الفرع."
-            )
+        except Exception as e:
+            st.error("❌ تعذر تحميل دفعات الصلاحية.")
+            st.code(str(e))
+        finally:
+            if conn:
+                conn.close()
 
-    except Exception as e:
-        st.error("❌ تعذر تحميل دفعات الصلاحية.")
-        st.code(str(e))
-    finally:
-        if conn:
-            conn.close()
