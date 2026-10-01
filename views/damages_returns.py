@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import io
 from database import get_db_connection
 
 
@@ -463,641 +464,255 @@ def execute_price_update(
 # الصفحة
 # ============================================================
 
+def _excel_bytes(df, sheet_name="Movements"):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+    return output.getvalue()
+
+
+def _set_damage_mode(mode):
+    st.session_state["damage_returns_mode"] = mode
+    st.rerun()
+
+
 def show_page():
-
-    # ========================================================
-    # التنسيق
-    # ========================================================
-
     st.markdown(
         """
         <style>
-        .stDataFrame div,
-        .stDataFrame span,
-        .stDataFrame p,
-        div[data-testid="stTable"] *,
-        th, td,
-        div[data-baseweb="select"] *,
-        span, p, label, h3, h4 {
-            color: #000000 !important;
+        .stDataFrame div, .stDataFrame span, .stDataFrame p,
+        div[data-testid="stTable"] *, th, td,
+        div[data-baseweb="select"] *, span, p, label, h3, h4 {
             font-family: 'Tajawal', sans-serif !important;
-            font-weight: 900 !important;
         }
-
-        th {
-            background-color: #94a3b8 !important;
-            color: #000000 !important;
-            font-size: 19px !important;
-            text-align: right !important;
-        }
-
-        td {
-            color: #000000 !important;
-            font-size: 18px !important;
-            background-color: #f8fafc !important;
-            text-align: right !important;
-        }
-
-        .rtl-container {
-            direction: rtl !important;
-            text-align: right !important;
-        }
+        .rtl-container {direction: rtl !important; text-align: right !important;}
         </style>
         """,
         unsafe_allow_html=True
     )
 
-    st.markdown(
-        """
-        <h2 class="rtl-container">
-        ➕ الفائض، التوالف، والمرتجعات،
-        وتعديل الأسعار
-        </h2>
-        """,
-        unsafe_allow_html=True
+    st.markdown("## ♻️ حركة وتصحيح المخزون")
+    st.caption(
+        "التالف، منتهي الصلاحية، المرتجعات، الفائض، تعديل السعر وسجل الحركات "
+        "في شاشة واحدة."
     )
-
-    st.markdown(
-        "💡 إدارة التوالف، منتهيات الصلاحية، "
-        "المرتجعات، تسجيل الفائض المخزني للفرع، "
-        "وتعديل وتعميم الأسعار على كافة الفروع."
-    )
-
-    st.markdown("---")
-
-    # ========================================================
-    # الفروع
-    # ========================================================
 
     try:
-
         branches = get_branches()
-
     except Exception as e:
-
-        st.error(
-            "❌ تعذر تحميل الفروع."
-        )
-
+        st.error("❌ تعذر تحميل الفروع.")
         st.code(str(e))
-
         return
 
     if not branches:
-
-        st.warning(
-            "⚠️ لا توجد فروع مسجلة في النظام."
-        )
-
+        st.warning("⚠️ لا توجد فروع مسجلة في النظام.")
         return
 
-    b_dict = {
-        b["branch_name"]: b["id"]
-        for b in branches
-    }
+    b_dict = {b["branch_name"]: b["id"] for b in branches}
 
-    tab1, tab2, tab3 = st.tabs([
-        "🗑️ التوالف، منتهيات الصلاحية، والمرتجعات",
-        "➕ إضافة فائض مخزني لفرع معين",
-        "💲 تعديل وتعميم السعر على الفروع"
-    ])
+    if "damage_returns_mode" not in st.session_state:
+        st.session_state["damage_returns_mode"] = "adjustment"
 
-    # ========================================================
-    # 1 - التوالف والمرتجعات
-    # ========================================================
+    # كل الاختيارات التشغيلية أزرار.
+    row1 = st.columns(4)
+    if row1[0].button("🗑️ تالف / هالك", use_container_width=True):
+        st.session_state["damage_adj_type"] = "🗑️ تلف / كسر (خسارة تشغيلية)"
+        _set_damage_mode("adjustment")
+    if row1[1].button("📅 منتهي الصلاحية", use_container_width=True):
+        st.session_state["damage_adj_type"] = "⏳ منتهي الصلاحية (خسارة تشغيلية)"
+        _set_damage_mode("adjustment")
+    if row1[2].button("↩️ مرتجع", use_container_width=True):
+        _set_damage_mode("return")
+    if row1[3].button("➕ فائض مخزني", use_container_width=True):
+        _set_damage_mode("surplus")
 
-    with tab1:
+    row2 = st.columns(3)
+    if row2[0].button("💲 تعديل السعر", use_container_width=True):
+        _set_damage_mode("price")
+    if row2[1].button("📋 سجل الحركات", use_container_width=True):
+        _set_damage_mode("log")
+    if row2[2].button("📥 تصدير الحركات Excel", use_container_width=True):
+        _set_damage_mode("export")
 
-        st.markdown(
-            "### 🗑️ تسجيل وإدارة "
-            "التوالف والمرتجعات"
-        )
+    mode = st.session_state["damage_returns_mode"]
+    st.markdown("---")
 
-        sel_branch_name = st.selectbox(
-            "اختر الفرع / المخزن:",
+    # --------------------------------------------------------
+    # تلف / منتهي
+    # --------------------------------------------------------
+    if mode == "adjustment":
+        branch_name = st.selectbox(
+            "🏢 اختر الفرع / المخزن:",
             list(b_dict.keys()),
-            key="dam_branch_sel"
+            key="damage_branch_btn"
         )
+        branch_id = b_dict[branch_name]
+        items = get_branch_items(branch_id)
+        if not items:
+            st.info("لا توجد أصناف في هذا الفرع.")
+            return
 
-        b_id = b_dict[
-            sel_branch_name
-        ]
+        opts = {
+            f"[{x['item_code'] or 'بدون'}] {x['item_name']} (متاح: {x['quantity']})": x
+            for x in items
+        }
+        selected = opts[st.selectbox("📦 اختر الصنف:", list(opts), key="damage_item_btn")]
+        qty = st.number_input("الكمية:", min_value=0.01, value=1.0, step=0.5, key="damage_qty_btn")
+        notes = st.text_input("ملاحظات / سبب الحركة:", key="damage_notes_btn")
+        adj_type = st.session_state.get(
+            "damage_adj_type",
+            "🗑️ تلف / كسر (خسارة تشغيلية)"
+        )
+        st.info(f"نوع الحركة المحدد: **{adj_type}**")
 
-        # ----------------------------------------------------
-        # الإجماليات
-        # ----------------------------------------------------
+        if st.button("💾 اعتماد الحركة وتحديث المخزون", type="primary", use_container_width=True):
+            execute_adjustment(branch_id, selected["id"], qty, adj_type, notes)
 
+    # --------------------------------------------------------
+    # المرتجعات - الأنواع نفسها أصبحت أزراراً
+    # --------------------------------------------------------
+    elif mode == "return":
+        if "return_kind" not in st.session_state:
+            st.session_state["return_kind"] = "🔄 مرتجع زبون - صالح للبيع (يعود للمخزن)"
+
+        k1, k2, k3 = st.columns(3)
+        if k1.button("✅ مرتجع صالح للبيع", use_container_width=True):
+            st.session_state["return_kind"] = "🔄 مرتجع زبون - صالح للبيع (يعود للمخزن)"
+            st.rerun()
+        if k2.button("⚠️ مرتجع تالف", use_container_width=True):
+            st.session_state["return_kind"] = "⚠️ مرتجع زبون - تالف (لا يعود للبيع)"
+            st.rerun()
+        if k3.button("🔧 إعادة صنف مُصلح", use_container_width=True):
+            st.session_state["return_kind"] = "🔄 إعادة صنف تالف/مُصلح إلى المخزن (إلغاء إتلاف)"
+            st.rerun()
+
+        branch_name = st.selectbox("🏢 اختر الفرع:", list(b_dict), key="return_branch_btn")
+        branch_id = b_dict[branch_name]
+        items = get_branch_items(branch_id)
+        if not items:
+            st.info("لا توجد أصناف في هذا الفرع.")
+            return
+        opts = {
+            f"[{x['item_code'] or 'بدون'}] {x['item_name']} (الرصيد: {x['quantity']})": x
+            for x in items
+        }
+        selected = opts[st.selectbox("📦 اختر الصنف:", list(opts), key="return_item_btn")]
+        qty = st.number_input("الكمية:", min_value=0.01, value=1.0, step=0.5, key="return_qty_btn")
+        notes = st.text_input("ملاحظات:", key="return_notes_btn")
+        st.info(f"نوع المرتجع المحدد: **{st.session_state['return_kind']}**")
+        if st.button("💾 اعتماد المرتجع", type="primary", use_container_width=True):
+            execute_adjustment(
+                branch_id, selected["id"], qty,
+                st.session_state["return_kind"], notes
+            )
+
+    # --------------------------------------------------------
+    # فائض
+    # --------------------------------------------------------
+    elif mode == "surplus":
+        branch_name = st.selectbox("🏢 اختر الفرع:", list(b_dict), key="surplus_branch_btn")
+        branch_id = b_dict[branch_name]
+        items = get_branch_items(branch_id)
+        if not items:
+            st.info("لا توجد أصناف في هذا الفرع.")
+            return
+        opts = {
+            f"[{x['item_code'] or 'بدون'}] {x['item_name']} (الحالي: {x['quantity']})": x
+            for x in items
+        }
+        selected = opts[st.selectbox("📦 اختر الصنف:", list(opts), key="surplus_item_btn")]
+        qty = st.number_input("كمية الفائض:", min_value=0.01, value=1.0, step=0.5, key="surplus_qty_btn")
+        notes = st.text_input("سبب الفائض:", value="جرد / فائض مخزني", key="surplus_notes_btn")
+        if st.button("💾 اعتماد وإضافة الفائض", type="primary", use_container_width=True):
+            execute_surplus(branch_id, selected["id"], qty, notes)
+
+    # --------------------------------------------------------
+    # السعر
+    # --------------------------------------------------------
+    elif mode == "price":
         conn = None
-
         try:
-
             conn = get_db_connection()
-
-            dam_totals = conn.execute(
+            rows = conn.execute(
                 """
-                SELECT
-
-                    COALESCE(
-                        SUM(
-                            CASE
-                                WHEN adjustment_type LIKE '%تالف%'
-                                OR adjustment_type LIKE '%هالك%'
-                                OR adjustment_type LIKE '%منتهي%'
-                                THEN quantity
-                                ELSE 0
-                            END
-                        ),
-                        0
-                    ) AS total_dam_qty,
-
-                    COALESCE(
-                        SUM(
-                            CASE
-                                WHEN adjustment_type LIKE '%تالف%'
-                                OR adjustment_type LIKE '%هالك%'
-                                OR adjustment_type LIKE '%منتهي%'
-                                THEN loss_or_gain_value
-                                ELSE 0
-                            END
-                        ),
-                        0
-                    ) AS total_dam_val,
-
-                    COALESCE(
-                        SUM(
-                            CASE
-                                WHEN adjustment_type LIKE '%صالح%'
-                                OR adjustment_type LIKE '%مُصلح%'
-                                THEN quantity
-                                ELSE 0
-                            END
-                        ),
-                        0
-                    ) AS total_ret_qty
-
-                FROM stock_adjustments
-
-                WHERE branch_id = ?
-                """,
-                (b_id,)
-            ).fetchone()
-
-        except Exception as e:
-
-            st.error(
-                "❌ تعذر حساب إجماليات الحركات."
-            )
-
-            st.code(str(e))
-
-            dam_totals = {
-                "total_dam_qty": 0,
-                "total_dam_val": 0,
-                "total_ret_qty": 0
-            }
-
-        finally:
-
-            if conn:
-                conn.close()
-
-        col_m1, col_m2, col_m3 = (
-            st.columns(3)
-        )
-
-        with col_m1:
-
-            st.metric(
-                "🗑️ إجمالي كمية التوالف والتالف",
-                f"{float(dam_totals['total_dam_qty'] or 0):,.2f} "
-                "كجم/قطعة"
-            )
-
-        with col_m2:
-
-            st.metric(
-                "💸 إجمالي قيمة خسائر التوالف",
-                f"{float(dam_totals['total_dam_val'] or 0):,.2f} "
-                "د.ل"
-            )
-
-        with col_m3:
-
-            st.metric(
-                "🔄 إجمالي المرتجعات السليمة",
-                f"{float(dam_totals['total_ret_qty'] or 0):,.2f} "
-                "كجم/قطعة"
-            )
-
-        st.markdown("---")
-
-        # ----------------------------------------------------
-        # أصناف الفرع
-        # ----------------------------------------------------
-
-        try:
-
-            items_in_branch = (
-                get_branch_items(b_id)
-            )
-
-        except Exception as e:
-
-            st.error(
-                "❌ تعذر تحميل أصناف الفرع."
-            )
-
-            st.code(str(e))
-
-            items_in_branch = []
-
-        if items_in_branch:
-
-            item_options = {
-                (
-                    f"[{it['item_code'] or 'بدون'}] "
-                    f"{it['item_name']} "
-                    f"(متاح: {it['quantity']})"
-                ): it
-                for it in items_in_branch
-            }
-
-            with st.form(
-                "damage_return_form",
-                clear_on_submit=True
-            ):
-
-                sel_item_label = st.selectbox(
-                    "اختر الصنف:",
-                    list(item_options.keys())
-                )
-
-                selected_item = item_options[
-                    sel_item_label
-                ]
-
-                col1, col2 = st.columns(2)
-
-                qty = col1.number_input(
-                    "الكمية:",
-                    min_value=0.01,
-                    value=1.0,
-                    step=0.5
-                )
-
-                adj_type = col2.selectbox(
-                    "نوع الحركة (التصنيف):",
-                    [
-                        "🗑️ تلف / كسر (خسارة تشغيلية)",
-                        "⏳ منتهي الصلاحية (خسارة تشغيلية)",
-                        "🔄 مرتجع زبون - صالح للبيع (يعود للمخزن)",
-                        "⚠️ مرتجع زبون - تالف (لا يعود للبيع)",
-                        "🔄 إعادة صنف تالف/مُصلح إلى المخزن (إلغاء إتلاف)"
-                    ]
-                )
-
-                notes = st.text_input(
-                    "ملاحظات أو سبب الحركة (اختياري):",
-                    value=""
-                )
-
-                submitted = (
-                    st.form_submit_button(
-                        "💾 اعتماد وتحديث المخزن "
-                        "وتسجيل الحركة",
-                        type="primary"
-                    )
-                )
-
-            if submitted:
-
-                execute_adjustment(
-                    b_id,
-                    selected_item["id"],
-                    qty,
-                    adj_type,
-                    notes
-                )
-
-        else:
-
-            st.info(
-                "📭 لا توجد أصناف في هذا الفرع."
-            )
-
-        # ----------------------------------------------------
-        # سجل الحركات
-        # ----------------------------------------------------
-
-        st.markdown("---")
-
-        st.markdown(
-            "### 📊 سجل الحركات والتوالف لهذا الفرع"
-        )
-
-        conn = None
-
-        try:
-
-            conn = get_db_connection()
-
-            adjustment_rows = conn.execute(
-                """
-                SELECT
-                    id,
-                    item_name,
-                    quantity,
-                    adjustment_type,
-                    loss_or_gain_value,
-                    notes,
-                    created_at
-
-                FROM stock_adjustments
-
-                WHERE branch_id = ?
-
-                ORDER BY id DESC
-                """,
-                (b_id,)
-            ).fetchall()
-
-        except Exception as e:
-
-            st.error(
-                "❌ تعذر تحميل سجل الحركات."
-            )
-
-            st.code(str(e))
-
-            adjustment_rows = []
-
-        finally:
-
-            if conn:
-                conn.close()
-
-        if adjustment_rows:
-
-            adjustments_df = pd.DataFrame([
-                {
-                    "رقم الحركة":
-                        row["id"],
-
-                    "اسم الصنف":
-                        row["item_name"],
-
-                    "الكمية":
-                        row["quantity"],
-
-                    "نوع الحركة":
-                        row["adjustment_type"],
-
-                    "قيمة الخسارة (د.ل)":
-                        row["loss_or_gain_value"],
-
-                    "الملاحظات":
-                        row["notes"],
-
-                    "التاريخ والوقت":
-                        row["created_at"]
-                }
-
-                for row in adjustment_rows
-            ])
-
-            st.dataframe(
-                adjustments_df,
-                use_container_width=True,
-                hide_index=True
-            )
-
-        else:
-
-            st.info(
-                "📭 لا توجد حركات توالف "
-                "أو مرتجعات مسجلة لهذا الفرع."
-            )
-
-    # ========================================================
-    # 2 - الفائض
-    # ========================================================
-
-    with tab2:
-
-        st.markdown(
-            "### ➕ إضافة فائض مخزني لفرع معين"
-        )
-
-        sel_surplus_branch = st.selectbox(
-            "اختر الفرع لإضافة الفائض:",
-            list(b_dict.keys()),
-            key="surplus_branch_sel"
-        )
-
-        b_surplus_id = b_dict[
-            sel_surplus_branch
-        ]
-
-        try:
-
-            surplus_items = (
-                get_branch_items(
-                    b_surplus_id
-                )
-            )
-
-        except Exception as e:
-
-            st.error(
-                "❌ تعذر تحميل أصناف الفرع."
-            )
-
-            st.code(str(e))
-
-            surplus_items = []
-
-        if surplus_items:
-
-            surplus_opts = {
-                (
-                    f"[{it['item_code'] or 'بدون'}] "
-                    f"{it['item_name']} "
-                    f"(الحالي: {it['quantity']})"
-                ): it
-
-                for it in surplus_items
-            }
-
-            with st.form(
-                "surplus_form",
-                clear_on_submit=True
-            ):
-
-                sel_sur_item_lbl = st.selectbox(
-                    "اختر الصنف للفائض:",
-                    list(surplus_opts.keys())
-                )
-
-                sur_item_obj = surplus_opts[
-                    sel_sur_item_lbl
-                ]
-
-                sur_qty = st.number_input(
-                    "كمية الفائض المضافة:",
-                    min_value=0.01,
-                    value=1.0,
-                    step=0.5
-                )
-
-                sur_notes = st.text_input(
-                    "سبب الفائض (اختياري):",
-                    value="جرد / فائض مخزني"
-                )
-
-                surplus_submit = (
-                    st.form_submit_button(
-                        "💾 اعتماد وإضافة "
-                        "الفائض للمخزن",
-                        type="primary"
-                    )
-                )
-
-            if surplus_submit:
-
-                execute_surplus(
-                    b_surplus_id,
-                    sur_item_obj["id"],
-                    sur_qty,
-                    sur_notes
-                )
-
-        else:
-
-            st.info(
-                "لا توجد أصناف في هذا الفرع."
-            )
-
-    # ========================================================
-    # 3 - تعميم السعر
-    # ========================================================
-
-    with tab3:
-
-        st.markdown(
-            "### 💲 تعديل وتعميم السعر "
-            "على كافة الفروع"
-        )
-
-        st.markdown(
-            "يمكنك تعديل سعر البيع لأي صنف "
-            "وتعميمه فوراً على كافة الفروع "
-            "والمخازن في النظام."
-        )
-
-        conn = None
-
-        try:
-
-            conn = get_db_connection()
-
-            all_unique_items = conn.execute(
-                """
-                SELECT DISTINCT
-                    item_code,
-                    item_name,
-                    sale_price
+                SELECT DISTINCT item_code, item_name, sale_price
                 FROM items
                 ORDER BY item_name ASC
                 """
             ).fetchall()
-
-        except Exception as e:
-
-            st.error(
-                "❌ تعذر تحميل الأصناف."
-            )
-
-            st.code(str(e))
-
-            all_unique_items = []
-
         finally:
-
             if conn:
                 conn.close()
 
-        if all_unique_items:
+        if not rows:
+            st.info("لا توجد أصناف مسجلة.")
+            return
 
-            item_price_opts = {
-                (
-                    f"[{it['item_code'] or 'بدون'}] "
-                    f"{it['item_name']} "
-                    f"(السعر الحالي: "
-                    f"{it['sale_price']} د.ل)"
-                ): it
+        opts = {
+            f"[{x['item_code'] or 'بدون'}] {x['item_name']} (الحالي: {x['sale_price']} د.ل)": x
+            for x in rows
+        }
+        selected = opts[st.selectbox("📦 اختر الصنف:", list(opts), key="price_item_btn")]
+        new_price = st.number_input(
+            "سعر البيع الجديد:",
+            min_value=0.0,
+            value=float(selected["sale_price"] or 0),
+            step=0.5,
+            key="price_value_btn"
+        )
+        st.info("سيتم تعميم السعر على الفروع والمخازن لنفس الصنف.")
+        if st.button("💾 حفظ وتعميم السعر", type="primary", use_container_width=True):
+            execute_price_update(selected["item_code"], selected["item_name"], new_price)
 
-                for it in all_unique_items
-            }
+    # --------------------------------------------------------
+    # سجل الحركات / التصدير
+    # --------------------------------------------------------
+    elif mode in ("log", "export"):
+        branch_name = st.selectbox(
+            "🏢 اختر الفرع لعرض الحركات:",
+            list(b_dict),
+            key=f"log_branch_{mode}"
+        )
+        branch_id = b_dict[branch_name]
+        conn = None
+        try:
+            conn = get_db_connection()
+            rows = conn.execute(
+                """
+                SELECT id, item_name, quantity, adjustment_type,
+                       loss_or_gain_value, notes, created_at
+                FROM stock_adjustments
+                WHERE branch_id = ?
+                ORDER BY id DESC
+                """,
+                (branch_id,)
+            ).fetchall()
+        finally:
+            if conn:
+                conn.close()
 
-            with st.form(
-                "price_generalize_form",
-                clear_on_submit=True
-            ):
+        if not rows:
+            st.info("لا توجد حركات مسجلة لهذا الفرع.")
+            return
 
-                sel_p_lbl = st.selectbox(
-                    "اختر الصنف لتعديل وتعميم سعره:",
-                    list(item_price_opts.keys())
-                )
+        df = pd.DataFrame([{
+            "رقم الحركة": r["id"],
+            "اسم الصنف": r["item_name"],
+            "الكمية": float(r["quantity"] or 0),
+            "نوع الحركة": r["adjustment_type"],
+            "قيمة الخسارة/التسوية": float(r["loss_or_gain_value"] or 0),
+            "الملاحظات": r["notes"] or "",
+            "التاريخ والوقت": r["created_at"],
+        } for r in rows])
 
-                p_obj = item_price_opts[
-                    sel_p_lbl
-                ]
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.caption("يمكن تحديد الخلايا من الجدول ونسخها مباشرة.")
 
-                new_general_price = (
-                    st.number_input(
-                        "سعر البيع الجديد (د.ل):",
-                        min_value=0.0,
-                        value=float(
-                            p_obj[
-                                "sale_price"
-                            ] or 0
-                        ),
-                        step=0.5
-                    )
-                )
+        st.download_button(
+            "📥 تنزيل سجل الحركات Excel",
+            data=_excel_bytes(df, "Stock_Movements"),
+            file_name=f"stock_movements_branch_{branch_id}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
-                generalize_all = st.checkbox(
-                    "تعميم هذا السعر على كافة "
-                    "الفروع والمخازن لنفس الصنف",
-                    value=True
-                )
-
-                price_submit = (
-                    st.form_submit_button(
-                        "💾 حفظ وتحديث السعر",
-                        type="primary"
-                    )
-                )
-
-            if price_submit:
-
-                if generalize_all:
-
-                    execute_price_update(
-                        p_obj["item_code"],
-                        p_obj["item_name"],
-                        new_general_price
-                    )
-
-                else:
-
-                    st.info(
-                        "يرجى تفعيل خيار تعميم السعر "
-                        "لتطبيق التعديل على جميع الفروع."
-                    )
-
-        else:
-
-            st.info(
-                "لا توجد أصناف مسجلة في النظام."
-            )
