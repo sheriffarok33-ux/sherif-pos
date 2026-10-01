@@ -63,7 +63,8 @@ def execute_mix(
     store_id,
     mix_list,
     target_item_id,
-    new_sale_price
+    new_sale_price,
+    username
 ):
 
     conn = None
@@ -354,6 +355,58 @@ def execute_mix(
             )
         )
 
+        materials_details = "\n".join(
+            f"{m['name']} [{m['code']}] - {float(m['qty']):,.2f} كجم"
+            for m in merged_materials.values()
+        )
+
+        production_notes = (
+            f"الخامات:\n{materials_details}\n"
+            f"الصنف الناتج: {target['item_name']}\n"
+            f"وزن الناتج: {total_mix_weight:,.2f} كجم\n"
+            f"إجمالي التكلفة: {total_mix_cost:,.2f} د.ل\n"
+            f"تكلفة الكيلو: {new_mix_cost:,.2f} د.ل\n"
+            f"سعر البيع: {float(new_sale_price):,.2f} د.ل\n"
+            f"بواسطة: {username or 'غير محدد'}"
+        )
+
+        conn.execute(
+            """
+            INSERT INTO production_logs
+            (
+                branch_id,
+                production_type,
+                source_item_id,
+                source_item_name,
+                target_item_id,
+                target_item_name,
+                input_quantity,
+                output_quantity,
+                loss_quantity,
+                total_cost,
+                unit_cost,
+                sale_price,
+                notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                store_id,
+                "خلط",
+                None,
+                "خلطة متعددة الخامات",
+                target_item_id,
+                target["item_name"],
+                total_mix_weight,
+                total_mix_weight,
+                0.0,
+                total_mix_cost,
+                new_mix_cost,
+                float(new_sale_price),
+                production_notes
+            )
+        )
+
         conn.commit()
 
         st.session_state[
@@ -411,7 +464,8 @@ def execute_roasting(
     target_item_id,
     raw_weight,
     roasted_weight,
-    sale_price
+    sale_price,
+    username
 ):
 
     conn = None
@@ -708,6 +762,55 @@ def execute_roasting(
                 )
             )
 
+        production_notes = (
+            f"الخام: {raw_item['item_name']} [{raw_item['item_code']}]\n"
+            f"الصنف الناتج: {target['item_name']}\n"
+            f"الوزن الخام: {raw_weight:,.2f} كجم\n"
+            f"الوزن الناتج: {roasted_weight:,.2f} كجم\n"
+            f"الفقد: {loss_weight:,.2f} كجم ({loss_percent:,.2f}%)\n"
+            f"إجمالي تكلفة الخام: {total_raw_cost:,.2f} د.ل\n"
+            f"تكلفة كيلو الناتج: {roasted_unit_cost:,.2f} د.ل\n"
+            f"سعر البيع: {sale_price:,.2f} د.ل\n"
+            f"بواسطة: {username or 'غير محدد'}"
+        )
+
+        conn.execute(
+            """
+            INSERT INTO production_logs
+            (
+                branch_id,
+                production_type,
+                source_item_id,
+                source_item_name,
+                target_item_id,
+                target_item_name,
+                input_quantity,
+                output_quantity,
+                loss_quantity,
+                total_cost,
+                unit_cost,
+                sale_price,
+                notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                store_id,
+                "تحميص",
+                raw_item_id,
+                raw_item["item_name"],
+                target_item_id,
+                target["item_name"],
+                raw_weight,
+                roasted_weight,
+                loss_weight,
+                total_raw_cost,
+                roasted_unit_cost,
+                sale_price,
+                production_notes
+            )
+        )
+
         conn.commit()
 
         profit_per_kg = (
@@ -813,6 +916,11 @@ def show_page():
         "الرئيسي، ويتم حساب تكلفة المنتج "
         "الناتج بناءً على التكلفة الفعلية "
         "للخامات."
+    )
+
+    username = st.session_state.get(
+        "username",
+        "غير محدد"
     )
 
     # ========================================================
@@ -1316,7 +1424,8 @@ def show_page():
                     ],
                     new_sale_price=(
                         mix_sale_price
-                    )
+                    ),
+                    username=username
                 )
 
             if c_clear.button(
@@ -1573,5 +1682,6 @@ def show_page():
                 ),
                 sale_price=(
                     roast_sale_price
-                )
+                ),
+                username=username
             )
