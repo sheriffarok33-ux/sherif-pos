@@ -29,6 +29,46 @@ except Exception as e:
     st.code(str(e))
     st.stop()
 
+
+def load_appearance_settings():
+    defaults = {
+        "app_bg_color": "#f8fafc",
+        "sidebar_bg_color": "#0f172a",
+        "sidebar_button_color": "#1e293b",
+        "button_color": "#0284c7",
+        "button_hover_color": "#0369a1",
+        "text_color": "#000000",
+        "font_size": "17",
+        "font_weight": "900",
+        "logo_data": "",
+        "login_bg_data": "",
+    }
+    conn = None
+    try:
+        conn = get_db_connection()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                setting_key TEXT PRIMARY KEY,
+                setting_value TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        rows = conn.execute(
+            "SELECT setting_key, setting_value FROM app_settings"
+        ).fetchall()
+        for row in rows:
+            defaults[row["setting_key"]] = row["setting_value"] or ""
+    except Exception:
+        pass
+    finally:
+        if conn:
+            conn.close()
+    return defaults
+
+
+appearance = load_appearance_settings()
+
 # إضافة ستايل CSS ومؤشر الاتصال (Online/Offline) في رأس الصفحة
 st.markdown("""
     <style>
@@ -95,6 +135,53 @@ st.markdown("""
     </script>
 """, unsafe_allow_html=True)
 
+
+# تطبيق إعدادات المظهر المحفوظة فوق التنسيق الافتراضي
+_login_bg_css = ""
+if appearance.get("login_bg_data") and not st.session_state.get("logged_in"):
+    _login_bg_css = f"""
+        background-image:
+            linear-gradient(rgba(255,255,255,0.78), rgba(255,255,255,0.78)),
+            url("{appearance['login_bg_data']}");
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+    """
+
+st.markdown(
+    f"""
+    <style>
+    .stApp {{
+        background-color: {appearance['app_bg_color']} !important;
+        {_login_bg_css}
+    }}
+    html, body, [class*="css"], p, span, div, label,
+    h1, h2, h3, h4, h5, h6, table, th, td {{
+        color: {appearance['text_color']} !important;
+        font-weight: {appearance['font_weight']} !important;
+        font-size: {appearance['font_size']}px !important;
+    }}
+    div.stButton > button {{
+        background: {appearance['button_color']} !important;
+        font-weight: {appearance['font_weight']} !important;
+    }}
+    div.stButton > button:hover {{
+        background: {appearance['button_hover_color']} !important;
+    }}
+    [data-testid="stSidebar"] {{
+        background-color: {appearance['sidebar_bg_color']} !important;
+    }}
+    [data-testid="stSidebar"] .stButton > button {{
+        background: {appearance['sidebar_button_color']} !important;
+    }}
+    [data-testid="stSidebar"] .stButton > button:hover {{
+        background: {appearance['button_color']} !important;
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # إنشاء مجلد الصور إذا لم يكن موجوداً
 if not os.path.exists("item_images"): 
     os.makedirs("item_images")
@@ -129,6 +216,9 @@ if not st.session_state["logged_in"]:
 
     with col2:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
+        if appearance.get("logo_data"):
+            st.image(appearance["logo_data"], width=180)
+
         st.title("🔐 بوابة دخول نظام المحامص")
         st.subheader("مجموعة أبو زيد التجارية")
 
@@ -214,6 +304,7 @@ MENU_GROUPS = {
         ("📊 التقارير والأرباح", "📊 التقارير والأرباح"),
     ],
     "⚙️ الإدارة والإعدادات": [
+        "🎨 تخصيص المظهر",
         ("👥 إدارة المستخدمين", "👥 المستخدمون والصلاحيات"),
         ("⚙️ الجرد والتصفير السنوي", "📆 إقفال وأرشفة السنة"),
         ("🧹 تهيئة النظام لأول تشغيل", "🧹 تهيئة النظام"),
