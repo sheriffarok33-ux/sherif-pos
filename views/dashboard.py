@@ -343,307 +343,111 @@ def show_expiry_alerts():
 # الصفحة
 # ============================================================
 
-def show_page():
+def _dashboard_extra_stats():
+    """ملخصات تشغيلية إضافية بدون تحويل لوحة الرئيسية إلى شاشة تنقل."""
+    conn = get_db_connection()
+    try:
+        branch_id = st.session_state.get("branch_id")
+        role = st.session_state.get("role", "")
 
+        # المشتريات
+        try:
+            if role == "Admin" or not branch_id:
+                row = conn.execute(
+                    "SELECT COALESCE(SUM(total_amount), 0) AS total FROM purchases"
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT COALESCE(SUM(total_amount), 0) AS total "
+                    "FROM purchases WHERE branch_id = ?",
+                    (branch_id,)
+                ).fetchone()
+            purchases_total = float(row["total"] or 0)
+        except Exception:
+            purchases_total = 0.0
+
+        # التحويلات المعلقة
+        try:
+            if role == "Admin" or not branch_id:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM transfer_logs "
+                    "WHERE COALESCE(status, '') NOT IN ('confirmed', 'completed', 'مؤكد', 'مكتمل')"
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM transfer_logs "
+                    "WHERE (from_branch_id = ? OR to_branch_id = ?) "
+                    "AND COALESCE(status, '') NOT IN "
+                    "('confirmed', 'completed', 'مؤكد', 'مكتمل')",
+                    (branch_id, branch_id)
+                ).fetchone()
+            pending_transfers = int(row["cnt"] or 0)
+        except Exception:
+            pending_transfers = 0
+
+        # أرصدة الموردين والعملاء
+        try:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(balance), 0) AS total FROM suppliers"
+            ).fetchone()
+            supplier_balance = float(row["total"] or 0)
+        except Exception:
+            supplier_balance = 0.0
+
+        try:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(balance), 0) AS total FROM customers"
+            ).fetchone()
+            customer_balance = float(row["total"] or 0)
+        except Exception:
+            customer_balance = 0.0
+
+        return purchases_total, pending_transfers, supplier_balance, customer_balance
+    finally:
+        conn.close()
+
+
+def show_page():
     st.markdown(
         """
-        <h2 style="
-            color: #0f172a;
-            text-align: right;
-        ">
-        🌟 مجموعة أبو زيد -
-        لوحة التحكم الرئيسية (Dashboard)
+        <h2 style="color:#0f172a;text-align:right;">
+            🌟 مجموعة أبو زيد — لوحة المتابعة الرئيسية
         </h2>
         """,
         unsafe_allow_html=True
     )
 
     st.info(
-        "💡 مرحباً بك في إدارة مجموعة أبو زيد. "
-        "إليك ملخصاً فورياً لحركة العمل "
-        "والأداء المالي."
+        "هذه الصفحة للمتابعة والتنبيهات فقط. "
+        "استخدم الأقسام الرئيسية في القائمة الجانبية للوصول إلى العمليات."
     )
 
-    # ========================================================
     # تنبيهات الصلاحية
-    # ========================================================
-
     show_expiry_alerts()
-
     st.markdown("---")
 
-    # ========================================================
-    # الإحصائيات
-    # ========================================================
-
-    sales, branches, inventory, users = (
-        get_dashboard_stats()
+    # الإحصائيات الأساسية الموجودة بالنظام
+    sales, branches, inventory, users = get_dashboard_stats()
+    purchases_total, pending_transfers, supplier_balance, customer_balance = (
+        _dashboard_extra_stats()
     )
 
+    st.markdown("### 📌 ملخص التشغيل")
     c1, c2, c3, c4 = st.columns(4)
+    c1.metric("💰 إجمالي المبيعات", f"{sales:,.2f} د.ل")
+    c2.metric("📥 إجمالي المشتريات", f"{purchases_total:,.2f} د.ل")
+    c3.metric("📦 قيمة المخزون", f"{inventory:,.2f} د.ل")
+    c4.metric("🔄 تحويلات معلقة", f"{pending_transfers}")
 
-    box_style = (
-        "background-color:#ffffff;"
-        "padding:15px;"
-        "border-radius:8px;"
-        "text-align:center;"
-        "border:2px solid #cbd5e1;"
-        "box-shadow:0 4px 6px "
-        "rgba(0,0,0,0.05);"
-    )
-
-    c1.markdown(
-        f"""
-        <div style='{box_style}'>
-            <b style='
-                color:#0f172a !important;
-                font-size:18px;
-            '>
-                💰 إجمالي المبيعات
-            </b>
-
-            <br><br>
-
-            <span style='
-                font-size:22px;
-                font-weight:900;
-                color:#0284c7 !important;
-            '>
-                {sales:,.2f} د.ل
-            </span>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    c2.markdown(
-        f"""
-        <div style='{box_style}'>
-            <b style='
-                color:#0f172a !important;
-                font-size:18px;
-            '>
-                🏢 الفروع والمخازن
-            </b>
-
-            <br><br>
-
-            <span style='
-                font-size:22px;
-                font-weight:900;
-                color:#0284c7 !important;
-            '>
-                {branches}
-            </span>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    c3.markdown(
-        f"""
-        <div style='{box_style}'>
-            <b style='
-                color:#0f172a !important;
-                font-size:18px;
-            '>
-                📦 قيمة المخزون
-            </b>
-
-            <br><br>
-
-            <span style='
-                font-size:22px;
-                font-weight:900;
-                color:#0284c7 !important;
-            '>
-                {inventory:,.2f} د.ل
-            </span>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    c4.markdown(
-        f"""
-        <div style='{box_style}'>
-            <b style='
-                color:#0f172a !important;
-                font-size:18px;
-            '>
-                👥 طاقم العمل
-            </b>
-
-            <br><br>
-
-            <span style='
-                font-size:22px;
-                font-weight:900;
-                color:#0284c7 !important;
-            '>
-                {users}
-            </span>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    c5, c6, c7, c8 = st.columns(4)
+    c5.metric("🚛 أرصدة الموردين", f"{supplier_balance:,.2f} د.ل")
+    c6.metric("🤝 أرصدة العملاء", f"{customer_balance:,.2f} د.ل")
+    c7.metric("🏢 الفروع والمخازن", f"{branches}")
+    c8.metric("👥 طاقم العمل", f"{users}")
 
     st.markdown("---")
-
-    # ========================================================
-    # تصميم أزرار الشاشات
-    # ========================================================
-
-    st.markdown(
-        """
-        <style>
-
-        div[data-testid="column"]
-        .stButton > button {
-
-            height: 130px;
-
-            font-size: 22px !important;
-
-            font-weight: 900 !important;
-
-            border-radius: 15px;
-
-            background:
-                linear-gradient(
-                    135deg,
-                    #ffffff,
-                    #f8fafc
-                ) !important;
-
-            border:
-                2px solid #cbd5e1 !important;
-
-            box-shadow:
-                0 4px 6px
-                rgba(0,0,0,0.05) !important;
-
-            white-space: normal;
-
-            transition:
-                all 0.3s ease-in-out;
-
-            width: 100%;
-        }
-
-        div[data-testid="column"]
-        .stButton > button p,
-
-        div[data-testid="column"]
-        .stButton > button div,
-
-        div[data-testid="column"]
-        .stButton > button span {
-
-            color:
-                #0f172a !important;
-        }
-
-        div[data-testid="column"]
-        .stButton > button:hover {
-
-            border-color:
-                #0284c7 !important;
-
-            background:
-                linear-gradient(
-                    135deg,
-                    #f0f9ff,
-                    #e0f2fe
-                ) !important;
-
-            transform:
-                translateY(-5px);
-
-            box-shadow:
-                0 8px 15px
-                rgba(
-                    2,
-                    132,
-                    199,
-                    0.15
-                ) !important;
-        }
-
-        </style>
-        """,
-        unsafe_allow_html=True
+    st.caption(
+        "تم حذف شبكة اختصارات الشاشات والمفضلة من لوحة الرئيسية لمنع تكرار التنقل. "
+        "الرئيسية الآن مخصصة للمؤشرات والتنبيهات فقط."
     )
 
-    # ========================================================
-    # الشاشات والصلاحيات
-    # ========================================================
-
-    role = st.session_state.get(
-        "role",
-        ""
-    )
-
-    all_screens = [
-        "🛒 نقطة البيع (POS)",
-        "🏢 إدارة الفروع",
-        "👥 إدارة المستخدمين",
-        "⭐ لوحة المفضلة (1-20)",
-        "📦 إدارة المخزن والفروع",
-        "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
-        "🔄 تزويد الفروع والأرشيف",
-        "📁 استيراد Excel",
-        "💰 المصروفات",
-        "👥 جهات التعامل",
-        "📥 المشتريات",
-        "⚙️ الجرد والتصفير السنوي",
-        "🥜 التحميص والخلط",
-        "📊 التقارير والأرباح"
-    ]
-
-    allowed_screens = [
-        screen
-        for screen in all_screens
-        if is_allowed(
-            screen,
-            role
-        )
-    ]
-
-    if not allowed_screens:
-
-        st.info(
-            "لا توجد شاشات متاحة "
-            "لصلاحيتك حالياً."
-        )
-
-        return
-
-    # ========================================================
-    # شبكة الشاشات
-    # ========================================================
-
-    cols = st.columns(3)
-
-    for i, screen_name in enumerate(
-        allowed_screens
-    ):
-
-        with cols[i % 3]:
-
-            if st.button(
-                screen_name,
-                key=f"dash_btn_{i}",
-                use_container_width=True
-            ):
-
-                st.session_state[
-                    "page"
-                ] = screen_name
-
-                st.rerun()
-
-            st.markdown(
-                "<br>",
-                unsafe_allow_html=True
-            )
