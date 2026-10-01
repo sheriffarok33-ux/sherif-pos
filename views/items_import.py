@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from datetime import date, datetime
 from database import get_db_connection
 
 
@@ -19,6 +20,116 @@ def clean_number(value, default=0.0):
         return float(value)
     except (ValueError, TypeError):
         return default
+
+
+def clean_unit(value):
+    """توحيد اسم الوحدة القادمة من الملف."""
+    text = clean_text(value).lower()
+
+    piece_values = {
+        "قطعة", "قطع", "piece", "pieces",
+        "كرتون", "كرتونة", "قطعة / كرتون", "قطعة/كرتون"
+    }
+    kg_values = {
+        "كجم", "كيلو", "كيلوجرام", "kg",
+        "جرام", "وزن", "وزن (كجم / جرام)"
+    }
+
+    if text in piece_values:
+        return "piece"
+
+    if text in kg_values:
+        return "kg"
+
+    raise ValueError(
+        f"الوحدة ({value}) غير معروفة. استخدم «قطعة» أو «كجم»."
+    )
+
+
+def clean_expiry(value):
+    """تحويل تاريخ الصلاحية إلى DATE أو None."""
+    if pd.isna(value) or clean_text(value) == "":
+        return None
+
+    parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
+
+    if pd.isna(parsed):
+        raise ValueError(
+            f"تاريخ الصلاحية ({value}) غير صحيح."
+        )
+
+    return parsed.date()
+
+
+def ensure_import_schema(conn):
+    """تجهيز حقول الوحدات وجدول دفعات الصلاحية."""
+    conn.execute(
+        """
+        ALTER TABLE items
+        ADD COLUMN IF NOT EXISTS unit_type TEXT DEFAULT 'piece'
+        """
+    )
+    conn.execute(
+        """
+        ALTER TABLE items
+        ADD COLUMN IF NOT EXISTS pieces_per_carton INTEGER DEFAULT 1
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inventory_batches
+        (
+            id BIGSERIAL PRIMARY KEY,
+            item_id INTEGER NOT NULL,
+            branch_id INTEGER NOT NULL,
+            quantity NUMERIC DEFAULT 0,
+            remaining_quantity NUMERIC DEFAULT 0,
+            received_date DATE DEFAULT CURRENT_DATE,
+            expiry_date DATE,
+            unit_cost NUMERIC DEFAULT 0,
+            source_type TEXT DEFAULT 'inventory',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+            FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_inventory_batches_expiry
+        ON inventory_batches(branch_id, expiry_date)
+        """
+    )
+
+
+def add_import_batch(
+    conn, item_id, branch_id, qty, buy_price, expiry_date,
+    source_type="items_import"
+):
+    """إنشاء دفعة صلاحية فقط عند وجود تاريخ انتهاء وكمية موجبة."""
+    if expiry_date is None or float(qty) <= 0:
+        return
+
+    conn.execute(
+        """
+        INSERT INTO inventory_batches
+        (
+            item_id, branch_id, quantity, remaining_quantity,
+            received_date, expiry_date, unit_cost, source_type
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            item_id,
+            branch_id,
+            float(qty),
+            float(qty),
+            date.today(),
+            expiry_date,
+            float(buy_price),
+            source_type
+        )
+    )
 
 
 def show_page():
@@ -136,14 +247,22 @@ def show_page():
 
         st.markdown(
             """
-            **يجب أن يحتوي الملف على الأعمدة التالية:**
+            **أعمدة ملف الأصناف:**
 
             `كود الصنف` |
             `اسم الصنف` |
+            `الوحدة` |
+            `عدد القطع بالكرتون` |
             `سعر البيع` |
             `سعر الشراء` |
             `الكمية` |
             `تاريخ الصلاحية`
+
+            **ملاحظات:**  
+            - `الوحدة` تكون `قطعة` أو `كجم`.  
+            - `عدد القطع بالكرتون` يستخدم لأصناف القطع، وللكيلو يمكن تركه فارغاً أو وضع `1`.  
+            - `الكمية` هي الرصيد بالوحدة الأساسية: عدد القطع للصنف القطعي، أو عدد الكيلوجرامات للصنف الوزني.  
+            - `تاريخ الصلاحية` اختياري، ويمكن تركه فارغاً.
             """
         )
 
@@ -175,10 +294,14 @@ def show_page():
                 # ============================================
 
                 required_columns = [
+                    "كود الصنف",
                     "اسم الصنف",
+                    "الوحدة",
+                    "عدد القطع بالكرتون",
                     "سعر البيع",
                     "سعر الشراء",
-                    "الكمية"
+                    "الكمية",
+                    "تاريخ الصلاحية"
                 ]
 
                 missing_columns = [
@@ -216,150 +339,177 @@ def show_page():
                     conn_imp = None
 
                     try:
-
                         conn_imp = get_db_connection()
+                        ensure_import_schema(conn_imp)
 
                         success_count = 0
+                        processed_rows = 0
 
-                        for _, row in df.iterrows():
+                        for excel_index, row in df.iterrows():
+                            excel_row = int(excel_index) + 2
 
-                            code = clean_text(
-                                row.get(
-                                    "كود الصنف",
-                                    ""
-                                )
+                            code_value = clean_text(
+                                row.get("كود الصنف", "")
                             )
-
                             name = clean_text(
-                                row.get(
-                                    "اسم الصنف",
-                                    ""
+                                row.get("اسم الصنف", "")
+                            )
+
+                            if not name:
+                                raise ValueError(
+                                    f"الصف {excel_row}: اسم الصنف فارغ."
+                                )
+
+                            if not code_value:
+                                raise ValueError(
+                                    f"الصف {excel_row}: كود الصنف فارغ."
+                                )
+
+                            unit_type = clean_unit(
+                                row.get("الوحدة", "")
+                            )
+
+                            pieces_per_carton = int(
+                                clean_number(
+                                    row.get(
+                                        "عدد القطع بالكرتون",
+                                        1
+                                    ),
+                                    1
                                 )
                             )
+
+                            if unit_type == "piece":
+                                if pieces_per_carton < 1:
+                                    raise ValueError(
+                                        f"الصف {excel_row}: عدد القطع "
+                                        "بالكرتون يجب أن يكون 1 أو أكثر."
+                                    )
+                            else:
+                                pieces_per_carton = 1
 
                             sale_p = clean_number(
-                                row.get(
-                                    "سعر البيع",
-                                    0
-                                )
+                                row.get("سعر البيع", 0)
                             )
-
                             buy_p = clean_number(
-                                row.get(
-                                    "سعر الشراء",
-                                    0
-                                )
+                                row.get("سعر الشراء", 0)
                             )
-
                             qty = clean_number(
-                                row.get(
-                                    "الكمية",
-                                    0
-                                )
+                                row.get("الكمية", 0)
+                            )
+                            expiry = clean_expiry(
+                                row.get("تاريخ الصلاحية", "")
                             )
 
-                            expiry = clean_text(
-                                row.get(
-                                    "تاريخ الصلاحية",
-                                    ""
+                            if sale_p < 0:
+                                raise ValueError(
+                                    f"الصف {excel_row}: سعر البيع سالب."
                                 )
-                            )
 
-                            # تجاهل السطر بدون اسم
-                            if not name:
-                                continue
+                            if buy_p < 0:
+                                raise ValueError(
+                                    f"الصف {excel_row}: سعر الشراء سالب."
+                                )
+
+                            if qty < 0:
+                                raise ValueError(
+                                    f"الصف {excel_row}: الكمية سالبة."
+                                )
 
                             for b_id in target_branches:
-
-                                # --------------------------------
-                                # البحث عن الصنف
-                                # --------------------------------
-
-                                if code:
-
-                                    existing = (
-                                        conn_imp.execute(
-                                            """
-                                            SELECT id
-                                            FROM items
-
-                                            WHERE branch_id = ?
-
-                                            AND (
-                                                item_code = ?
-                                                OR item_name = ?
-                                            )
-
-                                            LIMIT 1
-                                            """,
-                                            (
-                                                b_id,
-                                                code,
-                                                name
-                                            )
-                                        ).fetchone()
+                                existing = conn_imp.execute(
+                                    """
+                                    SELECT
+                                        id, quantity, avg_cost,
+                                        buy_price,
+                                        COALESCE(
+                                            unit_type,
+                                            'piece'
+                                        ) AS unit_type
+                                    FROM items
+                                    WHERE branch_id = ?
+                                      AND (
+                                            item_code = ?
+                                            OR LOWER(TRIM(item_name))
+                                               = LOWER(TRIM(?))
+                                          )
+                                    LIMIT 1
+                                    FOR UPDATE
+                                    """,
+                                    (
+                                        b_id,
+                                        code_value,
+                                        name
                                     )
-
-                                else:
-
-                                    # لو الباركود فارغ
-                                    # لا نقارن الباركود الفارغ
-                                    existing = (
-                                        conn_imp.execute(
-                                            """
-                                            SELECT id
-                                            FROM items
-
-                                            WHERE branch_id = ?
-                                            AND item_name = ?
-
-                                            LIMIT 1
-                                            """,
-                                            (
-                                                b_id,
-                                                name
-                                            )
-                                        ).fetchone()
-                                    )
-
-                                # --------------------------------
-                                # تحديث الصنف الموجود
-                                # --------------------------------
+                                ).fetchone()
 
                                 if existing:
+                                    stored_unit = (
+                                        existing["unit_type"]
+                                        or "piece"
+                                    )
+
+                                    if stored_unit != unit_type:
+                                        raise ValueError(
+                                            f"الصف {excel_row}: الصنف "
+                                            f"({name}) موجود بوحدة مختلفة."
+                                        )
+
+                                    old_qty = float(
+                                        existing["quantity"] or 0
+                                    )
+                                    old_avg = float(
+                                        existing["avg_cost"] or 0
+                                    )
+                                    old_buy = float(
+                                        existing["buy_price"] or 0
+                                    )
+
+                                    if old_avg <= 0:
+                                        old_avg = old_buy
+
+                                    new_qty = old_qty + float(qty)
+
+                                    if new_qty > 0:
+                                        new_avg = (
+                                            (
+                                                old_qty * old_avg
+                                            )
+                                            +
+                                            (
+                                                float(qty) * buy_p
+                                            )
+                                        ) / new_qty
+                                    else:
+                                        new_avg = buy_p
 
                                     conn_imp.execute(
                                         """
                                         UPDATE items
-
                                         SET
-                                            quantity =
-                                                quantity + ?,
-
+                                            quantity = ?,
                                             sale_price = ?,
-
                                             buy_price = ?,
-
-                                            expiry_date = ?
-
+                                            avg_cost = ?,
+                                            unit_type = ?,
+                                            pieces_per_carton = ?
                                         WHERE id = ?
                                         """,
                                         (
-                                            qty,
+                                            new_qty,
                                             sale_p,
                                             buy_p,
-                                            expiry,
+                                            new_avg,
+                                            unit_type,
+                                            pieces_per_carton,
                                             existing["id"]
                                         )
                                     )
 
-                                # --------------------------------
-                                # إضافة صنف جديد
-                                # --------------------------------
+                                    item_id = existing["id"]
 
                                 else:
-
-                                    conn_imp.execute(
+                                    inserted = conn_imp.execute(
                                         """
                                         INSERT INTO items
                                         (
@@ -370,47 +520,60 @@ def show_page():
                                             buy_price,
                                             sale_price,
                                             avg_cost,
-                                            expiry_date
+                                            unit_type,
+                                            pieces_per_carton
                                         )
-
                                         VALUES
-                                        (?, ?, ?, ?, ?, ?, ?, ?)
+                                        (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        RETURNING id
                                         """,
                                         (
                                             b_id,
-                                            code,
+                                            code_value,
                                             name,
                                             qty,
                                             buy_p,
                                             sale_p,
                                             buy_p,
-                                            expiry
+                                            unit_type,
+                                            pieces_per_carton
                                         )
-                                    )
+                                    ).fetchone()
 
-                            success_count += 1
+                                    item_id = inserted[0]
+
+                                add_import_batch(
+                                    conn_imp,
+                                    item_id,
+                                    b_id,
+                                    qty,
+                                    buy_p,
+                                    expiry
+                                )
+
+                                success_count += 1
+
+                            processed_rows += 1
 
                         conn_imp.commit()
 
                         st.success(
-                            f"✅ تمت معالجة وترحيل "
-                            f"{success_count} صنف بنجاح."
+                            f"✅ تم اعتماد {processed_rows} صف "
+                            f"وترحيل {success_count} سجل للفرع/الفروع "
+                            "بنجاح، مع حفظ الوحدات ودفعات الصلاحية."
                         )
 
                     except Exception as e:
-
                         if conn_imp:
                             conn_imp.rollback()
 
                         st.error(
-                            "❌ حدث خطأ أثناء ترحيل "
-                            "الأصناف إلى قاعدة البيانات."
+                            "❌ لم يتم استيراد الملف. "
+                            "تم التراجع عن العملية بالكامل."
                         )
-
                         st.code(str(e))
 
                     finally:
-
                         if conn_imp:
                             conn_imp.close()
 
@@ -465,6 +628,11 @@ def show_page():
                     step=0.5
                 )
 
+                m_unit_label = st.selectbox(
+                    "الوحدة الأساسية:",
+                    ["قطعة", "كجم"]
+                )
+
                 m_qty = st.number_input(
                     "الكمية الابتدائية:",
                     min_value=0.0,
@@ -472,9 +640,27 @@ def show_page():
                     step=0.5
                 )
 
-                m_expiry = st.text_input(
-                    "تاريخ الصلاحية (اختياري):",
-                    value=""
+            m_pieces_per_carton = 1
+
+            if m_unit_label == "قطعة":
+                m_pieces_per_carton = st.number_input(
+                    "عدد القطع داخل الكرتون:",
+                    min_value=1,
+                    value=1,
+                    step=1
+                )
+
+            m_has_expiry = st.checkbox(
+                "له تاريخ انتهاء صلاحية"
+            )
+
+            m_expiry = None
+
+            if m_has_expiry:
+                m_expiry = st.date_input(
+                    "تاريخ الصلاحية:",
+                    value=date.today(),
+                    min_value=date.today()
                 )
 
             if m_sale > 0 and m_buy > 0:
@@ -527,6 +713,13 @@ def show_page():
                 try:
 
                     conn_m = get_db_connection()
+                    ensure_import_schema(conn_m)
+
+                    m_unit_type = (
+                        "piece"
+                        if m_unit_label == "قطعة"
+                        else "kg"
+                    )
 
                     for b_id in target_branches:
 
@@ -584,7 +777,7 @@ def show_page():
                                 "الفروع المحددة."
                             )
 
-                        conn_m.execute(
+                        inserted = conn_m.execute(
                             """
                             INSERT INTO items
                             (
@@ -595,11 +788,12 @@ def show_page():
                                 buy_price,
                                 sale_price,
                                 avg_cost,
-                                expiry_date
+                                unit_type,
+                                pieces_per_carton
                             )
-
                             VALUES
-                            (?, ?, ?, ?, ?, ?, ?, ?)
+                            (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            RETURNING id
                             """,
                             (
                                 b_id,
@@ -609,8 +803,19 @@ def show_page():
                                 m_buy,
                                 m_sale,
                                 m_buy,
-                                m_expiry.strip()
+                                m_unit_type,
+                                int(m_pieces_per_carton)
                             )
+                        ).fetchone()
+
+                        add_import_batch(
+                            conn_m,
+                            inserted[0],
+                            b_id,
+                            m_qty,
+                            m_buy,
+                            m_expiry,
+                            source_type="manual_item"
                         )
 
                     conn_m.commit()
