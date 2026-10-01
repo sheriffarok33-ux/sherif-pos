@@ -1208,6 +1208,63 @@ def initialize_database():
         )
 
         # ====================================================
+        # أرشيف السنوات المالية
+        # ====================================================
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS financial_year_archives
+            (
+                id SERIAL PRIMARY KEY,
+                financial_year INTEGER UNIQUE NOT NULL,
+                closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                closed_by INTEGER,
+                closed_by_username TEXT,
+                summary_json TEXT,
+                FOREIGN KEY (closed_by)
+                    REFERENCES users(id)
+                    ON DELETE SET NULL
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS financial_year_archive_rows
+            (
+                id BIGSERIAL PRIMARY KEY,
+                archive_id INTEGER NOT NULL,
+                source_table TEXT NOT NULL,
+                source_row_id TEXT,
+                row_data TEXT NOT NULL,
+                archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (archive_id)
+                    REFERENCES financial_year_archives(id)
+                    ON DELETE CASCADE
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_financial_archive_rows_archive
+            ON financial_year_archive_rows(archive_id)
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_financial_archive_rows_table
+            ON financial_year_archive_rows(
+                archive_id,
+                source_table
+            )
+            """
+        )
+
+        # ====================================================
         # صلاحيات الرتب
         # ====================================================
 
