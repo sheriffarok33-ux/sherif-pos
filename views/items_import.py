@@ -813,7 +813,7 @@ def show_page():
                             inserted[0],
                             b_id,
                             m_qty,
-                            m_buy,
+                            m_buy,ث
                             m_expiry,
                             source_type="manual_item"
                         )
