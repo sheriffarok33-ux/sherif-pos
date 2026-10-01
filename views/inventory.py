@@ -166,10 +166,6 @@ def get_branch_items(branch_id):
                 "الكود": row["item_code"],
                 "اسم الصنف": row["item_name"],
                 "الوحدة": "كجم" if unit_type == "kg" else "قطعة",
-                "قطع/كرتون": (
-                    int(row["pieces_per_carton"] or 1)
-                    if unit_type == "piece" else "-"
-                ),
                 "الرصيد": float(row["quantity"] or 0),
                 "أقرب تاريخ انتهاء": expiry_text,
                 "آخر تكلفة للوحدة": float(row["buy_price"] or 0),
@@ -229,28 +225,15 @@ def add_stock_to_existing_item(
             if new_qty > 0 else unit_buy_price
         )
 
-        if stored_type == "piece" and pieces_per_carton:
-            conn.execute(
-                """
-                UPDATE items
-                SET quantity = ?, buy_price = ?, avg_cost = ?,
-                    pieces_per_carton = ?
-                WHERE id = ? AND branch_id = ?
-                """,
-                (
-                    new_qty, unit_buy_price, new_avg,
-                    int(pieces_per_carton), item_id, branch_id
-                )
-            )
-        else:
-            conn.execute(
-                """
-                UPDATE items
-                SET quantity = ?, buy_price = ?, avg_cost = ?
-                WHERE id = ? AND branch_id = ?
-                """,
-                (new_qty, unit_buy_price, new_avg, item_id, branch_id)
-            )
+        conn.execute(
+            """
+            UPDATE items
+            SET quantity = ?, buy_price = ?, avg_cost = ?,
+                pieces_per_carton = 1
+            WHERE id = ? AND branch_id = ?
+            """,
+            (new_qty, unit_buy_price, new_avg, item_id, branch_id)
+        )
 
         if expiry_date:
             conn.execute(
@@ -344,7 +327,7 @@ def create_new_inventory_item(
             (
                 item_code, item_name, branch_id, initial_quantity,
                 unit_buy_price, sale_price, unit_buy_price,
-                unit_type, int(pieces_per_carton or 1)
+                unit_type, 1
             )
         ).fetchone()
 
@@ -386,77 +369,23 @@ def create_new_inventory_item(
 
 def piece_input_fields(prefix, default_pieces=1):
     c1, c2 = st.columns(2)
-    pieces_per_carton = c1.number_input(
-        "عدد القطع داخل الكرتون:",
-        min_value=1, value=max(1, int(default_pieces or 1)), step=1,
-        key=f"{prefix}_pieces_per_carton"
+    qty = c1.number_input(
+        "الكمية بالقطعة:",
+        min_value=1.0,
+        value=1.0,
+        step=1.0,
+        format="%.0f",
+        key=f"{prefix}_piece_qty"
     )
-    cartons = c2.number_input(
-        "عدد الكراتين المضافة:",
-        min_value=0.0, value=1.0, step=1.0,
-        key=f"{prefix}_cartons"
+    unit_cost = c2.number_input(
+        "سعر شراء القطعة:",
+        min_value=0.0,
+        value=0.0,
+        step=0.5,
+        format="%.2f",
+        key=f"{prefix}_piece_cost"
     )
-    box_price = st.number_input(
-        "سعر شراء الكرتون بالكامل (د.ل):",
-        min_value=0.0, value=0.0, step=0.5, format="%.2f",
-        key=f"{prefix}_box_price"
-    )
-    qty = float(cartons) * int(pieces_per_carton)
-    unit_cost = (
-        float(box_price) / int(pieces_per_carton)
-        if pieces_per_carton else 0.0
-    )
-    st.info(
-        f"📊 سيتم إضافة **{qty:,.0f} قطعة** | "
-        f"تكلفة القطعة **{unit_cost:,.2f} د.ل**"
-    )
-    return qty, unit_cost, int(pieces_per_carton)
-
-
-def weight_input_fields(prefix):
-    mode = st.radio(
-        "طريقة إدخال الوزن:",
-        ["⚖️ بالكيلو", "⚖️ بالجرام"],
-        horizontal=True,
-        key=f"{prefix}_weight_mode"
-    )
-    if mode == "⚖️ بالكيلو":
-        c1, c2 = st.columns(2)
-        qty = c1.number_input(
-            "الوزن المضاف (كجم):", min_value=0.001,
-            value=1.000, step=0.100, format="%.3f",
-            key=f"{prefix}_kg"
-        )
-        cost = c2.number_input(
-            "سعر شراء الكيلو (د.ل):", min_value=0.0,
-            value=0.0, step=0.5, format="%.2f",
-            key=f"{prefix}_kg_cost"
-        )
-        st.info(
-            f"⚖️ سيتم إضافة **{float(qty):,.3f} كجم** | "
-            f"قيمة الشراء **{float(qty)*float(cost):,.2f} د.ل**"
-        )
-        return float(qty), float(cost)
-
-    c1, c2 = st.columns(2)
-    grams = c1.number_input(
-        "الوزن المضاف (جرام):", min_value=1.0,
-        value=1000.0, step=50.0, format="%.0f",
-        key=f"{prefix}_grams"
-    )
-    total = c2.number_input(
-        "إجمالي سعر شراء هذه الكمية (د.ل):", min_value=0.0,
-        value=0.0, step=0.5, format="%.2f",
-        key=f"{prefix}_grams_total"
-    )
-    qty = float(grams) / 1000.0
-    cost = float(total) / qty if qty > 0 else 0.0
-    st.info(
-        f"⚖️ {grams:,.0f} جرام = **{qty:,.3f} كجم** | "
-        f"تكلفة الكيلو **{cost:,.2f} د.ل**"
-    )
-    return qty, cost
-
+    return float(qty), float(unit_cost), 1
 
 def change_legacy_unit(item_id, branch_id, new_type, pieces_per_carton=1):
     conn = None
@@ -513,7 +442,7 @@ def _update_items_from_editor(branch_id, original_rows, edited_df):
             item_name = str(row["اسم الصنف"] or "").strip()
             unit_ar = str(row["الوحدة"] or "قطعة").strip()
             unit_type = "kg" if unit_ar == "كجم" else "piece"
-            ppc = 1 if unit_type == "kg" else max(1, int(float(row["قطع/كرتون"] or 1)))
+            ppc = 1
             new_qty = float(row["الكمية"] or 0)
             buy_price = float(row["سعر الشراء"] or 0)
             avg_cost = float(row["متوسط التكلفة"] or 0)
@@ -657,7 +586,6 @@ def _editable_inventory_dataframe(rows):
             "كود الصنف": row["item_code"] or "",
             "اسم الصنف": row["item_name"] or "",
             "الوحدة": "كجم" if (row["unit_type"] or "piece") == "kg" else "قطعة",
-            "قطع/كرتون": int(row["pieces_per_carton"] or 1),
             "الكمية": float(row["quantity"] or 0),
             "سعر الشراء": float(row["buy_price"] or 0),
             "متوسط التكلفة": float(row["avg_cost"] or 0),
@@ -676,7 +604,7 @@ def show_page():
 
     st.markdown("## 📦 المخزون والأصناف")
     st.caption(
-        "إدارة الأصناف والكميات والأسعار والوحدات والصلاحية. "
+        "إدارة الأصناف بنظام قطعة أو كجم فقط، مع الكمية وسعر الشراء وسعر البيع والصلاحية. "
         "يمكن النسخ واللصق والتعديل داخل جدول الأصناف ثم الضغط على حفظ."
     )
 
@@ -750,9 +678,6 @@ def show_page():
                 "id": st.column_config.NumberColumn("ID", disabled=True),
                 "الوحدة": st.column_config.SelectboxColumn(
                     "الوحدة", options=["قطعة", "كجم"], required=True
-                ),
-                "قطع/كرتون": st.column_config.NumberColumn(
-                    "قطع/كرتون", min_value=1, step=1
                 ),
                 "الكمية": st.column_config.NumberColumn(
                     "الكمية", min_value=0.0, format="%.3f"
@@ -875,43 +800,23 @@ def show_page():
                 "existing_btn", selected["pieces_per_carton"]
             )
         else:
-            if "existing_btn_weight_mode" not in st.session_state:
-                st.session_state["existing_btn_weight_mode"] = "kg"
-
-            w1, w2 = st.columns(2)
-            if w1.button("⚖️ إدخال بالكيلو", use_container_width=True):
-                st.session_state["existing_btn_weight_mode"] = "kg"
-                st.rerun()
-            if w2.button("⚖️ إدخال بالجرام", use_container_width=True):
-                st.session_state["existing_btn_weight_mode"] = "gram"
-                st.rerun()
-
-            if st.session_state["existing_btn_weight_mode"] == "kg":
-                q1, q2 = st.columns(2)
-                added_qty = q1.number_input(
-                    "الوزن المضاف (كجم):", min_value=0.001,
-                    value=1.0, step=0.1, format="%.3f",
-                    key="existing_btn_kg"
-                )
-                unit_cost = q2.number_input(
-                    "سعر شراء الكيلو:", min_value=0.0,
-                    value=0.0, step=0.5, format="%.2f",
-                    key="existing_btn_kg_cost"
-                )
-            else:
-                q1, q2 = st.columns(2)
-                grams = q1.number_input(
-                    "الوزن المضاف (جرام):", min_value=1.0,
-                    value=1000.0, step=50.0,
-                    key="existing_btn_grams"
-                )
-                total_cost = q2.number_input(
-                    "إجمالي سعر شراء الكمية:", min_value=0.0,
-                    value=0.0, step=0.5, format="%.2f",
-                    key="existing_btn_grams_cost"
-                )
-                added_qty = float(grams) / 1000.0
-                unit_cost = float(total_cost) / added_qty if added_qty > 0 else 0.0
+            q1, q2 = st.columns(2)
+            added_qty = q1.number_input(
+                "الكمية بالكيلو:",
+                min_value=0.001,
+                value=1.0,
+                step=0.1,
+                format="%.3f",
+                key="existing_btn_kg"
+            )
+            unit_cost = q2.number_input(
+                "سعر شراء الكيلو:",
+                min_value=0.0,
+                value=0.0,
+                step=0.5,
+                format="%.2f",
+                key="existing_btn_kg_cost"
+            )
             ppc = 1
 
         if "existing_has_expiry" not in st.session_state:
@@ -958,10 +863,10 @@ def show_page():
             st.session_state["new_unit_type"] = "piece"
 
         u1, u2 = st.columns(2)
-        if u1.button("📦 قطعة / كرتون", use_container_width=True):
+        if u1.button("🔢 قطعة", use_container_width=True):
             st.session_state["new_unit_type"] = "piece"
             st.rerun()
-        if u2.button("⚖️ وزن", use_container_width=True):
+        if u2.button("⚖️ كجم", use_container_width=True):
             st.session_state["new_unit_type"] = "kg"
             st.rerun()
 
@@ -970,42 +875,23 @@ def show_page():
             qty, cost, ppc = piece_input_fields("new_btn", 1)
             sale_label = "سعر بيع القطعة (د.ل):"
         else:
-            if "new_btn_weight_mode" not in st.session_state:
-                st.session_state["new_btn_weight_mode"] = "kg"
-            w1, w2 = st.columns(2)
-            if w1.button("⚖️ بالكيلو", use_container_width=True):
-                st.session_state["new_btn_weight_mode"] = "kg"
-                st.rerun()
-            if w2.button("⚖️ بالجرام", use_container_width=True):
-                st.session_state["new_btn_weight_mode"] = "gram"
-                st.rerun()
-
-            if st.session_state["new_btn_weight_mode"] == "kg":
-                q1, q2 = st.columns(2)
-                qty = q1.number_input(
-                    "الوزن الأولي (كجم):", min_value=0.001,
-                    value=1.0, step=0.1, format="%.3f",
-                    key="new_btn_kg"
-                )
-                cost = q2.number_input(
-                    "سعر شراء الكيلو:", min_value=0.0,
-                    value=0.0, step=0.5, format="%.2f",
-                    key="new_btn_kg_cost"
-                )
-            else:
-                q1, q2 = st.columns(2)
-                grams = q1.number_input(
-                    "الوزن الأولي (جرام):", min_value=1.0,
-                    value=1000.0, step=50.0,
-                    key="new_btn_grams"
-                )
-                total_cost = q2.number_input(
-                    "إجمالي سعر شراء الكمية:", min_value=0.0,
-                    value=0.0, step=0.5, format="%.2f",
-                    key="new_btn_grams_cost"
-                )
-                qty = float(grams) / 1000.0
-                cost = float(total_cost) / qty if qty > 0 else 0.0
+            q1, q2 = st.columns(2)
+            qty = q1.number_input(
+                "الكمية بالكيلو:",
+                min_value=0.001,
+                value=1.0,
+                step=0.1,
+                format="%.3f",
+                key="new_btn_kg"
+            )
+            cost = q2.number_input(
+                "سعر شراء الكيلو:",
+                min_value=0.0,
+                value=0.0,
+                step=0.5,
+                format="%.2f",
+                key="new_btn_kg_cost"
+            )
             ppc = 1
             sale_label = "سعر بيع الكيلو (د.ل):"
 
