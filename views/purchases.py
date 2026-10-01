@@ -768,82 +768,69 @@ def show_page():
         "لجهات التعامل"
     )
 
-    quick_tab1, quick_tab2 = st.tabs(
-        [
-            "➕ إضافة مورد جديد",
-            "➕ إضافة زبون آجل جديد"
-        ]
-    )
+    if "purchase_quick_mode" not in st.session_state:
+        st.session_state["purchase_quick_mode"] = "invoice"
+
+    q1, q2, q3 = st.columns(3)
+    if q1.button("🛒 فاتورة توريد", use_container_width=True):
+        st.session_state["purchase_quick_mode"] = "invoice"
+        st.rerun()
+    if q2.button("➕ إضافة مورد", use_container_width=True):
+        st.session_state["purchase_quick_mode"] = "supplier"
+        st.rerun()
+    if q3.button("➕ إضافة زبون آجل", use_container_width=True):
+        st.session_state["purchase_quick_mode"] = "customer"
+        st.rerun()
+
+    quick_mode = st.session_state["purchase_quick_mode"]
 
     # ========================================================
     # مورد جديد
     # ========================================================
-
-    with quick_tab1:
-
+    if quick_mode == "supplier":
+        st.markdown("#### ➕ إضافة مورد جديد")
         with st.form(
             "quick_sup_form_clean",
             clear_on_submit=True
         ):
-
             qc1, qc2 = st.columns(2)
-
-            q_sname = qc1.text_input(
-                "اسم المورد / الشركة:"
-            )
-
-            q_sphone = qc2.text_input(
-                "رقم الهاتف:"
-            )
-
-            submit_supplier = (
-                st.form_submit_button(
-                    "💾 حفظ المورد الجديد",
-                    type="primary"
-                )
+            q_sname = qc1.text_input("اسم المورد / الشركة:")
+            q_sphone = qc2.text_input("رقم الهاتف:")
+            submit_supplier = st.form_submit_button(
+                "💾 حفظ المورد الجديد",
+                type="primary",
+                use_container_width=True
             )
 
         if submit_supplier:
+            add_supplier(q_sname, q_sphone)
 
-            add_supplier(
-                q_sname,
-                q_sphone
-            )
+        st.info("بعد الحفظ اضغط «🛒 فاتورة توريد» للعودة إلى الفاتورة.")
+        return
 
     # ========================================================
     # زبون آجل جديد
     # ========================================================
-
-    with quick_tab2:
-
+    if quick_mode == "customer":
+        st.markdown("#### ➕ إضافة زبون آجل جديد")
         with st.form(
             "quick_cust_form_clean",
             clear_on_submit=True
         ):
-
             qcc1, qcc2 = st.columns(2)
-
-            q_cname = qcc1.text_input(
-                "اسم الزبون الآجل:"
-            )
-
-            q_cphone = qcc2.text_input(
-                "رقم الهاتف:"
-            )
-
-            submit_customer = (
-                st.form_submit_button(
-                    "💾 حفظ واعتماد الزبون الآجل",
-                    type="primary"
-                )
+            q_cname = qcc1.text_input("اسم الزبون الآجل:")
+            q_cphone = qcc2.text_input("رقم الهاتف:")
+            submit_customer = st.form_submit_button(
+                "💾 حفظ واعتماد الزبون الآجل",
+                type="primary",
+                use_container_width=True
             )
 
         if submit_customer:
+            add_customer(q_cname, q_cphone)
 
-            add_customer(
-                q_cname,
-                q_cphone
-            )
+        st.info("بعد الحفظ اضغط «🛒 فاتورة توريد» للعودة إلى الفاتورة.")
+        return
 
     st.markdown("---")
 
@@ -968,10 +955,8 @@ def show_page():
     # استعراض أرصدة الزبائن
     # ========================================================
 
-    with st.expander(
-        "👁️ استعراض مديونية "
-        "الزبائن الآجلين"
-    ):
+    st.markdown("#### 👁️ استعراض مديونية الزبائن الآجلين")
+    with st.container(border=True):
 
         if customers_data:
 
