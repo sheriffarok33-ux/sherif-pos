@@ -319,7 +319,11 @@ def show_page():
                     conn_imp = None
                     try:
                         conn_imp = get_db_connection()
-                        ensure_import_schema(conn_imp)
+
+                        # منع الانتظار المفتوح على PostgreSQL/Supabase.
+                        # تجهيز الـ schema يتم مركزيًا في database.py وليس أثناء الاستيراد.
+                        conn_imp.execute("SET LOCAL lock_timeout = '5s'")
+                        conn_imp.execute("SET LOCAL statement_timeout = '30s'")
 
                         processed_rows = 0
                         inserted_count = 0
@@ -329,8 +333,19 @@ def show_page():
                         replaced_count = 0
                         records_count = 0
 
+                        total_rows = len(df)
+                        progress_bar = st.progress(0)
+                        progress_text = st.empty()
+                        progress_text.info(
+                            f"⏳ جاري بدء الاستيراد... 0 من {total_rows} صنف"
+                        )
+
                         for excel_index, row in df.iterrows():
                             excel_row = int(excel_index) + 2
+                            progress_text.info(
+                                f"⏳ جاري استيراد الصنف {processed_rows + 1} "
+                                f"من {total_rows}..."
+                            )
 
                             code_value = clean_code(
                                 row.get("كود الصنف", "")
@@ -589,8 +604,15 @@ def show_page():
                                 records_count += 1
 
                             processed_rows += 1
+                            if total_rows > 0:
+                                progress_bar.progress(
+                                    min(processed_rows / total_rows, 1.0)
+                                )
 
+                        progress_text.info("💾 جاري حفظ عملية الاستيراد...")
                         conn_imp.commit()
+                        progress_bar.progress(1.0)
+                        progress_text.success("✅ اكتملت عملية الاستيراد والحفظ.")
 
                         st.success(
                             f"✅ تم استيراد {processed_rows} صنف من الملف بنجاح."
@@ -773,7 +795,8 @@ def show_page():
                 conn_m = None
                 try:
                     conn_m = get_db_connection()
-                    ensure_import_schema(conn_m)
+                    conn_m.execute("SET LOCAL lock_timeout = '5s'")
+                    conn_m.execute("SET LOCAL statement_timeout = '30s'")
 
                     m_unit_type = (
                         "piece" if m_unit_label == "قطعة" else "kg"
