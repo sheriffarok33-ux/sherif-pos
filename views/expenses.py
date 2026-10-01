@@ -629,22 +629,38 @@ def show_page():
             "وتوزيع الحصص"
         )
 
+        # أزرار اختيار نوع المصروف يجب أن تكون خارج st.form.
+        # Streamlit لا يسمح بـ st.button العادي داخل form.
+        if "expense_scope_mode" not in st.session_state:
+            st.session_state["expense_scope_mode"] = "branch"
+
+        sc1, sc2 = st.columns(2)
+        if sc1.button(
+            "🏢 مصروف فرع",
+            use_container_width=True,
+            key="expense_scope_branch"
+        ):
+            st.session_state["expense_scope_mode"] = "branch"
+            st.rerun()
+
+        if sc2.button(
+            "🌐 مصروف عام",
+            use_container_width=True,
+            key="expense_scope_general"
+        ):
+            st.session_state["expense_scope_mode"] = "general"
+            st.rerun()
+
+        exp_scope = (
+            '📍 خاص بفرع أو مخزن معين'
+            if st.session_state["expense_scope_mode"] == "branch"
+            else '🌍 مصروف عام للمخزن الرئيسي '
+        )
+
         with st.form(
             "expense_advanced_form",
             clear_on_submit=True
         ):
-
-            if "expense_scope_mode" not in st.session_state:
-                st.session_state["expense_scope_mode"] = "branch"
-            sc1, sc2 = st.columns(2)
-            if sc1.button("🏢 مصروف فرع", use_container_width=True):
-                st.session_state["expense_scope_mode"] = "branch"
-                st.rerun()
-            if sc2.button("🌐 مصروف عام", use_container_width=True):
-                st.session_state["expense_scope_mode"] = "general"
-                st.rerun()
-            exp_scope = '📍 خاص بفرع أو مخزن معين' if st.session_state["expense_scope_mode"] == "branch" else '🌍 مصروف عام للمخزن الرئيسي '
-
             sel_branch_name = None
 
             if "خاص بفرع" in exp_scope:
