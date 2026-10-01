@@ -1,71 +1,24 @@
 import os
 import re
-import io
-import shutil
-import sqlite3
-import pandas as pd
 import streamlit as st
-from datetime import datetime, timedelta
 from database import initialize_database, get_db_connection
-import streamlit.components.v1 as components
 
-# --- 🔄 نظام المزامنة والنسخ الاحتياطي التلقائي لقاعدة البيانات ---
-LOCAL_DB = "abu_zaid_database.db"
-# يمكنك تعديل مسار النسخة المركزية المشتركة أو السحابية حسب رغبتك (مثلاً مجلد مشترك بين الأجهزة في الفرع)
-REMOTE_BACKUP_PATH = "abu_zaid_database.db"  # أو مسار مجلد الشبكة الداخلية
+# ============================================================
+# تهيئة PostgreSQL / Supabase مرة واحدة
+# ============================================================
 
-def sync_database_on_startup():
-    """تتأكد من مزامنة قاعدة البيانات وجلب أحدث نسخة عند تشغيل البرنامج على أي جهاز"""
-    try:
-        # إذا كانت النسخة المركزية / المرجعية موجودة في مسار شبكي أو مجلد آخر غير المحلي
-        if os.path.exists(REMOTE_BACKUP_PATH) and REMOTE_BACKUP_PATH != LOCAL_DB:
-            if os.path.abspath(REMOTE_BACKUP_PATH) != os.path.abspath(LOCAL_DB):
-                shutil.copy2(REMOTE_BACKUP_PATH, LOCAL_DB)
-    except Exception as e:
-        pass
+@st.cache_resource
+def initialize_app_database():
+    initialize_database()
+    return True
 
-# تشغيل المزامنة أولاً
-sync_database_on_startup()
+try:
+    initialize_app_database()
+except Exception as e:
+    st.error("❌ تعذر تهيئة قاعدة البيانات.")
+    st.code(str(e))
+    st.stop()
 
-def save_and_overwrite_backup():
-    """تقوم بعمل Overwrite وتحديث النسخة المركزية بشكل دوري لضمان توفر البيانات لأي جهاز"""
-    try:
-        if os.path.exists(LOCAL_DB) and REMOTE_BACKUP_PATH != LOCAL_DB:
-            shutil.copy2(LOCAL_DB, REMOTE_BACKUP_PATH)
-    except Exception as e:
-        pass
-
-# تهيئة قاعدة البيانات وإنشاء حساب الأدمن تلقائياً لحل مشكلة الدخول فوراً
-def init_default_admin():
-    try:
-        initialize_database()
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                phone TEXT,
-                password TEXT NOT NULL,
-                role TEXT NOT NULL,
-                branch_id INTEGER,
-                is_active INTEGER DEFAULT 1
-            )
-        """)
-        admin_exists = cursor.execute("SELECT * FROM users WHERE role = 'Admin'").fetchone()
-        if not admin_exists:
-            cursor.execute("""
-                INSERT INTO users (username, phone, password, role, branch_id, is_active)
-                VALUES (?, ?, ?, ?, ?, 1)
-            """, ("admin", "0910000000", "admin123", "Admin", 1))
-            conn.commit()
-        conn.close()
-        # تحديث النسخة الاحتياطية بعد التهيئة
-        save_and_overwrite_backup()
-    except Exception as e:
-        pass
-
-init_default_admin()
 
 # إعدادات الصفحة الأساسية
 st.set_page_config(
@@ -125,19 +78,12 @@ st.markdown("""
         if (navigator.onLine) {
             dot.style.backgroundColor = '#22c55e';
             text.innerHTML = 'متصل بالسيرفر (Online)';
-            syncOfflineData();
         } else {
             dot.style.backgroundColor = '#dc2626';
-            text.innerHTML = 'غير متصل (Offline - يعمل محلياً)';
+            text.innerHTML = 'غير متصل بالإنترنت (Offline)';
         }
     }
 
-    function syncOfflineData() {
-        const pendingInvoices = JSON.parse(localStorage.getItem('pending_invoices') || '[]');
-        if (pendingInvoices.length > 0) {
-            console.log('جاري مزامنة البيانات والفواتير المعلقة مع السيرفر السحابي...', pendingInvoices);
-        }
-    }
 
     window.addEventListener('online', updateOnlineStatus);
     window.addEventListener('offline', updateOnlineStatus);
@@ -176,31 +122,52 @@ def check_user_permission(menu_name):
 # --- بوابة الدخول ---
 if not st.session_state["logged_in"]:
     col1, col2, col3 = st.columns([1, 2, 1])
+
     with col2:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
         st.title("🔐 بوابة دخول نظام المحامص")
         st.subheader("مجموعة أبو زيد التجارية")
+
         with st.form("login_form"):
             u_name = st.text_input("اسم المستخدم")
             u_pass = st.text_input("كلمة المرور", type="password")
             submit = st.form_submit_button("🚀 دخول للنظام", use_container_width=True)
-            if submit:
+
+        if submit:
+            conn = None
+            try:
                 conn = get_db_connection()
-                user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (u_name.strip(), u_pass)).fetchone()
-                conn.close()
+                user = conn.execute(
+                    """
+                    SELECT *
+                    FROM users
+                    WHERE username = ?
+                      AND password = ?
+                      AND is_active = 1
+                    """,
+                    (u_name.strip(), u_pass)
+                ).fetchone()
+
                 if user:
-                    if "is_active" in user.keys() and user["is_active"] == 0:
-                        st.error("🚫 هذا الحساب موقوف!")
-                        st.stop()
                     st.session_state["logged_in"] = True
                     st.session_state["username"] = user["username"]
                     st.session_state["role"] = user["role"]
                     st.session_state["user_id"] = user["id"]
                     st.session_state["branch_id"] = user["branch_id"]
+                    st.session_state["page"] = "🏠 الرئيسية واللوحة"
                     st.rerun()
-                else: 
-                    st.error("🎭 **اسم المستخدم أو كلمة المرور غير صحيحة!** (يمكنك الدخول بـ admin / admin123)")
+                else:
+                    st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة، أو الحساب موقوف.")
+
+            except Exception as e:
+                st.error("❌ تعذر تسجيل الدخول حالياً.")
+                st.code(str(e))
+            finally:
+                if conn:
+                    conn.close()
+
     st.stop()
+
 
 # --- القائمة الجانبية (Navigation Menu) ---
 st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
@@ -353,7 +320,11 @@ elif choice == "📦 إدارة المخزن والفروع":
     except ImportError:
         st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
 elif choice == "⚙️ الجرد والتصفير السنوي":
-    st.info("⚙️ شاشة الجرد قيد التجهيز.")
+    try:
+        from views import adjustments
+        adjustments.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة الجرد والتسويات غير موجود.")
 elif choice == "🥜 التحميص والخلط":
     try:
         from views import roasting_blending
