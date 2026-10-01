@@ -593,14 +593,27 @@ def show_page():
     # اختيار القسم
     # ========================================================
 
-    selected_mode = st.radio(
-        "🎯 اختر القسم المطلوب:",
-        [
-            "➕ تسجيل مصروف جديد",
-            "💵 تسجيل إيراد جديد",
-            "📋 أرشيف المصروفات وتقارير الفروع (تصدير Excel)"
-        ],
-        horizontal=True
+    if "finance_screen_mode" not in st.session_state:
+        st.session_state["finance_screen_mode"] = "expense"
+
+    nav1, nav2, nav3 = st.columns(3)
+    if nav1.button("💸 مصروف جديد", use_container_width=True,
+                      type="primary" if st.session_state["finance_screen_mode"] == "expense" else "secondary"):
+        st.session_state["finance_screen_mode"] = "expense"
+        st.rerun()
+    if nav2.button("💵 إيراد آخر", use_container_width=True,
+                      type="primary" if st.session_state["finance_screen_mode"] == "revenue" else "secondary"):
+        st.session_state["finance_screen_mode"] = "revenue"
+        st.rerun()
+    if nav3.button("📋 الأرشيف والتقارير", use_container_width=True,
+                      type="primary" if st.session_state["finance_screen_mode"] == "archive" else "secondary"):
+        st.session_state["finance_screen_mode"] = "archive"
+        st.rerun()
+
+    selected_mode = (
+        '➕ تسجيل مصروف جديد' if st.session_state["finance_screen_mode"] == "expense"
+        else '💵 تسجيل إيراد جديد' if st.session_state["finance_screen_mode"] == "revenue"
+        else '📋 أرشيف المصروفات وتقارير الفروع (تصدير Excel)'
     )
 
     st.markdown("---")
@@ -621,15 +634,16 @@ def show_page():
             clear_on_submit=True
         ):
 
-            exp_scope = st.radio(
-                "نطاق المصروف:",
-                [
-                    "📍 خاص بفرع أو مخزن معين",
-                    "🌍 مصروف عام للمخزن الرئيسي "
-                    "(يُقسَم حصرياً وبالتساوي "
-                    "على الفروع التشغيلية)"
-                ]
-            )
+            if "expense_scope_mode" not in st.session_state:
+                st.session_state["expense_scope_mode"] = "branch"
+            sc1, sc2 = st.columns(2)
+            if sc1.button("🏢 مصروف فرع", use_container_width=True):
+                st.session_state["expense_scope_mode"] = "branch"
+                st.rerun()
+            if sc2.button("🌐 مصروف عام", use_container_width=True):
+                st.session_state["expense_scope_mode"] = "general"
+                st.rerun()
+            exp_scope = '📍 خاص بفرع أو مخزن معين' if st.session_state["expense_scope_mode"] == "branch" else '🌍 مصروف عام للمخزن الرئيسي '
 
             sel_branch_name = None
 
