@@ -91,6 +91,7 @@ def execute_add_surplus(b_id, item_id, qty_val):
             FROM items
             WHERE id = ?
             AND branch_id = ?
+            FOR UPDATE
             """,
             (item_id, b_id)
         ).fetchone()
@@ -118,17 +119,21 @@ def execute_add_surplus(b_id, item_id, qty_val):
             (
                 branch_id,
                 item_id,
-                adjustment_type,
+                item_name,
                 quantity,
+                adjustment_type,
+                loss_or_gain_value,
                 notes
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 b_id,
                 item_id,
-                "فائض",
+                item["item_name"],
                 qty_val,
+                "فائض",
+                0.0,
                 "إضافة فائض من شاشة تسويات المخزون"
             )
         )
@@ -229,17 +234,21 @@ def execute_damage_return(
             (
                 branch_id,
                 item_id,
-                adjustment_type,
+                item_name,
                 quantity,
+                adjustment_type,
+                loss_or_gain_value,
                 notes
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 b_id,
                 item_id,
-                reason_type,
+                item["item_name"],
                 -qty_val,
+                reason_type,
+                0.0,
                 f"خصم مخزون بسبب: {reason_type}"
             )
         )
@@ -559,8 +568,7 @@ def show_page():
     with tab2:
 
         st.subheader(
-            "♻️ تسجيل التوالف، منتهي الصلاحية، "
-            "أو المرتجعات للتحويل"
+            "♻️ تسجيل التوالف أو منتهي الصلاحية"
         )
 
         if all_branch_items:
@@ -597,8 +605,7 @@ def show_page():
                     "سبب الخروج / الإرجاع:",
                     [
                         "تالف / هالك",
-                        "منتهى الصلاحية",
-                        "للتحويل لفرع آخر"
+                        "منتهى الصلاحية"
                     ]
                 )
 
