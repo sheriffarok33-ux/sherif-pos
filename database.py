@@ -775,6 +775,73 @@ def initialize_database():
         )
 
         # ====================================================
+        # وحدات الأصناف ودفعات الصلاحية
+        # ====================================================
+
+        cursor.execute(
+            """
+            ALTER TABLE items
+            ADD COLUMN IF NOT EXISTS unit_type TEXT DEFAULT 'piece'
+            """
+        )
+
+        cursor.execute(
+            """
+            ALTER TABLE items
+            ADD COLUMN IF NOT EXISTS pieces_per_carton INTEGER DEFAULT 1
+            """
+        )
+
+        cursor.execute(
+            """
+            UPDATE items
+            SET unit_type = 'piece'
+            WHERE unit_type IS NULL OR TRIM(unit_type) = ''
+            """
+        )
+
+        cursor.execute(
+            """
+            UPDATE items
+            SET pieces_per_carton = 1
+            WHERE pieces_per_carton IS NULL
+               OR pieces_per_carton < 1
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS inventory_batches
+            (
+                id BIGSERIAL PRIMARY KEY,
+                item_id INTEGER NOT NULL,
+                branch_id INTEGER NOT NULL,
+                quantity NUMERIC DEFAULT 0,
+                remaining_quantity NUMERIC DEFAULT 0,
+                received_date DATE DEFAULT CURRENT_DATE,
+                expiry_date DATE,
+                unit_cost NUMERIC DEFAULT 0,
+                source_type TEXT DEFAULT 'inventory',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (item_id)
+                    REFERENCES items(id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (branch_id)
+                    REFERENCES branches(id)
+                    ON DELETE CASCADE
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_inventory_batches_expiry
+            ON inventory_batches(branch_id, expiry_date)
+            """
+        )
+
+        # ====================================================
         # الموردون
         # ====================================================
 
