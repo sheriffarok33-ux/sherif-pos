@@ -1,199 +1,1287 @@
 import streamlit as st
 import pandas as pd
-from database import get_db_connection
 import io
+from datetime import date, timedelta
+from database import get_db_connection
+
+
+# ============================================================
+# تحويل DataFrame إلى Excel
+# ============================================================
+
+def dataframe_to_excel(df, sheet_name="Report"):
+
+    output = io.BytesIO()
+
+    with pd.ExcelWriter(
+        output,
+        engine="openpyxl"
+    ) as writer:
+
+        df.to_excel(
+            writer,
+            index=False,
+            sheet_name=sheet_name[:31]
+        )
+
+    return output.getvalue()
+
+
+# ============================================================
+# زر Excel
+# ============================================================
+
+def excel_button(
+    df,
+    label,
+    filename,
+    sheet_name,
+    key
+):
+
+    if df.empty:
+        return
+
+    try:
+
+        excel_data = dataframe_to_excel(
+            df,
+            sheet_name
+        )
+
+        st.download_button(
+            label=label,
+            data=excel_data,
+            file_name=filename,
+            mime=(
+                "application/vnd.openxmlformats-"
+                "officedocument.spreadsheetml.sheet"
+            ),
+            key=key
+        )
+
+    except Exception as e:
+
+        st.error(
+            "تعذر إنشاء ملف Excel."
+        )
+
+        st.code(str(e))
+
+
+# ============================================================
+# تنفيذ SELECT وتحويله إلى DataFrame
+# ============================================================
+
+def query_dataframe(
+    query,
+    params=None
+):
+
+    conn = None
+
+    try:
+
+        conn = get_db_connection()
+
+        cursor = conn.execute(
+            query,
+            params or ()
+        )
+
+        rows = cursor.fetchall()
+
+        if not rows:
+            return pd.DataFrame()
+
+        columns = [
+            desc[0]
+            for desc in cursor.description
+        ]
+
+        return pd.DataFrame(
+            [
+                [row[col] for col in columns]
+                for row in rows
+            ],
+            columns=columns
+        )
+
+    finally:
+
+        if conn:
+            conn.close()
+
+
+# ============================================================
+# تحميل الفروع
+# ============================================================
+
+def get_branches():
+
+    conn = None
+
+    try:
+
+        conn = get_db_connection()
+
+        return conn.execute(
+            """
+            SELECT
+                id,
+                branch_name,
+                branch_type
+            FROM branches
+            ORDER BY id ASC
+            """
+        ).fetchall()
+
+    finally:
+
+        if conn:
+            conn.close()
+
+
+# ============================================================
+# فلتر الفرع
+# ============================================================
+
+def get_branch_filter(
+    branches,
+    label,
+    key,
+    include_all=True
+):
+
+    branch_dict = {
+        b["branch_name"]: b["id"]
+        for b in branches
+    }
+
+    options = list(
+        branch_dict.keys()
+    )
+
+    if include_all:
+        options = [
+            "🌐 كل الفروع"
+        ] + options
+
+    selected = st.selectbox(
+        label,
+        options,
+        key=key
+    )
+
+    if selected == "🌐 كل الفروع":
+        return None, selected
+
+    return (
+        branch_dict[selected],
+        selected
+    )
+
+
+# ============================================================
+# فلتر التاريخ
+# ============================================================
+
+def date_filter(
+    prefix,
+    default_days=30
+):
+
+    today = date.today()
+
+    default_from = (
+        today
+        - timedelta(
+            days=default_days
+        )
+    )
+
+    c1, c2 = st.columns(2)
+
+    from_date = c1.date_input(
+        "📅 من تاريخ:",
+        value=default_from,
+        key=f"{prefix}_from"
+    )
+
+    to_date = c2.date_input(
+        "📅 إلى تاريخ:",
+        value=today,
+        key=f"{prefix}_to"
+    )
+
+    if from_date > to_date:
+
+        st.error(
+            "⚠️ تاريخ البداية يجب أن "
+            "يكون قبل تاريخ النهاية."
+        )
+
+        return None, None
+
+    return from_date, to_date
+
+
+# ============================================================
+# تبويب الملخص المالي
+# ============================================================
+
+def show_financial_summary(
+    branches,
+    is_admin_or_supervisor
+):
+
+    st.markdown(
+        "### 💰 الملخص المالي"
+    )
+
+    if not is_admin_or_supervisor:
+
+        st.warning(
+            "🔒 هذا التقرير مخصص "
+            "للإدارة والمشرف العام."
+        )
+
+        return
+
+    branch_id, branch_name = (
+        get_branch_filter(
+            branches,
+            "اختر الفرع:",
+            "financial_branch"
+        )
+    )
+
+    from_date, to_date = date_filter(
+        "financial",
+        30
+    )
+
+    if not from_date:
+        return
+
+    # ========================================================
+    # تجهيز شرط الفرع
+    # ========================================================
+
+    invoice_params = [
+        from_date,
+        to_date
+    ]
+
+    invoice_branch_sql = ""
+
+    if branch_id:
+
+        invoice_branch_sql = (
+            " AND branch_id = ? "
+        )
+
+        invoice_params.append(
+            branch_id
+        )
+
+    # ========================================================
+    # المبيعات
+    # ========================================================
+
+    sales_df = query_dataframe(
+        f"""
+        SELECT
+            COALESCE(
+                SUM(total_amount),
+                0
+            ) AS total_sales
+        FROM invoices
+        WHERE DATE(created_at)
+              BETWEEN ? AND ?
+        {invoice_branch_sql}
+        """,
+        tuple(invoice_params)
+    )
+
+    total_sales = (
+        float(
+            sales_df.iloc[0][
+                "total_sales"
+            ] or 0
+        )
+        if not sales_df.empty
+        else 0.0
+    )
+
+    # ========================================================
+    # المصروفات
+    # ========================================================
+
+    expense_params = [
+        from_date,
+        to_date
+    ]
+
+    expense_branch_sql = ""
+
+    if branch_id:
+
+        expense_branch_sql = (
+            " AND branch_id = ? "
+        )
+
+        expense_params.append(
+            branch_id
+        )
+
+    expenses_df = query_dataframe(
+        f"""
+        SELECT
+            COALESCE(
+                SUM(amount),
+                0
+            ) AS total_expenses
+        FROM expenses
+        WHERE DATE(expense_date)
+              BETWEEN ? AND ?
+        {expense_branch_sql}
+        """,
+        tuple(expense_params)
+    )
+
+    total_expenses = (
+        float(
+            expenses_df.iloc[0][
+                "total_expenses"
+            ] or 0
+        )
+        if not expenses_df.empty
+        else 0.0
+    )
+
+    # ========================================================
+    # التوالف والخسائر
+    # ========================================================
+
+    adjustment_params = [
+        from_date,
+        to_date
+    ]
+
+    adjustment_branch_sql = ""
+
+    if branch_id:
+
+        adjustment_branch_sql = (
+            " AND branch_id = ? "
+        )
+
+        adjustment_params.append(
+            branch_id
+        )
+
+    damages_df = query_dataframe(
+        f"""
+        SELECT
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN
+                            adjustment_type
+                                LIKE '%تالف%'
+                            OR adjustment_type
+                                LIKE '%هالك%'
+                            OR adjustment_type
+                                LIKE '%منتهي%'
+                        THEN
+                            GREATEST(
+                                COALESCE(
+                                    loss_or_gain_value,
+                                    0
+                                ),
+                                0
+                            )
+                        ELSE 0
+                    END
+                ),
+                0
+            ) AS total_damages
+        FROM stock_adjustments
+        WHERE DATE(created_at)
+              BETWEEN ? AND ?
+        {adjustment_branch_sql}
+        """,
+        tuple(adjustment_params)
+    )
+
+    total_damages = (
+        float(
+            damages_df.iloc[0][
+                "total_damages"
+            ] or 0
+        )
+        if not damages_df.empty
+        else 0.0
+    )
+
+    # ========================================================
+    # الناتج التشغيلي
+    # ========================================================
+
+    operating_result = (
+        total_sales
+        - total_expenses
+        - total_damages
+    )
+
+    c1, c2, c3, c4 = (
+        st.columns(4)
+    )
+
+    c1.metric(
+        "💰 المبيعات",
+        f"{total_sales:,.2f} د.ل"
+    )
+
+    c2.metric(
+        "💸 المصروفات",
+        f"{total_expenses:,.2f} د.ل"
+    )
+
+    c3.metric(
+        "🗑️ التوالف",
+        f"{total_damages:,.2f} د.ل"
+    )
+
+    c4.metric(
+        "📊 الناتج التشغيلي",
+        f"{operating_result:,.2f} د.ل"
+    )
+
+    st.info(
+        "ℹ️ الناتج التشغيلي هنا = "
+        "المبيعات - المصروفات - التوالف. "
+        "ولا نسميه صافي الربح النهائي "
+        "لأن تكلفة البضاعة المباعة "
+        "تحتاج حساباً مستقلاً."
+    )
+
+    summary_df = pd.DataFrame(
+        [
+            {
+                "الفترة من":
+                    from_date,
+
+                "الفترة إلى":
+                    to_date,
+
+                "الفرع":
+                    branch_name,
+
+                "إجمالي المبيعات":
+                    total_sales,
+
+                "إجمالي المصروفات":
+                    total_expenses,
+
+                "إجمالي التوالف":
+                    total_damages,
+
+                "الناتج التشغيلي":
+                    operating_result
+            }
+        ]
+    )
+
+    excel_button(
+        summary_df,
+        "📥 تحميل الملخص المالي Excel",
+        (
+            f"Financial_Summary_"
+            f"{from_date}_to_{to_date}.xlsx"
+        ),
+        "Financial_Summary",
+        "financial_excel"
+    )
+
+
+# ============================================================
+# تقرير المبيعات
+# ============================================================
+
+def show_sales_report(
+    branches,
+    is_admin_or_supervisor
+):
+
+    st.markdown(
+        "### 🧾 تقرير المبيعات والفواتير"
+    )
+
+    branch_id, branch_name = (
+        get_branch_filter(
+            branches,
+            "اختر الفرع:",
+            "sales_branch"
+        )
+    )
+
+    from_date, to_date = date_filter(
+        "sales",
+        30
+    )
+
+    if not from_date:
+        return
+
+    params = [
+        from_date,
+        to_date
+    ]
+
+    branch_sql = ""
+
+    if branch_id:
+
+        branch_sql = (
+            " AND i.branch_id = ? "
+        )
+
+        params.append(
+            branch_id
+        )
+
+    df = query_dataframe(
+        f"""
+        SELECT
+            i.id AS "رقم الفاتورة",
+            DATE(i.created_at) AS "التاريخ",
+            i.created_at AS "التاريخ والوقت",
+            b.branch_name AS "الفرع",
+            COALESCE(
+                u.username,
+                'غير محدد'
+            ) AS "الكاشير",
+            i.customer_name AS "الزبون",
+            i.customer_phone AS "الهاتف",
+            i.payment_method AS "طريقة الدفع",
+            i.total_amount AS "صافي الفاتورة",
+            i.shift_status AS "الوردية"
+        FROM invoices i
+
+        LEFT JOIN branches b
+            ON b.id = i.branch_id
+
+        LEFT JOIN users u
+            ON u.id = i.user_id
+
+        WHERE DATE(i.created_at)
+              BETWEEN ? AND ?
+
+        {branch_sql}
+
+        ORDER BY i.created_at DESC
+        """,
+        tuple(params)
+    )
+
+    if df.empty:
+
+        st.info(
+            "لا توجد مبيعات في الفترة "
+            "المحددة."
+        )
+
+        return
+
+    total_sales = pd.to_numeric(
+        df["صافي الفاتورة"],
+        errors="coerce"
+    ).fillna(0).sum()
+
+    st.metric(
+        "إجمالي المبيعات في الفترة",
+        f"{total_sales:,.2f} د.ل"
+    )
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    excel_button(
+        df,
+        "📥 تحميل تقرير المبيعات Excel",
+        (
+            f"Sales_"
+            f"{from_date}_to_{to_date}.xlsx"
+        ),
+        "Sales",
+        "sales_excel"
+    )
+
+
+# ============================================================
+# تقرير المشتريات
+# ============================================================
+
+def show_purchases_report(
+    branches,
+    is_admin_or_supervisor
+):
+
+    st.markdown(
+        "### 📥 تقرير المشتريات"
+    )
+
+    if not is_admin_or_supervisor:
+
+        st.warning(
+            "🔒 تقرير المشتريات التفصيلي "
+            "مخصص للإدارة."
+        )
+
+        return
+
+    branch_id, branch_name = (
+        get_branch_filter(
+            branches,
+            "اختر الفرع / المخزن:",
+            "purchase_branch"
+        )
+    )
+
+    from_date, to_date = date_filter(
+        "purchases",
+        30
+    )
+
+    if not from_date:
+        return
+
+    params = [
+        from_date,
+        to_date
+    ]
+
+    branch_sql = ""
+
+    if branch_id:
+
+        branch_sql = (
+            " AND p.branch_id = ? "
+        )
+
+        params.append(
+            branch_id
+        )
+
+    df = query_dataframe(
+        f"""
+        SELECT
+            p.id AS "رقم الحركة",
+            p.invoice_date AS "التاريخ",
+            b.branch_name AS "الفرع / المخزن",
+            p.supplier_name AS "المورد",
+            p.invoice_number AS "رقم فاتورة المورد",
+            p.payment_type AS "طريقة الدفع",
+            p.total_cost AS "إجمالي التكلفة",
+            p.items_details AS "تفاصيل الأصناف"
+        FROM purchases p
+
+        LEFT JOIN branches b
+            ON b.id = p.branch_id
+
+        WHERE DATE(p.invoice_date)
+              BETWEEN ? AND ?
+
+        {branch_sql}
+
+        ORDER BY
+            p.invoice_date DESC,
+            p.id DESC
+        """,
+        tuple(params)
+    )
+
+    if df.empty:
+
+        st.info(
+            "لا توجد مشتريات في الفترة "
+            "المحددة."
+        )
+
+        return
+
+    total_purchases = pd.to_numeric(
+        df["إجمالي التكلفة"],
+        errors="coerce"
+    ).fillna(0).sum()
+
+    st.metric(
+        "إجمالي المشتريات",
+        f"{total_purchases:,.2f} د.ل"
+    )
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    excel_button(
+        df,
+        "📥 تحميل تقرير المشتريات Excel",
+        (
+            f"Purchases_"
+            f"{from_date}_to_{to_date}.xlsx"
+        ),
+        "Purchases",
+        "purchases_excel"
+    )
+
+
+# ============================================================
+# تقرير المصروفات
+# ============================================================
+
+def show_expenses_report(
+    branches,
+    is_admin_or_supervisor
+):
+
+    st.markdown(
+        "### 💸 تقرير المصروفات"
+    )
+
+    if not is_admin_or_supervisor:
+
+        st.warning(
+            "🔒 تقرير المصروفات "
+            "مخصص للإدارة."
+        )
+
+        return
+
+    branch_id, branch_name = (
+        get_branch_filter(
+            branches,
+            "اختر الفرع:",
+            "expenses_branch"
+        )
+    )
+
+    from_date, to_date = date_filter(
+        "expenses",
+        30
+    )
+
+    if not from_date:
+        return
+
+    params = [
+        from_date,
+        to_date
+    ]
+
+    branch_sql = ""
+
+    if branch_id:
+
+        branch_sql = (
+            " AND e.branch_id = ? "
+        )
+
+        params.append(
+            branch_id
+        )
+
+    df = query_dataframe(
+        f"""
+        SELECT
+            e.id AS "رقم المصروف",
+            e.expense_date AS "التاريخ",
+            b.branch_name AS "الفرع",
+            e.amount AS "المبلغ",
+            e.description AS "البيان",
+            CASE
+                WHEN e.is_general_store = 1
+                THEN 'مصروف عام موزع'
+                ELSE 'مصروف مباشر'
+            END AS "نوع المصروف"
+        FROM expenses e
+
+        LEFT JOIN branches b
+            ON b.id = e.branch_id
+
+        WHERE DATE(e.expense_date)
+              BETWEEN ? AND ?
+
+        {branch_sql}
+
+        ORDER BY
+            e.expense_date DESC,
+            e.id DESC
+        """,
+        tuple(params)
+    )
+
+    if df.empty:
+
+        st.info(
+            "لا توجد مصروفات في الفترة "
+            "المحددة."
+        )
+
+        return
+
+    total_expenses = pd.to_numeric(
+        df["المبلغ"],
+        errors="coerce"
+    ).fillna(0).sum()
+
+    st.metric(
+        "إجمالي المصروفات",
+        f"{total_expenses:,.2f} د.ل"
+    )
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    excel_button(
+        df,
+        "📥 تحميل تقرير المصروفات Excel",
+        (
+            f"Expenses_"
+            f"{from_date}_to_{to_date}.xlsx"
+        ),
+        "Expenses",
+        "expenses_excel"
+    )
+
+
+# ============================================================
+# تقرير حركات المخزون اليدوية
+# ============================================================
+
+def show_adjustments_report(
+    branches,
+    is_admin_or_supervisor
+):
+
+    st.markdown(
+        "### ✍️ تقرير الحركات اليدوية "
+        "والتوالف والفائض"
+    )
+
+    branch_id, branch_name = (
+        get_branch_filter(
+            branches,
+            "اختر الفرع:",
+            "adjustment_branch"
+        )
+    )
+
+    from_date, to_date = date_filter(
+        "adjustments",
+        30
+    )
+
+    if not from_date:
+        return
+
+    params = [
+        from_date,
+        to_date
+    ]
+
+    branch_sql = ""
+
+    if branch_id:
+
+        branch_sql = (
+            " AND a.branch_id = ? "
+        )
+
+        params.append(
+            branch_id
+        )
+
+    df = query_dataframe(
+        f"""
+        SELECT
+            a.id AS "رقم الحركة",
+            a.created_at AS "التاريخ والوقت",
+            b.branch_name AS "الفرع",
+            a.item_name AS "الصنف",
+            a.quantity AS "الكمية",
+            a.adjustment_type AS "نوع الحركة",
+            a.loss_or_gain_value
+                AS "قيمة الخسارة / الزيادة",
+            a.notes AS "ملاحظات"
+        FROM stock_adjustments a
+
+        LEFT JOIN branches b
+            ON b.id = a.branch_id
+
+        WHERE DATE(a.created_at)
+              BETWEEN ? AND ?
+
+        {branch_sql}
+
+        ORDER BY a.created_at DESC
+        """,
+        tuple(params)
+    )
+
+    if df.empty:
+
+        st.info(
+            "لا توجد حركات مخزون يدوية "
+            "في الفترة المحددة."
+        )
+
+        return
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    excel_button(
+        df,
+        "📥 تحميل تقرير الحركات اليدوية Excel",
+        (
+            f"Adjustments_"
+            f"{from_date}_to_{to_date}.xlsx"
+        ),
+        "Adjustments",
+        "adjustments_excel"
+    )
+
+
+# ============================================================
+# تقرير المخزون والتكلفة
+# ============================================================
+
+def show_inventory_report(
+    branches,
+    is_admin_or_supervisor
+):
+
+    st.markdown(
+        "### 📦 تقرير المخزون "
+        "ومتوسط التكلفة"
+    )
+
+    branch_id, branch_name = (
+        get_branch_filter(
+            branches,
+            "اختر الفرع:",
+            "inventory_report_branch"
+        )
+    )
+
+    params = []
+    branch_sql = ""
+
+    if branch_id:
+
+        branch_sql = (
+            " WHERE i.branch_id = ? "
+        )
+
+        params.append(
+            branch_id
+        )
+
+    df = query_dataframe(
+        f"""
+        SELECT
+            i.item_code AS "كود الصنف",
+            i.item_name AS "اسم الصنف",
+            b.branch_name AS "الفرع",
+            i.quantity AS "الكمية المتاحة",
+            i.buy_price AS "آخر سعر شراء",
+            i.avg_cost AS "متوسط التكلفة",
+            i.sale_price AS "سعر البيع"
+        FROM items i
+
+        LEFT JOIN branches b
+            ON b.id = i.branch_id
+
+        {branch_sql}
+
+        ORDER BY
+            b.branch_name,
+            i.item_name
+        """,
+        tuple(params)
+    )
+
+    if df.empty:
+
+        st.info(
+            "لا توجد أصناف."
+        )
+
+        return
+
+    # ========================================================
+    # الأرقام
+    # ========================================================
+
+    for column in [
+        "الكمية المتاحة",
+        "آخر سعر شراء",
+        "متوسط التكلفة",
+        "سعر البيع"
+    ]:
+
+        df[column] = pd.to_numeric(
+            df[column],
+            errors="coerce"
+        ).fillna(0.0)
+
+    # ========================================================
+    # الإدارة فقط ترى التكلفة والأرباح
+    # ========================================================
+
+    if is_admin_or_supervisor:
+
+        # لو المتوسط صفر نستخدم آخر سعر شراء
+        df["التكلفة المعتمدة"] = (
+            df.apply(
+                lambda row:
+                    row["متوسط التكلفة"]
+                    if row["متوسط التكلفة"] > 0
+                    else row["آخر سعر شراء"],
+                axis=1
+            )
+        )
+
+        df["قيمة المخزون بالتكلفة"] = (
+            df["الكمية المتاحة"]
+            * df["التكلفة المعتمدة"]
+        )
+
+        df["ربح الوحدة المتوقع"] = (
+            df["سعر البيع"]
+            - df["التكلفة المعتمدة"]
+        )
+
+        df["نسبة الزيادة على التكلفة %"] = (
+            df.apply(
+                lambda row:
+                    round(
+                        (
+                            row[
+                                "ربح الوحدة المتوقع"
+                            ]
+                            / row[
+                                "التكلفة المعتمدة"
+                            ]
+                        )
+                        * 100,
+                        2
+                    )
+                    if row[
+                        "التكلفة المعتمدة"
+                    ] > 0
+                    else 0.0,
+                axis=1
+            )
+        )
+
+        total_stock_value = (
+            df[
+                "قيمة المخزون بالتكلفة"
+            ].sum()
+        )
+
+        st.metric(
+            "💰 قيمة المخزون بالتكلفة",
+            f"{total_stock_value:,.2f} د.ل"
+        )
+
+    else:
+
+        df = df.drop(
+            columns=[
+                "آخر سعر شراء",
+                "متوسط التكلفة"
+            ],
+            errors="ignore"
+        )
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    excel_button(
+        df,
+        "📥 تحميل تقرير المخزون Excel",
+        "Inventory_Report.xlsx",
+        "Inventory",
+        "inventory_excel"
+    )
+
+
+# ============================================================
+# الصفحة الرئيسية
+# ============================================================
 
 def show_page():
-    # 🌟 تنسيق CSS لضمان وضوح الخطوط والجداول
-    st.markdown("""
+
+    st.markdown(
+        """
         <style>
-        .stDataFrame div, .stDataFrame span, .stDataFrame p, 
-        div[data-testid="stTable"] *, th, td, 
-        div[data-baseweb="select"] *, span, p, label, h3, h4 {
+
+        .stDataFrame div,
+        .stDataFrame span,
+        .stDataFrame p,
+        div[data-testid="stTable"] *,
+        th,
+        td {
             color: #000000 !important;
-            font-family: 'Tajawal', sans-serif !important;
-            font-weight: 900 !important;
+            font-weight: 700 !important;
         }
+
         th {
             background-color: #94a3b8 !important;
             color: #000000 !important;
-            font-size: 19px !important;
             text-align: right !important;
         }
+
         td {
-            color: #000000 !important;
-            font-size: 18px !important;
             background-color: #f8fafc !important;
             text-align: right !important;
         }
-        </style>
-    """, unsafe_allow_html=True)
 
-    st.markdown('<h2 style="color: #0f172a; font-weight: 900;">📊 تقارير الأرباح والخسائر وحركة الأصناف الشاملة</h2>', unsafe_allow_html=True)
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        """
+        <h2 style="
+            color:#0f172a;
+            font-weight:900;
+        ">
+        📊 مركز التقارير الشامل
+        </h2>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.info(
+        "💡 جميع تقارير الحركات متاحة "
+        "بفلترة من تاريخ إلى تاريخ، "
+        "مع إمكانية التصفية حسب الفرع "
+        "والتصدير إلى Excel."
+    )
+
     st.markdown("---")
 
-    conn = get_db_connection()
-    
-    role = st.session_state.get("role", "")
-    is_admin_or_supervisor = role in ["Admin", "General_Supervisor"]
+    role = st.session_state.get(
+        "role",
+        ""
+    )
 
-    branches = conn.execute("SELECT id, branch_name, branch_type FROM branches").fetchall()
-    b_dict = {b["branch_name"]: b["id"] for b in branches}
+    is_admin_or_supervisor = (
+        role in [
+            "Admin",
+            "General_Supervisor"
+        ]
+    )
 
-    tab_pl, tab_items_rep = st.tabs([
-        "💰 قائمة الأرباح والخسائر الشاملة (لكل فرع)", 
-        "📦 تقرير تفصيلي للأصناف ومتوسط التكلفة وهامش الربح"
-    ])
+    try:
 
-    # =========================================================================
-    # 1. تبويب أرباح وخسائر الفروع
-    # =========================================================================
-    with tab_pl:
-        st.markdown("### 📈 الحسابات الختامية وأرباح الفروع")
+        branches = get_branches()
 
-        if not is_admin_or_supervisor:
-            st.warning("🔒 عذراً، هذا التقرير المالي الشامل مخصص للمدير العام والأدمن فقط.")
-        else:
-            if branches:
-                branch_filter_options = ["🌐 كافة الفروع (إجمالي الشركة)"] + list(b_dict.keys())
-                selected_pl_branch = st.selectbox("فلترة التقرير المالي حسب الفرع:", branch_filter_options, key="pl_branch_filter_box")
+    except Exception as e:
 
-                if selected_pl_branch == "🌐 كافة الفروع (إجمالي الشركة)":
-                    target_branches = branches
-                else:
-                    target_branches = [b for b in branches if b["branch_name"] == selected_pl_branch]
+        st.error(
+            "❌ تعذر تحميل الفروع."
+        )
 
-                pl_data = []
-                total_global_sales = 0
-                total_global_expenses = 0
-                total_global_damages = 0
-                total_global_net = 0
+        st.code(str(e))
 
-                for b in target_branches:
-                    b_id = b["id"]
-                    b_name = b["branch_name"]
+        return
 
-                    # إجمالي المبيعات
-                    sales_row = conn.execute("SELECT SUM(total_amount) AS total_sales FROM invoices WHERE branch_id = ?", (b_id,)).fetchone()
-                    b_sales = sales_row["total_sales"] if sales_row and sales_row["total_sales"] else 0.0
+    if not branches:
 
-                    # إجمالي المصروفات
-                    try:
-                        exp_row = conn.execute("SELECT SUM(amount) AS total_exp FROM expenses WHERE branch_id = ?", (b_id,)).fetchone()
-                        b_expenses = exp_row["total_exp"] if exp_row and exp_row["total_exp"] else 0.0
-                    except:
-                        b_expenses = 0.0
+        st.warning(
+            "لا توجد فروع مسجلة."
+        )
 
-                    # 🌟 إجمالي التوالف والخسائر التشغيلية المستقلة
-                    try:
-                        dam_row = conn.execute("""
-                            SELECT SUM(loss_or_gain_value) AS total_dam 
-                            FROM stock_adjustments 
-                            WHERE branch_id = ? AND adjustment_type LIKE '%تالف%'
-                        """, (b_id,)).fetchone()
-                        b_damages = dam_row["total_dam"] if dam_row and dam_row["total_dam"] else 0.0
-                    except:
-                        b_damages = 0.0
+        return
 
-                    # صافي الربح الحقيقي = المبيعات - المصروفات - التوالف والخسائر
-                    b_net_profit = b_sales - b_expenses - b_damages
+    (
+        tab_financial,
+        tab_sales,
+        tab_purchases,
+        tab_expenses,
+        tab_adjustments,
+        tab_inventory
+    ) = st.tabs(
+        [
+            "💰 الملخص المالي",
+            "🧾 المبيعات",
+            "📥 المشتريات",
+            "💸 المصروفات",
+            "✍️ الحركات اليدوية",
+            "📦 المخزون والتكلفة"
+        ]
+    )
 
-                    total_global_sales += b_sales
-                    total_global_expenses += b_expenses
-                    total_global_damages += b_damages
-                    total_global_net += b_net_profit
+    with tab_financial:
 
-                    pl_data.append({
-                        "اسم الفرع": b_name,
-                        "نوع المنشأة": b["branch_type"],
-                        "إجمالي المبيعات (د.ل)": f"{b_sales:,.2f}",
-                        "إجمالي المصروفات والرواتب (د.ل)": f"{b_expenses:,.2f}",
-                        "إجمالي التوالف والهدر (د.ل)": f"{b_damages:,.2f}",
-                        "صافي الربح الحقيقي (د.ل)": f"{b_net_profit:,.2f}"
-                    })
+        show_financial_summary(
+            branches,
+            is_admin_or_supervisor
+        )
 
-                df_pl = pd.DataFrame(pl_data)
-                st.dataframe(df_pl, use_container_width=True, hide_index=True)
+    with tab_sales:
 
-                # زر تصدير أكسيل آمن
-                try:
-                    output_pl = io.BytesIO()
-                    with pd.ExcelWriter(output_pl, engine='openpyxl') as writer:
-                        df_pl.to_excel(writer, index=False, sheet_name='Profit_Loss')
-                    st.download_button(
-                        label="📥 تحميل تقرير الأرباح والخسائر كملف Excel",
-                        data=output_pl.getvalue(),
-                        file_name="Profit_Loss_Report.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="download_pl_excel"
-                    )
-                except Exception as e:
-                    st.info("💡 لتفعيل زر تحميل الإكسيل، تأكد من تثبيت مكتبة openpyxl عبر أمر: pip install openpyxl")
+        show_sales_report(
+            branches,
+            is_admin_or_supervisor
+        )
 
-                label_text = "ملخص الأداء المالي العام:" if selected_pl_branch == "🌐 كافة الفروع (إجمالي الشركة)" else f"ملخص الأداء المالي للفرع ({selected_pl_branch}):"
-                st.markdown(f"""
-                    <div style="background: #e2e8f0; padding: 18px; border-radius: 10px; border: 2px solid #64748b; margin-top: 15px;">
-                        <h4 style="margin:0; color: #0f172a; font-weight: 900; font-size: 20px;">🏢 {label_text}</h4>
-                        <p style="margin: 8px 0; color: #000000; font-weight: 900; font-size: 18px;">💰 إجمالي المبيعات: <b>{total_global_sales:,.2f} د.ل</b></p>
-                        <p style="margin: 8px 0; color: #000000; font-weight: 900; font-size: 18px;">💸 إجمالي المصروفات والرواتب والإيجارات: <b>{total_global_expenses:,.2f} د.ل</b></p>
-                        <p style="margin: 8px 0; color: #dc2626; font-weight: 900; font-size: 18px;">🗑️ إجمالي التوالف والهدر والخسائر: <b>{total_global_damages:,.2f} د.ل</b></p>
-                        <p style="margin: 0; color: #0284c7; font-weight: 900; font-size: 21px;">📈 صافي الربح الإجمالي الحقيقي: <b>{total_global_net:,.2f} د.ل</b></p>
-                    </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.info("لا توجد فروع مسجلة لعرض تقارير الأرباح.")
+    with tab_purchases:
 
-    # =========================================================================
-    # 2. تقرير الأصناف ومتوسط التكلفة وهامش الربح
-    # =========================================================================
-    with tab_items_rep:
-        st.markdown("### 📦 تقرير مخزون الأصناف ومتوسط التكلفة وهامش الربح")
-        
-        filter_b = st.selectbox("اختر الفرع لعرض أصنافه:", ["كل الفروع"] + list(b_dict.keys()), key="rep_branch_filter")
+        show_purchases_report(
+            branches,
+            is_admin_or_supervisor
+        )
 
-        if filter_b == "كل الفروع":
-            query = """
-                SELECT items.item_code AS 'كود الصنف', 
-                       items.item_name AS 'اسم الصنف', 
-                       branches.branch_name AS 'الفرع', 
-                       items.quantity AS 'الكمية المتاحة', 
-                       items.buy_price AS 'سعر الشراء الأساسي', 
-                       items.avg_cost AS 'متوسط التكلفة الفعلي', 
-                       items.sale_price AS 'سعر البيع الحالي'
-                FROM items 
-                JOIN branches ON items.branch_id = branches.id
-            """
-            df_items = pd.read_sql(query, conn)
-        else:
-            b_id_sel = b_dict[filter_b]
-            query = """
-                SELECT items.item_code AS 'كود الصنف', 
-                       items.item_name AS 'اسم الصنف', 
-                       branches.branch_name AS 'الفرع', 
-                       items.quantity AS 'الكمية المتاحة', 
-                       items.buy_price AS 'سعر الشراء الأساسي', 
-                       items.avg_cost AS 'متوسط التكلفة الفعلي', 
-                       items.sale_price AS 'سعر البيع الحالي'
-                FROM items 
-                JOIN branches ON items.branch_id = branches.id
-                WHERE branches.id = ?
-            """
-            df_items = pd.read_sql(query, conn, params=(b_id_sel,))
+    with tab_expenses:
 
-        if not df_items.empty:
-            if is_admin_or_supervisor:
-                df_items['متوسط التكلفة الفعلي'] = df_items['متوسط التكلفة الفعلي'].apply(lambda x: x if x > 0 else 0.0)
-                df_items['هامش الربح (د.ل)'] = df_items['سعر البيع الحالي'] - df_items['متوسط التكلفة الفعلي']
-                df_items['نسبة الربح %'] = df_items.apply(
-                    lambda row: round((row['هامش الربح (د.ل)'] / row['سعر البيع الحالي']) * 100, 1) if row['سعر البيع الحالي'] > 0 else 0.0, 
-                    axis=1
-                )
-                st.success("🔒 يتم عرض بيانات متوسط التكلفة، هامش الربح بالدينار، ونسبة الربح المئوية بدقة تامة.")
-            else:
-                df_items = df_items.drop(columns=['سعر الشراء الأساسي', 'متوسط التكلفة الفعلي'], errors='ignore')
+        show_expenses_report(
+            branches,
+            is_admin_or_supervisor
+        )
 
-            st.dataframe(df_items, use_container_width=True, hide_index=True)
-        else:
-            st.info("لا توجد أصناف مسجلة في هذا الفرع.")
+    with tab_adjustments:
 
-    conn.close()
+        show_adjustments_report(
+            branches,
+            is_admin_or_supervisor
+        )
+
+    with tab_inventory:
+
+        show_inventory_report(
+            branches,
+            is_admin_or_supervisor
+        )
