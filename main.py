@@ -3,6 +3,15 @@ import re
 import streamlit as st
 from database import initialize_database, get_db_connection
 
+# إعدادات الصفحة الأساسية
+# يجب أن تكون أول أمر Streamlit في الملف.
+st.set_page_config(
+    page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
 # ============================================================
 # تهيئة PostgreSQL / Supabase مرة واحدة
 # ============================================================
@@ -12,20 +21,13 @@ def initialize_app_database():
     initialize_database()
     return True
 
+
 try:
     initialize_app_database()
 except Exception as e:
     st.error("❌ تعذر تهيئة قاعدة البيانات.")
     st.code(str(e))
     st.stop()
-
-
-# إعدادات الصفحة الأساسية
-st.set_page_config(
-    page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 # إضافة ستايل CSS ومؤشر الاتصال (Online/Offline) في رأس الصفحة
 st.markdown("""
