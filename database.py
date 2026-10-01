@@ -942,6 +942,53 @@ def initialize_database():
         )
 
         # ====================================================
+        # ترقيات جدول الإيرادات للتوافق مع الشاشات الحالية
+        # ====================================================
+
+        cursor.execute(
+            """
+            ALTER TABLE revenues
+            ADD COLUMN IF NOT EXISTS
+                description TEXT
+            """
+        )
+
+        cursor.execute(
+            """
+            ALTER TABLE revenues
+            ADD COLUMN IF NOT EXISTS
+                revenue_date TEXT
+            """
+        )
+
+        cursor.execute(
+            """
+            UPDATE revenues
+            SET description = COALESCE(
+                NULLIF(description, ''),
+                NULLIF(notes, ''),
+                NULLIF(revenue_source, ''),
+                'إيراد'
+            )
+            WHERE description IS NULL
+               OR description = ''
+            """
+        )
+
+        cursor.execute(
+            """
+            UPDATE revenues
+            SET revenue_date =
+                COALESCE(
+                    NULLIF(revenue_date, ''),
+                    created_at::date::text
+                )
+            WHERE revenue_date IS NULL
+               OR revenue_date = ''
+            """
+        )
+
+        # ====================================================
         # الفواتير
         # ====================================================
 
@@ -1090,6 +1137,69 @@ def initialize_database():
         )
 
         # ====================================================
+        # ترقيات سجل الإنتاج للتوافق مع الخلط والتحميص والتقارير
+        # ====================================================
+
+        production_columns = [
+            ("production_type", "TEXT"),
+            ("source_item_id", "INTEGER"),
+            ("source_item_name", "TEXT"),
+            ("input_quantity", "DOUBLE PRECISION DEFAULT 0.0"),
+            ("output_quantity", "DOUBLE PRECISION DEFAULT 0.0"),
+            ("loss_quantity", "DOUBLE PRECISION DEFAULT 0.0"),
+            ("sale_price", "DOUBLE PRECISION DEFAULT 0.0")
+        ]
+
+        for column_name, column_type in production_columns:
+            cursor.execute(
+                f"""
+                ALTER TABLE production_logs
+                ADD COLUMN IF NOT EXISTS
+                    {column_name} {column_type}
+                """
+            )
+
+        cursor.execute(
+            """
+            UPDATE production_logs
+            SET production_type =
+                COALESCE(
+                    NULLIF(production_type, ''),
+                    operation_type
+                )
+            WHERE production_type IS NULL
+               OR production_type = ''
+            """
+        )
+
+        cursor.execute(
+            """
+            UPDATE production_logs
+            SET input_quantity =
+                COALESCE(input_quantity, input_weight, 0)
+            WHERE input_quantity IS NULL
+            """
+        )
+
+        cursor.execute(
+            """
+            UPDATE production_logs
+            SET output_quantity =
+                COALESCE(output_quantity, output_weight, 0)
+            WHERE output_quantity IS NULL
+            """
+        )
+
+        cursor.execute(
+            """
+            UPDATE production_logs
+            SET loss_quantity =
+                COALESCE(loss_quantity, loss_weight, 0)
+            WHERE loss_quantity IS NULL
+            """
+        )
+
+        # ====================================================
         # صلاحيات الرتب
         # ====================================================
 
@@ -1208,6 +1318,28 @@ def initialize_database():
             ON purchases(
                 branch_id,
                 invoice_date
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_revenues_branch_date
+            ON revenues(
+                branch_id,
+                revenue_date
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_production_branch_created
+            ON production_logs(
+                branch_id,
+                created_at
             )
             """
         )
