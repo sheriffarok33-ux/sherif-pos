@@ -115,6 +115,8 @@ def set_page(page_name):
 
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
+    if menu_name == "🧹 تهيئة النظام لأول تشغيل":
+        return role == "Admin"
     if role in ["Admin", "General_Supervisor"]: return True
     if role == "Cashier": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)"]
     if role == "Viewer": return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
@@ -180,7 +182,8 @@ DEFAULT_MENUS = [
     "🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "🏢 إدارة الفروع", "👥 إدارة المستخدمين",
     "📦 إدارة المخزن والفروع", "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
     "🔄 تزويد الفروع والأرشيف", "📁 استيراد Excel", "💰 المصروفات", "👥 جهات التعامل",
-    "📥 المشتريات", "⚙️ الجرد والتصفير السنوي", "🥜 التحميص والخلط", "📊 التقارير والأرباح"
+    "📥 المشتريات", "⚙️ الجرد والتصفير السنوي", "🧹 تهيئة النظام لأول تشغيل",
+    "🥜 التحميص والخلط", "📊 التقارير والأرباح"
 ]
 
 for menu_name in DEFAULT_MENUS:
@@ -327,6 +330,12 @@ elif choice == "⚙️ الجرد والتصفير السنوي":
         annual_reset.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة الجرد والتصفير السنوي غير موجود.")
+elif choice == "🧹 تهيئة النظام لأول تشغيل":
+    try:
+        from views import initial_setup_reset
+        initial_setup_reset.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة تهيئة النظام لأول تشغيل غير موجود.")
 elif choice == "🥜 التحميص والخلط":
     try:
         from views import roasting_blending
