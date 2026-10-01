@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from datetime import date
 from database import get_db_connection
 
 
@@ -102,24 +103,83 @@ def get_branch_items_rows(branch_id):
 
 
 def get_branch_items(branch_id):
-    rows = get_branch_items_rows(branch_id)
-    data = []
-    for row in rows:
-        unit_type = row["unit_type"] or "piece"
-        data.append({
-            "الكود": row["item_code"],
-            "اسم الصنف": row["item_name"],
-            "الوحدة": "كجم" if unit_type == "kg" else "قطعة",
-            "قطع/كرتون": (
-                int(row["pieces_per_carton"] or 1)
-                if unit_type == "piece" else "-"
-            ),
-            "الرصيد": float(row["quantity"] or 0),
-            "آخر تكلفة للوحدة": float(row["buy_price"] or 0),
-            "متوسط تكلفة الوحدة": float(row["avg_cost"] or 0),
-            "سعر بيع الوحدة": float(row["sale_price"] or 0),
-        })
-    return pd.DataFrame(data)
+    conn = None
+    try:
+        conn = get_db_connection()
+        rows = conn.execute(
+            """
+            SELECT
+                i.id,
+                i.item_code,
+                i.item_name,
+                i.quantity,
+                i.buy_price,
+                i.avg_cost,
+                i.sale_price,
+                COALESCE(i.unit_type, 'piece') AS unit_type,
+                COALESCE(i.pieces_per_carton, 1) AS pieces_per_carton,
+                MIN(
+                    CASE
+                        WHEN b.expiry_date IS NOT NULL
+                         AND COALESCE(b.remaining_quantity, 0) > 0
+                        THEN b.expiry_date
+                    END
+                ) AS nearest_expiry
+            FROM items i
+            LEFT JOIN inventory_batches b
+              ON b.item_id = i.id
+             AND b.branch_id = i.branch_id
+            WHERE i.branch_id = ?
+            GROUP BY
+                i.id, i.item_code, i.item_name, i.quantity,
+                i.buy_price, i.avg_cost, i.sale_price,
+                i.unit_type, i.pieces_per_carton
+            ORDER BY i.item_name ASC, i.item_code ASC
+            """,
+            (branch_id,)
+        ).fetchall()
+
+        data = []
+        today = date.today()
+
+        for row in rows:
+            unit_type = row["unit_type"] or "piece"
+            nearest = row["nearest_expiry"]
+
+            if nearest:
+                days_left = (nearest - today).days
+                if days_left < 0:
+                    expiry_text = f"🔴 {nearest} (منتهي)"
+                elif days_left == 0:
+                    expiry_text = f"🔴 {nearest} (اليوم)"
+                elif days_left <= 7:
+                    expiry_text = f"🟠 {nearest} ({days_left} يوم)"
+                elif days_left <= 30:
+                    expiry_text = f"🟡 {nearest} ({days_left} يوم)"
+                else:
+                    expiry_text = f"🟢 {nearest}"
+            else:
+                expiry_text = "—"
+
+            data.append({
+                "الكود": row["item_code"],
+                "اسم الصنف": row["item_name"],
+                "الوحدة": "كجم" if unit_type == "kg" else "قطعة",
+                "قطع/كرتون": (
+                    int(row["pieces_per_carton"] or 1)
+                    if unit_type == "piece" else "-"
+                ),
+                "الرصيد": float(row["quantity"] or 0),
+                "أقرب تاريخ انتهاء": expiry_text,
+                "آخر تكلفة للوحدة": float(row["buy_price"] or 0),
+                "متوسط تكلفة الوحدة": float(row["avg_cost"] or 0),
+                "سعر بيع الوحدة": float(row["sale_price"] or 0),
+            })
+
+        return pd.DataFrame(data)
+    finally:
+        if conn:
+            conn.close()
 
 
 def add_stock_to_existing_item(
@@ -501,34 +561,42 @@ def show_page():
                 f"{float(selected['sale_price'] or 0):,.2f} د.ل/{unit_label}"
             )
 
-            # أداة تصحيح لمرة واحدة للأصناف القديمة التي تم ترحيلها
-            # افتراضياً كقطعة.
-            with st.expander("🛠️ تصحيح وحدة صنف قديم"):
-                st.warning(
-                    "استخدم هذا الخيار فقط إذا كان الصنف القديم موزوناً "
-                    "بالكيلو وتم تسجيله افتراضياً كقطعة."
-                )
+            # أداة تصحيح لمرة واحدة للأصناف القديمة.
+            st.markdown("#### 🛠️ تصحيح وحدة صنف قديم")
+            st.caption(
+                "استخدم هذا الجزء فقط إذا كانت وحدة الصنف القديمة "
+                "مسجلة بشكل غير صحيح."
+            )
+
+            legacy_box = st.container(border=True)
+            with legacy_box:
                 corrected = st.selectbox(
                     "الوحدة الصحيحة:",
                     ["قطعة", "كجم"],
                     index=1 if unit_type == "kg" else 0,
                     key=f"legacy_unit_{selected['id']}"
                 )
+
                 legacy_ppc = 1
                 if corrected == "قطعة":
                     legacy_ppc = st.number_input(
                         "عدد القطع في الكرتون:",
                         min_value=1,
-                        value=max(1, int(selected["pieces_per_carton"] or 1)),
+                        value=max(
+                            1,
+                            int(selected["pieces_per_carton"] or 1)
+                        ),
                         step=1,
                         key=f"legacy_ppc_{selected['id']}"
                     )
+
                 if st.button(
-                    "حفظ تصحيح الوحدة",
+                    "💾 حفظ تصحيح الوحدة",
                     key=f"save_legacy_unit_{selected['id']}"
                 ):
                     change_legacy_unit(
-                        selected["id"], branch_id,
+                        selected["id"],
+                        branch_id,
                         "kg" if corrected == "كجم" else "piece",
                         legacy_ppc
                     )
@@ -543,14 +611,20 @@ def show_page():
                     added_qty, unit_cost = weight_input_fields("existing")
                     ppc = 1
 
-                has_expiry = st.checkbox(
-                    "هذه الدفعة لها تاريخ انتهاء صلاحية",
-                    key="existing_has_expiry"
+                st.markdown("#### 📅 صلاحية الدفعة الجديدة")
+                expiry_mode = st.radio(
+                    "هل لهذه الدفعة تاريخ انتهاء؟",
+                    ["بدون تاريخ انتهاء", "تحديد تاريخ انتهاء"],
+                    horizontal=True,
+                    key="existing_expiry_mode"
                 )
+
                 expiry_date = None
-                if has_expiry:
+                if expiry_mode == "تحديد تاريخ انتهاء":
                     expiry_date = st.date_input(
                         "تاريخ انتهاء الصلاحية:",
+                        value=date.today(),
+                        min_value=date.today(),
                         key="existing_expiry_date"
                     )
 
@@ -589,14 +663,20 @@ def show_page():
                 ppc = 1
                 sale_label = "سعر بيع الكيلو (د.ل):"
 
-            has_expiry_new = st.checkbox(
-                "هذا الرصيد الأولي له تاريخ انتهاء صلاحية",
-                key="new_has_expiry"
+            st.markdown("#### 📅 صلاحية الرصيد الأولي")
+            expiry_mode_new = st.radio(
+                "هل لهذا الرصيد تاريخ انتهاء؟",
+                ["بدون تاريخ انتهاء", "تحديد تاريخ انتهاء"],
+                horizontal=True,
+                key="new_expiry_mode"
             )
+
             expiry_date_new = None
-            if has_expiry_new:
+            if expiry_mode_new == "تحديد تاريخ انتهاء":
                 expiry_date_new = st.date_input(
                     "تاريخ انتهاء الصلاحية:",
+                    value=date.today(),
+                    min_value=date.today(),
                     key="new_expiry_date"
                 )
 
@@ -632,3 +712,77 @@ def show_page():
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.info("لا توجد أصناف مسجلة في هذا المخزن حتى الآن.")
+
+    st.markdown("### 📅 دفعات الصلاحية المسجلة")
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        batch_rows = conn.execute(
+            """
+            SELECT
+                i.item_code,
+                i.item_name,
+                b.received_date,
+                b.expiry_date,
+                b.quantity,
+                b.remaining_quantity,
+                b.source_type
+            FROM inventory_batches b
+            JOIN items i ON i.id = b.item_id
+            WHERE b.branch_id = ?
+              AND b.expiry_date IS NOT NULL
+            ORDER BY b.expiry_date ASC, i.item_name ASC
+            """,
+            (branch_id,)
+        ).fetchall()
+
+        if batch_rows:
+            batch_data = []
+            today = date.today()
+
+            for row in batch_rows:
+                days_left = (row["expiry_date"] - today).days
+
+                if days_left < 0:
+                    status = f"🔴 منتهي منذ {abs(days_left)} يوم"
+                elif days_left == 0:
+                    status = "🔴 ينتهي اليوم"
+                elif days_left <= 7:
+                    status = f"🟠 متبقي {days_left} يوم"
+                elif days_left <= 30:
+                    status = f"🟡 متبقي {days_left} يوم"
+                else:
+                    status = f"🟢 متبقي {days_left} يوم"
+
+                batch_data.append({
+                    "الكود": row["item_code"],
+                    "اسم الصنف": row["item_name"],
+                    "تاريخ الدخول": row["received_date"],
+                    "تاريخ الانتهاء": row["expiry_date"],
+                    "كمية الدفعة": float(row["quantity"] or 0),
+                    "المتبقي": float(row["remaining_quantity"] or 0),
+                    "الحالة": status,
+                    "المصدر": (
+                        "مشتريات"
+                        if row["source_type"] == "purchase"
+                        else "إضافة مخزون"
+                    ),
+                })
+
+            st.dataframe(
+                pd.DataFrame(batch_data),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info(
+                "لا توجد دفعات لها تاريخ انتهاء مسجلة في هذا الفرع."
+            )
+
+    except Exception as e:
+        st.error("❌ تعذر تحميل دفعات الصلاحية.")
+        st.code(str(e))
+    finally:
+        if conn:
+            conn.close()
