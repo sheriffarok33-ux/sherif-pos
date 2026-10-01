@@ -1364,6 +1364,21 @@ def initialize_database():
         )
 
         # ====================================================
+        # إعدادات مظهر النظام
+        # ====================================================
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings
+            (
+                setting_key TEXT PRIMARY KEY,
+                setting_value TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # ====================================================
         # سجل النشاط
         # ====================================================
 
