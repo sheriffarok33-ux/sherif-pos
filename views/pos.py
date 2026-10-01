@@ -614,12 +614,23 @@ def checkout_payment_dialog(
                     else ""
                 )
 
+                if st.session_state.get("role", "") in [
+                    "Admin",
+                    "General_Supervisor",
+                    "Branch_Supervisor"
+                ]:
+                    raise ValueError(
+                        f"الكمية غير كافية للصنف "
+                        f"({cart_item['name']}). "
+                        f"المتاح للبيع: "
+                        f"{available_qty:,.2f}"
+                        f"{expiry_note}"
+                    )
+
                 raise ValueError(
-                    f"الكمية غير كافية للصنف "
+                    f"الكمية المطلوبة غير متاحة للصنف "
                     f"({cart_item['name']}). "
-                    f"المتاح للبيع: "
-                    f"{available_qty:,.2f}"
-                    f"{expiry_note}"
+                    "يرجى تقليل الكمية أو مراجعة المشرف."
                 )
 
         # ====================================================
@@ -2081,20 +2092,36 @@ def show_page():
 
             if all_items_db:
 
-                item_names_dict = {
-                    (
-                        f"{it['item_name']} "
-                        f"(الكود: "
-                        f"{it['item_code']} "
-                        f"- السعر: "
-                        f"{float(it['sale_price'] or 0):,.2f} "
-                        f"د.ل "
-                        f"- المتاح: "
-                        f"{float(it['quantity'] or 0):,.2f})"
-                    ): it
+                # الكاشير لا يرى رصيد المخزون؛ يظل التحقق من الكمية
+                # والخصم من المخزون يعملان في الخلفية عند اعتماد الفاتورة.
+                hide_stock_quantity = role not in [
+                    "Admin",
+                    "General_Supervisor",
+                    "Branch_Supervisor"
+                ]
 
-                    for it in all_items_db
-                }
+                if hide_stock_quantity:
+                    item_names_dict = {
+                        (
+                            f"{it['item_name']} "
+                            f"(الكود: {it['item_code']} "
+                            f"- السعر: "
+                            f"{float(it['sale_price'] or 0):,.2f} د.ل)"
+                        ): it
+                        for it in all_items_db
+                    }
+                else:
+                    item_names_dict = {
+                        (
+                            f"{it['item_name']} "
+                            f"(الكود: {it['item_code']} "
+                            f"- السعر: "
+                            f"{float(it['sale_price'] or 0):,.2f} د.ل "
+                            f"- المتاح: "
+                            f"{float(it['quantity'] or 0):,.2f})"
+                        ): it
+                        for it in all_items_db
+                    }
 
                 selected_manual_item_str = (
                     st.selectbox(
