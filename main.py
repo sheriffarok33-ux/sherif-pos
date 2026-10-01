@@ -510,6 +510,12 @@ elif choice == "🥜 التحميص والخلط":
         roasting_blending.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
+elif choice == "🎨 تخصيص المظهر":
+    try:
+        from views import appearance as appearance_view
+        appearance_view.show_page()
+    except ImportError:
+        st.warning("⚠️ ملف شاشة تخصيص المظهر غير موجود.")
 elif choice == "📊 التقارير والأرباح":
     try:
         from views import reports
