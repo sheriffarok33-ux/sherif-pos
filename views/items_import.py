@@ -1,350 +1,734 @@
-import os
-import re
 import streamlit as st
-from database import initialize_database, get_db_connection
-
-# إعدادات الصفحة الأساسية
-# يجب أن تكون أول أمر Streamlit في الملف.
-st.set_page_config(
-    page_title="مجموعة أبو زيد - نظام المحامص والمخازن الذكي",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+import pandas as pd
+from datetime import date, datetime
+from database import get_db_connection
 
 
-# ============================================================
-# تهيئة PostgreSQL / Supabase مرة واحدة
-# ============================================================
-
-@st.cache_resource
-def initialize_app_database():
-    initialize_database()
-    return True
+def clean_text(value):
+    """تنظيف القيم النصية القادمة من Excel / CSV."""
+    if pd.isna(value):
+        return ""
+    return str(value).strip()
 
 
-try:
-    initialize_app_database()
-except Exception as e:
-    st.error("❌ تعذر تهيئة قاعدة البيانات.")
-    st.code(str(e))
-    st.stop()
+def clean_number(value, default=0.0):
+    """تحويل القيم الرقمية بأمان."""
+    if pd.isna(value) or value == "":
+        return default
 
-# إضافة ستايل CSS ومؤشر الاتصال (Online/Offline) في رأس الصفحة
-st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
-    html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table, th, td { 
-        font-family: 'Tajawal', sans-serif !important; 
-        color: #000000 !important; 
-        font-weight: 900 !important;
-        font-size: 17px !important;
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def clean_unit(value):
+    """توحيد اسم الوحدة القادمة من الملف."""
+    text = clean_text(value).lower()
+
+    piece_values = {
+        "قطعة", "قطع", "piece", "pieces",
+        "كرتون", "كرتونة", "قطعة / كرتون", "قطعة/كرتون"
     }
-    .main { background-color: #f8fafc; }
-    h1 { font-size: 28px !important; color: #0f172a !important; }
-    h2 { font-size: 24px !important; color: #1e293b !important; }
-    h3 { font-size: 20px !important; color: #334155 !important; }
-    
-    div.stButton > button, div.stButton > button * { color: #ffffff !important; }
-    div.stButton > button { 
-        border-radius: 8px; font-weight: 900 !important; transition: all 0.3s ease; height: 50px; 
-        background: linear-gradient(135deg, #0284c7, #0369a1); border: none;
-        box-shadow: 0 3px 6px rgba(0,0,0,0.15); font-size: 18px !important;
-    }
-    div.stButton > button:hover { background: linear-gradient(135deg, #0369a1, #075985); transform: translateY(-2px); }
-    
-    [data-testid="stSidebar"] { background-color: #0f172a; }
-    [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
-    [data-testid="stSidebar"] .stButton>button {
-        background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
-        border-radius: 10px; padding: 12px 15px; text-align: right; font-weight: 900 !important;
-        transition: all 0.3s ease; margin-bottom: 8px; font-size: 17px !important; height: auto;
-    }
-    [data-testid="stSidebar"] .stButton>button:hover { background-color: #0284c7; color: white !important; border-color: #0284c7; transform: translateX(-5px); }
-    
-    div[data-testid="InputInstructions"] {
-        display: none !important;
-    }
-    </style>
-
-    <!-- 🌐 مؤشر حالة الاتصال (Online/Offline) في أعلى الصفحة -->
-    <div id="connection-status" style="position: fixed; top: 10px; left: 10px; z-index: 999999; display: flex; align-items: center; background: #ffffff; padding: 6px 14px; border-radius: 20px; box-shadow: 0 3px 8px rgba(0,0,0,0.2); font-family: 'Tajawal', sans-serif; font-size: 14px; font-weight: bold;">
-        <span id="status-dot" style="height: 12px; width: 12px; background-color: #22c55e; border-radius: 50%; display: inline-block; margin-left: 8px; transition: background-color 0.3s;"></span>
-        <span id="status-text" style="color: #0f172a;">متصل بالسيرفر (Online)</span>
-    </div>
-
-    <script>
-    function updateOnlineStatus() {
-        const dot = document.getElementById('status-dot');
-        const text = document.getElementById('status-text');
-        
-        if (navigator.onLine) {
-            dot.style.backgroundColor = '#22c55e';
-            text.innerHTML = 'متصل بالسيرفر (Online)';
-        } else {
-            dot.style.backgroundColor = '#dc2626';
-            text.innerHTML = 'غير متصل بالإنترنت (Offline)';
-        }
+    kg_values = {
+        "كجم", "كيلو", "كيلوجرام", "kg",
+        "جرام", "وزن", "وزن (كجم / جرام)"
     }
 
+    if text in piece_values:
+        return "piece"
 
-    window.addEventListener('online', updateOnlineStatus);
-    window.addEventListener('offline', updateOnlineStatus);
-    
-    updateOnlineStatus();
-    setInterval(updateOnlineStatus, 5000);
-    </script>
-""", unsafe_allow_html=True)
+    if text in kg_values:
+        return "kg"
 
-# إنشاء مجلد الصور إذا لم يكن موجوداً
-if not os.path.exists("item_images"): 
-    os.makedirs("item_images")
+    raise ValueError(
+        f"الوحدة ({value}) غير معروفة. استخدم «قطعة» أو «كجم»."
+    )
 
-# تهيئة متغيرات الجلسة (Session State)
-if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
-if "username" not in st.session_state: st.session_state["username"] = ""
-if "role" not in st.session_state: st.session_state["role"] = ""
-if "user_id" not in st.session_state: st.session_state["user_id"] = None
-if "branch_id" not in st.session_state: st.session_state["branch_id"] = None
-if "cart" not in st.session_state: st.session_state["cart"] = []
-if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
-if "success_alert_msg" not in st.session_state: st.session_state["success_alert_msg"] = ""
 
-def set_page(page_name): 
-    st.session_state["page"] = page_name
-    st.rerun()
+def clean_expiry(value):
+    """تحويل تاريخ الصلاحية إلى DATE أو None."""
+    if pd.isna(value) or clean_text(value) == "":
+        return None
 
-def check_user_permission(menu_name):
-    role = st.session_state.get("role", "")
-    if menu_name == "🧹 تهيئة النظام لأول تشغيل":
-        return role == "Admin"
-    if role in ["Admin", "General_Supervisor"]: return True
-    if role == "Cashier": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)"]
-    if role == "Viewer": return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
-    if role == "Branch_Supervisor": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع"]
-    return False
+    parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
 
-# --- بوابة الدخول ---
-if not st.session_state["logged_in"]:
-    col1, col2, col3 = st.columns([1, 2, 1])
+    if pd.isna(parsed):
+        raise ValueError(
+            f"تاريخ الصلاحية ({value}) غير صحيح."
+        )
 
-    with col2:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
-        st.title("🔐 بوابة دخول نظام المحامص")
-        st.subheader("مجموعة أبو زيد التجارية")
+    return parsed.date()
 
-        with st.form("login_form"):
-            u_name = st.text_input("اسم المستخدم")
-            u_pass = st.text_input("كلمة المرور", type="password")
-            submit = st.form_submit_button("🚀 دخول للنظام", use_container_width=True)
 
-        if submit:
-            conn = None
+def ensure_import_schema(conn):
+    """تجهيز حقول الوحدات وجدول دفعات الصلاحية."""
+    conn.execute(
+        """
+        ALTER TABLE items
+        ADD COLUMN IF NOT EXISTS unit_type TEXT DEFAULT 'piece'
+        """
+    )
+    conn.execute(
+        """
+        ALTER TABLE items
+        ADD COLUMN IF NOT EXISTS pieces_per_carton INTEGER DEFAULT 1
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inventory_batches
+        (
+            id BIGSERIAL PRIMARY KEY,
+            item_id INTEGER NOT NULL,
+            branch_id INTEGER NOT NULL,
+            quantity NUMERIC DEFAULT 0,
+            remaining_quantity NUMERIC DEFAULT 0,
+            received_date DATE DEFAULT CURRENT_DATE,
+            expiry_date DATE,
+            unit_cost NUMERIC DEFAULT 0,
+            source_type TEXT DEFAULT 'inventory',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+            FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_inventory_batches_expiry
+        ON inventory_batches(branch_id, expiry_date)
+        """
+    )
+
+
+def add_import_batch(
+    conn, item_id, branch_id, qty, buy_price, expiry_date,
+    source_type="items_import"
+):
+    """إنشاء دفعة صلاحية فقط عند وجود تاريخ انتهاء وكمية موجبة."""
+    if expiry_date is None or float(qty) <= 0:
+        return
+
+    conn.execute(
+        """
+        INSERT INTO inventory_batches
+        (
+            item_id, branch_id, quantity, remaining_quantity,
+            received_date, expiry_date, unit_cost, source_type
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            item_id,
+            branch_id,
+            float(qty),
+            float(qty),
+            date.today(),
+            expiry_date,
+            float(buy_price),
+            source_type
+        )
+    )
+
+
+
+def clean_code(value):
+    """تنظيف كود الصنف مع منع ظهور .0 في الأكواد الرقمية القادمة من Excel."""
+    if pd.isna(value):
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def show_page():
+
+    st.header("📁 إدارة الأصناف: الاستيراد والإدخال اليدوي")
+
+    st.info(
+        "💡 أصناف القطعة تُدخل بالكرتونة والقطع المفردة، "
+        "والبرنامج يحول الرصيد وتكلفة الشراء تلقائياً إلى القطعة. "
+        "أصناف الوزن تُدخل مباشرة بالكيلو."
+    )
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        branches = conn.execute(
+            """
+            SELECT id, branch_name
+            FROM branches
+            ORDER BY id ASC
+            """
+        ).fetchall()
+    except Exception as e:
+        st.error("❌ تعذر تحميل الفروع من قاعدة البيانات.")
+        st.code(str(e))
+        return
+    finally:
+        if conn:
+            conn.close()
+
+    if not branches:
+        st.warning("⚠️ يرجى إضافة فروع أولاً من شاشة إدارة الفروع.")
+        return
+
+    branch_dict = {b["branch_name"]: b["id"] for b in branches}
+
+    st.markdown("### 🎯 نطاق تطبيق الأصناف (الترحيل)")
+    target_mode = st.radio(
+        "اختر طريقة توزيع الأصناف:",
+        [
+            "🌐 ترحيل لكافة الفروع والمخازن تلقائياً",
+            "📍 فرع أو مخزن محدد (من القائمة المنسدلة)"
+        ],
+        horizontal=True
+    )
+
+    if "فرع أو مخزن محدد" in target_mode:
+        sel_b_name = st.selectbox(
+            "اختر الفرع المستهدف من القائمة:",
+            list(branch_dict.keys())
+        )
+        target_branches = [branch_dict[sel_b_name]]
+    else:
+        target_branches = [b["id"] for b in branches]
+
+    st.markdown("---")
+
+    tab1, tab2 = st.tabs([
+        "📊 استيراد ملف أصناف (Excel / CSV)",
+        "✍️ إدخال صنف جديد يدوياً"
+    ])
+
+    # ========================================================
+    # Excel / CSV
+    # ========================================================
+    with tab1:
+        st.subheader("📁 رفع ملف الأصناف")
+
+        st.markdown(
+            """
+            **أعمدة الملف لأصناف القطعة:**
+
+            `كود الصنف` |
+            `اسم الصنف` |
+            `الوحدة` |
+            `عدد القطع بالكرتون` |
+            `عدد الكراتين` |
+            `عدد القطع المفردة` |
+            `سعر شراء الكرتونة` |
+            `سعر بيع القطعة` |
+            `تاريخ الصلاحية`
+
+            **طريقة الحساب:**  
+            - إجمالي القطع = (`عدد الكراتين` × `عدد القطع بالكرتون`) + `عدد القطع المفردة`.  
+            - تكلفة شراء القطعة = `سعر شراء الكرتونة` ÷ `عدد القطع بالكرتون`.  
+            - سعر البيع هو **سعر بيع القطعة الواحدة**.
+
+            **لأصناف الكيلو:**  
+            اكتب `الوحدة = كجم`، و`عدد القطع بالكرتون = 1`،
+            و`عدد الكراتين = 0`، واكتب الكمية بالكيلو في
+            `عدد القطع المفردة`. عندها يكون `سعر شراء الكرتونة`
+            هو **سعر شراء الكيلو** و`سعر بيع القطعة` هو **سعر بيع الكيلو**.
+
+            `تاريخ الصلاحية` اختياري ويمكن تركه فارغاً.
+            """
+        )
+
+        uploaded_file = st.file_uploader(
+            "اختر ملف Excel أو CSV",
+            type=["xlsx", "csv"]
+        )
+
+        if uploaded_file is not None:
             try:
-                conn = get_db_connection()
-                user = conn.execute(
-                    """
-                    SELECT *
-                    FROM users
-                    WHERE username = ?
-                      AND password = ?
-                      AND is_active = 1
-                    """,
-                    (u_name.strip(), u_pass)
-                ).fetchone()
-
-                if user:
-                    st.session_state["logged_in"] = True
-                    st.session_state["username"] = user["username"]
-                    st.session_state["role"] = user["role"]
-                    st.session_state["user_id"] = user["id"]
-                    st.session_state["branch_id"] = user["branch_id"]
-                    st.session_state["page"] = "🏠 الرئيسية واللوحة"
-                    st.rerun()
+                if uploaded_file.name.lower().endswith(".csv"):
+                    df = pd.read_csv(uploaded_file)
                 else:
-                    st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة، أو الحساب موقوف.")
+                    df = pd.read_excel(uploaded_file)
+
+                required_columns = [
+                    "كود الصنف",
+                    "اسم الصنف",
+                    "الوحدة",
+                    "عدد القطع بالكرتون",
+                    "عدد الكراتين",
+                    "عدد القطع المفردة",
+                    "سعر شراء الكرتونة",
+                    "سعر بيع القطعة",
+                    "تاريخ الصلاحية",
+                ]
+
+                missing_columns = [
+                    col for col in required_columns
+                    if col not in df.columns
+                ]
+
+                if missing_columns:
+                    st.error("❌ الملف يفتقد الأعمدة التالية:")
+                    st.write(missing_columns)
+                    return
+
+                st.markdown("### 🔍 معاينة البيانات المستوردة:")
+                st.dataframe(
+                    df.head(20),
+                    use_container_width=True
+                )
+
+                import_clicked = st.button(
+                    "🚀 اعتماد وترحيل الأصناف من الملف",
+                    type="primary"
+                )
+
+                if import_clicked:
+                    conn_imp = None
+                    try:
+                        conn_imp = get_db_connection()
+                        ensure_import_schema(conn_imp)
+
+                        success_count = 0
+                        processed_rows = 0
+
+                        for excel_index, row in df.iterrows():
+                            excel_row = int(excel_index) + 2
+
+                            code_value = clean_code(
+                                row.get("كود الصنف", "")
+                            )
+                            name = clean_text(
+                                row.get("اسم الصنف", "")
+                            )
+
+                            if not code_value:
+                                raise ValueError(
+                                    f"الصف {excel_row}: كود الصنف فارغ."
+                                )
+                            if not name:
+                                raise ValueError(
+                                    f"الصف {excel_row}: اسم الصنف فارغ."
+                                )
+
+                            unit_type = clean_unit(
+                                row.get("الوحدة", "")
+                            )
+
+                            expiry = clean_expiry(
+                                row.get("تاريخ الصلاحية", "")
+                            )
+                            if expiry is not None and expiry < date.today():
+                                raise ValueError(
+                                    f"الصف {excel_row}: تاريخ الصلاحية منتهي."
+                                )
+
+                            if unit_type == "piece":
+                                pieces_per_carton = int(
+                                    clean_number(
+                                        row.get("عدد القطع بالكرتون", 0), 0
+                                    )
+                                )
+                                cartons = clean_number(
+                                    row.get("عدد الكراتين", 0), 0
+                                )
+                                loose_pieces = clean_number(
+                                    row.get("عدد القطع المفردة", 0), 0
+                                )
+                                carton_buy_price = clean_number(
+                                    row.get("سعر شراء الكرتونة", 0), 0
+                                )
+                                unit_sale_price = clean_number(
+                                    row.get("سعر بيع القطعة", 0), 0
+                                )
+
+                                if pieces_per_carton < 1:
+                                    raise ValueError(
+                                        f"الصف {excel_row}: عدد القطع بالكرتون "
+                                        "يجب أن يكون 1 أو أكثر."
+                                    )
+                                if cartons < 0 or not float(cartons).is_integer():
+                                    raise ValueError(
+                                        f"الصف {excel_row}: عدد الكراتين يجب أن "
+                                        "يكون عدداً صحيحاً غير سالب."
+                                    )
+                                if loose_pieces < 0 or not float(loose_pieces).is_integer():
+                                    raise ValueError(
+                                        f"الصف {excel_row}: عدد القطع المفردة يجب "
+                                        "أن يكون عدداً صحيحاً غير سالب."
+                                    )
+                                if carton_buy_price < 0 or unit_sale_price < 0:
+                                    raise ValueError(
+                                        f"الصف {excel_row}: الأسعار لا يمكن أن تكون سالبة."
+                                    )
+
+                                qty = (
+                                    float(cartons) * pieces_per_carton
+                                    + float(loose_pieces)
+                                )
+                                buy_p = (
+                                    float(carton_buy_price) / pieces_per_carton
+                                )
+                                sale_p = float(unit_sale_price)
+
+                            else:
+                                pieces_per_carton = 1
+                                kg_qty = clean_number(
+                                    row.get("عدد القطع المفردة", 0), 0
+                                )
+                                buy_p = clean_number(
+                                    row.get("سعر شراء الكرتونة", 0), 0
+                                )
+                                sale_p = clean_number(
+                                    row.get("سعر بيع القطعة", 0), 0
+                                )
+
+                                if kg_qty < 0:
+                                    raise ValueError(
+                                        f"الصف {excel_row}: كمية الكيلو سالبة."
+                                    )
+                                if buy_p < 0 or sale_p < 0:
+                                    raise ValueError(
+                                        f"الصف {excel_row}: الأسعار لا يمكن أن تكون سالبة."
+                                    )
+
+                                qty = float(kg_qty)
+
+                            for b_id in target_branches:
+                                existing = conn_imp.execute(
+                                    """
+                                    SELECT
+                                        id, quantity, avg_cost, buy_price,
+                                        COALESCE(unit_type, 'piece') AS unit_type
+                                    FROM items
+                                    WHERE branch_id = ?
+                                      AND (
+                                            item_code = ?
+                                            OR LOWER(TRIM(item_name))
+                                               = LOWER(TRIM(?))
+                                          )
+                                    LIMIT 1
+                                    FOR UPDATE
+                                    """,
+                                    (b_id, code_value, name)
+                                ).fetchone()
+
+                                if existing:
+                                    stored_unit = existing["unit_type"] or "piece"
+                                    if stored_unit != unit_type:
+                                        raise ValueError(
+                                            f"الصف {excel_row}: الصنف ({name}) "
+                                            "موجود بوحدة مختلفة."
+                                        )
+
+                                    old_qty = float(existing["quantity"] or 0)
+                                    old_avg = float(existing["avg_cost"] or 0)
+                                    old_buy = float(existing["buy_price"] or 0)
+                                    if old_avg <= 0:
+                                        old_avg = old_buy
+
+                                    new_qty = old_qty + float(qty)
+                                    if new_qty > 0:
+                                        new_avg = (
+                                            (old_qty * old_avg)
+                                            + (float(qty) * float(buy_p))
+                                        ) / new_qty
+                                    else:
+                                        new_avg = float(buy_p)
+
+                                    conn_imp.execute(
+                                        """
+                                        UPDATE items
+                                        SET quantity = ?,
+                                            sale_price = ?,
+                                            buy_price = ?,
+                                            avg_cost = ?,
+                                            unit_type = ?,
+                                            pieces_per_carton = ?
+                                        WHERE id = ?
+                                        """,
+                                        (
+                                            new_qty,
+                                            sale_p,
+                                            buy_p,
+                                            new_avg,
+                                            unit_type,
+                                            pieces_per_carton,
+                                            existing["id"]
+                                        )
+                                    )
+                                    item_id = existing["id"]
+                                else:
+                                    inserted = conn_imp.execute(
+                                        """
+                                        INSERT INTO items
+                                        (
+                                            branch_id, item_code, item_name,
+                                            quantity, buy_price, sale_price,
+                                            avg_cost, unit_type, pieces_per_carton
+                                        )
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        RETURNING id
+                                        """,
+                                        (
+                                            b_id, code_value, name, qty,
+                                            buy_p, sale_p, buy_p,
+                                            unit_type, pieces_per_carton
+                                        )
+                                    ).fetchone()
+                                    item_id = inserted[0]
+
+                                add_import_batch(
+                                    conn_imp,
+                                    item_id,
+                                    b_id,
+                                    qty,
+                                    buy_p,
+                                    expiry
+                                )
+                                success_count += 1
+
+                            processed_rows += 1
+
+                        conn_imp.commit()
+                        st.success(
+                            f"✅ تم اعتماد {processed_rows} صف وترحيل "
+                            f"{success_count} سجل بنجاح. "
+                            "تم تحويل الكراتين إلى قطع وتكلفة الوحدة تلقائياً."
+                        )
+
+                    except Exception as e:
+                        if conn_imp:
+                            conn_imp.rollback()
+                        st.error(
+                            "❌ لم يتم استيراد الملف. "
+                            "تم التراجع عن العملية بالكامل."
+                        )
+                        st.code(str(e))
+                    finally:
+                        if conn_imp:
+                            conn_imp.close()
 
             except Exception as e:
-                st.error("❌ تعذر تسجيل الدخول حالياً.")
+                st.error("❌ تعذر قراءة ملف Excel / CSV.")
                 st.code(str(e))
-            finally:
-                if conn:
-                    conn.close()
 
-    st.stop()
+    # ========================================================
+    # الإدخال اليدوي
+    # ========================================================
+    with tab2:
+        st.subheader("✍️ إضافة صنف جديد للنظام")
 
+        with st.form(
+            "manual_item_form",
+            clear_on_submit=True
+        ):
+            col1, col2 = st.columns(2)
 
-# --- القائمة الجانبية (Navigation Menu) ---
-st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجموعة أبو زيد</h2>", unsafe_allow_html=True)
-st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
-st.sidebar.markdown("---")
+            with col1:
+                m_code = st.text_input("كود الصنف (الباركود):")
+                m_name = st.text_input("اسم الصنف *:")
+                m_unit_label = st.selectbox(
+                    "الوحدة الأساسية:",
+                    ["قطعة", "كجم"]
+                )
 
-DEFAULT_MENUS = [
-    "🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "🏢 إدارة الفروع", "👥 إدارة المستخدمين",
-    "📦 إدارة المخزن والفروع", "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
-    "🔄 تزويد الفروع والأرشيف", "📁 استيراد Excel", "💰 المصروفات", "👥 جهات التعامل",
-    "📥 المشتريات", "⚙️ الجرد والتصفير السنوي", "🧹 تهيئة النظام لأول تشغيل",
-    "🥜 التحميص والخلط", "📊 التقارير والأرباح"
-]
+            m_expiry = None
 
-for menu_name in DEFAULT_MENUS:
-    if check_user_permission(menu_name):
-        if st.sidebar.button(menu_name, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
-            set_page(menu_name)
+            if m_unit_label == "قطعة":
+                st.markdown("#### 📦 بيانات الكرتونة والقطع")
 
-st.sidebar.markdown("---")
-if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
-    st.session_state.clear()
-    st.rerun()
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    m_pieces_per_carton = st.number_input(
+                        "عدد القطع داخل الكرتونة:",
+                        min_value=1,
+                        value=1,
+                        step=1
+                    )
+                with c2:
+                    m_cartons = st.number_input(
+                        "عدد الكراتين الموجودة:",
+                        min_value=0,
+                        value=0,
+                        step=1
+                    )
+                with c3:
+                    m_loose_pieces = st.number_input(
+                        "عدد القطع المفردة:",
+                        min_value=0,
+                        value=0,
+                        step=1
+                    )
 
-st.sidebar.markdown("---")
-st.sidebar.text("ENG: SHERIF M. FAROK")
+                p1, p2 = st.columns(2)
+                with p1:
+                    m_carton_buy = st.number_input(
+                        "سعر شراء الكرتونة (د.ل):",
+                        min_value=0.0,
+                        value=0.0,
+                        step=0.5
+                    )
+                with p2:
+                    m_sale = st.number_input(
+                        "سعر بيع القطعة (د.ل):",
+                        min_value=0.0,
+                        value=0.0,
+                        step=0.5
+                    )
 
-# --- منطقة توجيه الشاشات واللوحة الرئيسية ---
-choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
+                m_qty = (
+                    float(m_cartons) * int(m_pieces_per_carton)
+                    + float(m_loose_pieces)
+                )
+                m_buy = (
+                    float(m_carton_buy) / int(m_pieces_per_carton)
+                )
 
-if not check_user_permission(choice):
-    st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
-    st.stop()
+                st.info(
+                    f"📊 الإجمالي = **{m_qty:,.0f} قطعة** | "
+                    f"تكلفة شراء القطعة = **{m_buy:,.3f} د.ل**"
+                )
 
-if choice == "🏠 الرئيسية واللوحة":
-    role = st.session_state.get("role", "")
-    username = st.session_state.get("username", "")
+            else:
+                st.markdown("#### ⚖️ بيانات الصنف بالكيلو")
+                m_pieces_per_carton = 1
 
-    st.markdown("""
-        <style>
-        .rtl-container { direction: rtl !important; text-align: right !important; }
-        .dashboard-banner { 
-            background-color: #f0fdf4; 
-            padding: 18px; 
-            border-radius: 10px; 
-            border: 2px solid #22c55e; 
-            margin-bottom: 20px; 
-            color: #166534; 
-            direction: rtl; 
-            text-align: right; 
-        }
-        .dashboard-banner * {
-            color: #000000 !important;
-            font-family: 'Tajawal', sans-serif !important;
-            font-weight: 900 !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+                k1, k2, k3 = st.columns(3)
+                with k1:
+                    m_qty = st.number_input(
+                        "الكمية بالكيلو:",
+                        min_value=0.0,
+                        value=0.0,
+                        step=0.1
+                    )
+                with k2:
+                    m_buy = st.number_input(
+                        "سعر شراء الكيلو (د.ل):",
+                        min_value=0.0,
+                        value=0.0,
+                        step=0.5
+                    )
+                with k3:
+                    m_sale = st.number_input(
+                        "سعر بيع الكيلو (د.ل):",
+                        min_value=0.0,
+                        value=0.0,
+                        step=0.5
+                    )
 
-    st.markdown('<h3 class="rtl-container" style="color: #0f172a; font-weight: 900;">🌟 مجموعة أبو زيد - لوحة التحكم الرئيسية</h3>', unsafe_allow_html=True)
-    
-    st.markdown(f"""
-        <div class="dashboard-banner">
-            <h4 style="margin-top:0; color:#16a34a;">👋 مرحباً بك يا {username} في النظام السحابي لإدارة المحامص والمخازن.</h4>
-            <p style="font-size: 16px; margin: 0;">نتمنى لك وقتاً موفقاً في إنجاز مهامك اليومية.</p>
-        </div>
-    """, unsafe_allow_html=True)
+            m_has_expiry = st.checkbox("له تاريخ انتهاء صلاحية")
+            if m_has_expiry:
+                m_expiry = st.date_input(
+                    "تاريخ الصلاحية:",
+                    value=date.today(),
+                    min_value=date.today()
+                )
 
-    if role in ["Admin", "General_Supervisor"]:
-        conn = get_db_connection()
-        total_sales_res = conn.execute("SELECT SUM(total_amount) FROM invoices").fetchone()
-        total_sales = total_sales_res[0] if total_sales_res and total_sales_res[0] else 0.0
+            if m_sale > 0 and m_buy > 0:
+                profit_margin = float(m_sale) - float(m_buy)
+                profit_percent = (profit_margin / float(m_buy)) * 100
+                unit_word = "القطعة" if m_unit_label == "قطعة" else "الكيلو"
+                st.info(
+                    f"💰 هامش الربح على {unit_word} = "
+                    f"**{profit_margin:.2f} د.ل** "
+                    f"({profit_percent:.1f}%)"
+                )
 
-        branches_count = conn.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
-        
-        total_stock_res = conn.execute("SELECT SUM(quantity) FROM items").fetchone()
-        total_stock = total_stock_res[0] if total_stock_res and total_stock_res[0] else 0.0
+            submitted_manual = st.form_submit_button(
+                "💾 حفظ وإضافة الصنف",
+                type="primary",
+                use_container_width=True
+            )
 
-        users_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        conn.close()
+        if submitted_manual:
+            if not m_name.strip():
+                st.warning("⚠️ اسم الصنف حقل إلزامي!")
+            elif not m_code.strip():
+                st.warning("⚠️ كود الصنف حقل إلزامي!")
+            elif m_sale <= 0:
+                st.warning("⚠️ يجب إدخال سعر البيع أكبر من صفر.")
+            else:
+                conn_m = None
+                try:
+                    conn_m = get_db_connection()
+                    ensure_import_schema(conn_m)
 
-        st.markdown('<p class="rtl-container" style="font-weight: 900; font-size: 18px; color: #0f172a;">📊 ملخص حركة العمل والأداء المالي العام:</p>', unsafe_allow_html=True)
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1: st.metric(label="💰 إجمالي المبيعات العامة", value=f"{total_sales:,.2f} د.ل")
-        with col2: st.metric(label="🏢 الفروع والمخازن", value=f"{branches_count} فرع")
-        with col3: st.metric(label="📦 إجمالي المخزون", value=f"{total_stock:,.2f}")
-        with col4: st.metric(label="👥 طاقم العمل", value=f"{users_count} موظف")
-        st.markdown("---")
-    else:
-        st.info("🛒 تم إعداد الشاشة بنجاح. يمكنك الانتقال مباشرة عبر القائمة الجانبية إلى قسم (نقطة البيع POS) لبدء تسجيل الفواتير وخدمة الزبائن.")
+                    m_unit_type = (
+                        "piece" if m_unit_label == "قطعة" else "kg"
+                    )
 
-elif choice == "🛒 نقطة البيع (POS)":
-    try:
-        from views import pos
-        pos.show_page()
-    except ImportError:
-        st.info("🛒 شاشة نقطة البيع قيد الترتيب...")
-elif choice == "🏢 إدارة الفروع":
-    try:
-        from views import branches
-        branches.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة إدارة الفروع غير موجود.")
-elif choice == "👥 إدارة المستخدمين":
-    try:
-        from views import users
-        users.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة إدارة المستخدمين غير موجود.")
-elif choice == "➕ الفائض والتوالف والمرتجعات وتعديل السعر":
-    try:
-        from views import damages_returns
-        damages_returns.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة الفائض والتوالف والمرتجعات غير موجود.")
-elif choice == "📁 استيراد Excel":
-    try:
-        from views import items_import
-        items_import.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة الاستيراد غير موجود.")
-elif choice == "💰 المصروفات":
-    try:
-        from views import expenses
-        expenses.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
-elif choice == "👥 جهات التعامل":
-    try:
-        from views import parties
-        parties.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
-elif choice == "📥 المشتريات":
-    try:
-        from views import purchases
-        purchases.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة المشتريات غير موجود.")
-elif choice == "🔄 تزويد الفروع والأرشيف":
-    try:
-        from views import transfers
-        transfers.show_page()
-    except ImportError:
-        st.info("🔄 شاشة تزويد الفروع والأرشيف قيد التجهيز.")
-elif choice == "📦 إدارة المخزن والفروع":
-    try:
-        from views import inventory
-        inventory.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
-elif choice == "⚙️ الجرد والتصفير السنوي":
-    try:
-        from views import annual_reset
-        annual_reset.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة الجرد والتصفير السنوي غير موجود.")
-elif choice == "🧹 تهيئة النظام لأول تشغيل":
-    try:
-        from views import initial_setup_reset
-        initial_setup_reset.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة تهيئة النظام لأول تشغيل غير موجود.")
-elif choice == "🥜 التحميص والخلط":
-    try:
-        from views import roasting_blending
-        roasting_blending.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة التحميص والخلط غير موجود.")
-elif choice == "📊 التقارير والأرباح":
-    try:
-        from views import reports
-        reports.show_page()
-    except ImportError:
-        st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود.")
+                    for b_id in target_branches:
+                        existing = conn_m.execute(
+                            """
+                            SELECT id
+                            FROM items
+                            WHERE branch_id = ?
+                              AND (
+                                    item_code = ?
+                                    OR LOWER(TRIM(item_name))
+                                       = LOWER(TRIM(?))
+                                  )
+                            LIMIT 1
+                            """,
+                            (
+                                b_id,
+                                m_code.strip(),
+                                m_name.strip()
+                            )
+                        ).fetchone()
+
+                        if existing:
+                            raise ValueError(
+                                f"الصنف ({m_name.strip()}) موجود بالفعل "
+                                "في أحد الفروع المحددة."
+                            )
+
+                        inserted = conn_m.execute(
+                            """
+                            INSERT INTO items
+                            (
+                                branch_id, item_code, item_name,
+                                quantity, buy_price, sale_price,
+                                avg_cost, unit_type, pieces_per_carton
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            RETURNING id
+                            """,
+                            (
+                                b_id,
+                                m_code.strip(),
+                                m_name.strip(),
+                                float(m_qty),
+                                float(m_buy),
+                                float(m_sale),
+                                float(m_buy),
+                                m_unit_type,
+                                int(m_pieces_per_carton)
+                            )
+                        ).fetchone()
+
+                        add_import_batch(
+                            conn_m,
+                            inserted[0],
+                            b_id,
+                            float(m_qty),
+                            float(m_buy),
+                            m_expiry,
+                            source_type="manual_item"
+                        )
+
+                    conn_m.commit()
+                    st.success(
+                        f"✅ تم إضافة الصنف ({m_name.strip()}) بنجاح."
+                    )
+                    st.rerun()
+
+                except Exception as e:
+                    if conn_m:
+                        conn_m.rollback()
+                    st.error("❌ لم يتم حفظ الصنف.")
+                    st.code(str(e))
+                finally:
+                    if conn_m:
+                        conn_m.close()
+
