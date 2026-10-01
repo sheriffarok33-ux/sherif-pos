@@ -178,18 +178,47 @@ st.sidebar.markdown("<h2 style='text-align: center; color: white;'>🥜 مجمو
 st.sidebar.markdown(f"<p style='text-align: center; color: white;'><b>{st.session_state['username']} | {st.session_state['role']}</b></p>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-DEFAULT_MENUS = [
-    "🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "🏢 إدارة الفروع", "👥 إدارة المستخدمين",
-    "📦 إدارة المخزن والفروع", "➕ الفائض والتوالف والمرتجعات وتعديل السعر",
-    "🔄 تزويد الفروع والأرشيف", "📁 استيراد Excel", "💰 المصروفات", "👥 جهات التعامل",
-    "📥 المشتريات", "⚙️ الجرد والتصفير السنوي", "🧹 تهيئة النظام لأول تشغيل",
-    "🥜 التحميص والخلط", "📊 التقارير والأرباح"
-]
+# نسخة تجريبية لتنظيم القائمة فقط — لا تغيّر وظائف الشاشات الداخلية
+MENU_GROUPS = {
+    "🏠 الرئيسية": [("🏠 لوحة التحكم", "🏠 الرئيسية واللوحة")],
+    "🛒 المبيعات والعملاء": [
+        ("🛒 نقطة البيع", "🛒 نقطة البيع (POS)"),
+        ("👥 العملاء والحسابات", "👥 جهات التعامل"),
+    ],
+    "📥 المشتريات والموردون": [
+        ("➕ فاتورة توريد / شراء", "📥 المشتريات"),
+        ("👥 الموردون والحسابات", "👥 جهات التعامل"),
+    ],
+    "📦 المخزون والأصناف": [
+        ("📦 الأصناف والأرصدة", "📦 إدارة المخزن والفروع"),
+        ("📁 استيراد Excel", "📁 استيراد Excel"),
+        ("➕ التالف والمرتجعات والتسويات", "➕ الفائض والتوالف والمرتجعات وتعديل السعر"),
+    ],
+    "☕ التحميص والخلط": [("🔥 التحميص والخلط", "🥜 التحميص والخلط")],
+    "🔄 التحويلات والفروع": [("🔄 التحويلات والأرشيف", "🔄 تزويد الفروع والأرشيف")],
+    "💰 المالية": [("💰 المصروفات", "💰 المصروفات")],
+    "📊 التقارير": [("📊 التقارير والأرباح", "📊 التقارير والأرباح")],
+    "⚙️ الإدارة والإعدادات": [
+        ("🏢 إدارة الفروع", "🏢 إدارة الفروع"),
+        ("👥 إدارة المستخدمين", "👥 إدارة المستخدمين"),
+        ("⚙️ الإقفال السنوي", "⚙️ الجرد والتصفير السنوي"),
+        ("🧹 تهيئة النظام لأول تشغيل", "🧹 تهيئة النظام لأول تشغيل"),
+    ],
+}
 
-for menu_name in DEFAULT_MENUS:
-    if check_user_permission(menu_name):
-        if st.sidebar.button(menu_name, use_container_width=True, key=f"sidebar_btn_{menu_name}"):
-            set_page(menu_name)
+if "menu_group" not in st.session_state:
+    st.session_state["menu_group"] = "🏠 الرئيسية"
+
+for group_name, entries in MENU_GROUPS.items():
+    if any(check_user_permission(target) for _, target in entries):
+        if st.sidebar.button(group_name, use_container_width=True, key=f"group_{group_name}"):
+            st.session_state["menu_group"] = group_name
+            # الرئيسية تفتح مباشرة، وباقي الأقسام تعرض أزرارها في الشاشة
+            if group_name == "🏠 الرئيسية":
+                set_page("🏠 الرئيسية واللوحة")
+            else:
+                st.session_state["page"] = f"__GROUP__::{group_name}"
+                st.rerun()
 
 st.sidebar.markdown("---")
 if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
@@ -201,6 +230,24 @@ st.sidebar.text("ENG: SHERIF M. FAROK")
 
 # --- منطقة توجيه الشاشات واللوحة الرئيسية ---
 choice = st.session_state.get("page", "🏠 الرئيسية واللوحة")
+
+# لوحة أزرار داخل كل قسم رئيسي
+if choice.startswith("__GROUP__::"):
+    group_name = choice.split("::", 1)[1]
+    st.markdown(f"## {group_name}")
+    st.caption("اختر العملية المطلوبة")
+    allowed_entries = [
+        (label, target)
+        for label, target in MENU_GROUPS.get(group_name, [])
+        if check_user_permission(target)
+    ]
+    for start in range(0, len(allowed_entries), 3):
+        cols = st.columns(3)
+        for idx, (label, target) in enumerate(allowed_entries[start:start + 3]):
+            with cols[idx]:
+                if st.button(label, use_container_width=True, key=f"inside_{group_name}_{target}_{start}_{idx}"):
+                    set_page(target)
+    st.stop()
 
 if not check_user_permission(choice):
     st.error("❌ غير مصرح لك بالوصول إلى هذه الشاشة.")
