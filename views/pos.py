@@ -124,7 +124,7 @@ def add_missing_item_dialog(scanned_code, b_id):
                     b_id,
                     scanned_code,
                     new_item_name.strip(),
-                    0.0,
+                    float(new_item_qty),
                     0.0,
                     new_item_price,
                     0.0
@@ -954,6 +954,152 @@ def parse_invoice_notes(notes, total_amount):
 
 
 # ============================================================
+# أدوات تقارير الخصم والطباعة المباشرة
+# ============================================================
+
+def summarize_invoice_rows(rows):
+    gross_total = 0.0
+    discount_total = 0.0
+    net_total = 0.0
+    discounted_count = 0
+
+    for row in rows:
+        net = float(row["total_amount"] or 0)
+        details = parse_invoice_notes(row["notes"], net)
+        gross = float(details.get("gross_total", net) or net)
+        discount = float(details.get("discount_amount", 0) or 0)
+        gross_total += gross
+        discount_total += discount
+        net_total += net
+        if discount > 0:
+            discounted_count += 1
+
+    return {
+        "gross_total": gross_total,
+        "discount_total": discount_total,
+        "net_total": net_total,
+        "discounted_count": discounted_count,
+        "invoice_count": len(rows)
+    }
+
+
+def make_printable_html(body_html, title="طباعة"):
+    return f"""
+    <!doctype html>
+    <html dir="rtl">
+    <head>
+        <meta charset="utf-8">
+        <title>{title}</title>
+        <style>
+            @page {{ size: 80mm auto; margin: 3mm; }}
+            body {{
+                font-family: Arial, sans-serif;
+                direction: rtl;
+                text-align: center;
+                width: 72mm;
+                margin: 0 auto;
+                color: #000;
+                background: #fff;
+                font-size: 12px;
+            }}
+            table {{ width: 100%; border-collapse: collapse; font-size: 11px; }}
+            th, td {{
+                padding: 3px 1px;
+                border-bottom: 1px dashed #999;
+                text-align: right;
+            }}
+            .left {{ text-align: left; }}
+            .no-print {{ margin: 10px 0; }}
+            @media print {{ .no-print {{ display: none !important; }} }}
+        </style>
+    </head>
+    <body>
+        {body_html}
+        <div class="no-print">
+            <button onclick="window.print()" style="
+                width:100%; padding:10px; font-size:16px;
+                font-weight:bold; cursor:pointer;
+            ">🖨️ طباعة الآن</button>
+        </div>
+    </body>
+    </html>
+    """
+
+
+def build_invoice_print_html(inv):
+    items_html = "".join(
+        [
+            (
+                "<tr>"
+                f"<td>{i.get('name', '-')}</td>"
+                f"<td>{float(i.get('qty', 0) or 0):g}</td>"
+                f"<td>{float(i.get('price', 0) or 0):.2f}</td>"
+                f"<td>{float(i.get('total', 0) or 0):.2f}</td>"
+                "</tr>"
+            )
+            for i in inv.get("items", [])
+        ]
+    )
+
+    discount_amount = float(inv.get("discount_amount", 0) or 0)
+    gross_total = float(inv.get("gross_total", inv.get("total", 0)) or 0)
+    total = float(inv.get("total", 0) or 0)
+
+    discount_html = ""
+    if discount_amount > 0:
+        discount_html = f"""
+        <p class="left">الإجمالي قبل الخصم: <b>{gross_total:,.2f} د.ل</b></p>
+        <p class="left">الخصم: <b>{discount_amount:,.2f} د.ل</b></p>
+        """
+
+    body = f"""
+        <h2>مجموعة أبو زيد التجارية</h2>
+        <p>فرع: {inv.get('branch', '-')}</p>
+        <hr>
+        <p style="text-align:right;">
+            <b>رقم فاتورة اليوم:</b> #{inv.get('daily_inv_num', '-')}<br>
+            <b>رقم الفاتورة:</b> #{inv.get('inv_id', '-')}<br>
+            <b>التاريخ:</b> {inv.get('date_time', '-')}<br>
+            <b>الكاشير:</b> {inv.get('cashier', '-')}<br>
+            <b>الوردية:</b> {inv.get('shift', '-')}<br>
+            <b>الزبون:</b> {inv.get('customer', 'زبون نقدي')}<br>
+            <b>طريقة الدفع:</b> {inv.get('method', '-')}
+        </p>
+        <hr>
+        <table>
+            <tr><th>الصنف</th><th>الكمية</th><th>السعر</th><th>المجموع</th></tr>
+            {items_html}
+        </table>
+        <hr>
+        {discount_html}
+        <h3 class="left">الصافي: {total:,.2f} د.ل</h3>
+        <p>شكراً لتسوقكم معنا 🥜</p>
+    """
+    return make_printable_html(body, f"Invoice {inv.get('inv_id', '')}")
+
+
+def build_shift_report_html(report_title, branch_name, username, shift_num, summary):
+    body = f"""
+        <h2>مجموعة أبو زيد التجارية</h2>
+        <p>فرع: {branch_name}</p>
+        <hr>
+        <h3>{report_title}</h3>
+        <p style="text-align:right;">
+            <b>التاريخ:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br>
+            <b>الكاشير:</b> {username}<br>
+            <b>الوردية:</b> {shift_num}
+        </p>
+        <hr>
+        <p class="left">عدد الفواتير: <b>{summary["invoice_count"]}</b></p>
+        <p class="left">إجمالي قبل الخصم: <b>{summary["gross_total"]:,.2f} د.ل</b></p>
+        <p class="left">إجمالي الخصومات: <b>{summary["discount_total"]:,.2f} د.ل</b></p>
+        <p class="left">عدد فواتير الخصم: <b>{summary["discounted_count"]}</b></p>
+        <h3 class="left">صافي المبيعات: {summary["net_total"]:,.2f} د.ل</h3>
+    """
+    return make_printable_html(body, report_title)
+
+
+# ============================================================
 # الصفحة الرئيسية
 # ============================================================
 
@@ -1249,381 +1395,154 @@ def show_page():
 
             with c_x:
 
-                shift_sales_row = conn.execute(
+                shift_invoice_rows = conn.execute(
                     """
-                    SELECT COALESCE(
-                        SUM(total_amount),
-                        0
-                    )
+                    SELECT total_amount, notes
                     FROM invoices
                     WHERE branch_id = ?
                       AND DATE(created_at) = ?
                       AND shift_status = ?
+                    ORDER BY id ASC
                     """,
-                    (
-                        b_id,
-                        today_date,
-                        str(current_shift_num)
-                    )
-                ).fetchone()
+                    (b_id, today_date, str(current_shift_num))
+                ).fetchall()
 
-                shift_sales = float(
-                    shift_sales_row[0] or 0
-                )
+                x_summary = summarize_invoice_rows(shift_invoice_rows)
 
                 st.metric(
-                    f"مبيعات الوردية "
-                    f"رقم {current_shift_num}",
-                    f"{shift_sales:,.2f} د.ل"
+                    f"صافي مبيعات الوردية رقم {current_shift_num}",
+                    f"{x_summary['net_total']:,.2f} د.ل"
                 )
 
-                x_html = f"""
-                <html dir="rtl">
-                <head>
-                    <meta charset="utf-8">
-                </head>
-                <body style="
-                    font-family:Arial;
-                    text-align:center;
-                    max-width:350px;
-                    margin:auto;
-                    padding:20px;
-                ">
-                    <h2>
-                        مجموعة أبو زيد التجارية
-                    </h2>
-
-                    <p>
-                        فرع:
-                        {branch_name_display}
-                    </p>
-
-                    <hr>
-
-                    <h3>
-                        تقرير تسليم الوردية
-                    </h3>
-
-                    <p>
-                        التاريخ:
-                        {
-                            datetime.now().strftime(
-                                "%Y-%m-%d %H:%M:%S"
-                            )
-                        }
-                        <br>
-
-                        الكاشير:
-                        {username}
-                        <br>
-
-                        الوردية:
-                        {current_shift_num}
-                    </p>
-
-                    <hr>
-
-                    <h3>
-                        إجمالي المبيعات:
-                        {shift_sales:,.2f}
-                        د.ل
-                    </h3>
-                </body>
-                </html>
-                """
-
-                st.download_button(
-                    "🖨️ طباعة تقرير الوردية",
-                    data=x_html.encode(
-                        "utf-8"
-                    ),
-                    file_name=(
-                        f"X_Read_"
-                        f"{today_date}_"
-                        f"Shift"
-                        f"{current_shift_num}"
-                        f".html"
-                    ),
-                    mime="text/html",
-                    use_container_width=True
+                st.caption(
+                    f"قبل الخصم: {x_summary['gross_total']:,.2f} د.ل | "
+                    f"الخصومات: {x_summary['discount_total']:,.2f} د.ل | "
+                    f"فواتير عليها خصم: {x_summary['discounted_count']}"
                 )
+
+                x_html = build_shift_report_html(
+                    "تقرير X - تسليم الوردية",
+                    branch_name_display,
+                    username,
+                    current_shift_num,
+                    x_summary
+                )
+
+                st.components.v1.html(x_html, height=180, scrolling=True)
 
             with c_z:
 
-                day_sales_row = conn.execute(
+                z_invoice_rows = conn.execute(
                     """
-                    SELECT COALESCE(
-                        SUM(total_amount),
-                        0
-                    )
+                    SELECT total_amount, notes
                     FROM invoices
                     WHERE branch_id = ?
                       AND DATE(created_at) = ?
-                      AND shift_status !=
-                          'Z_Closed'
+                      AND shift_status != 'Z_Closed'
+                    ORDER BY id ASC
                     """,
-                    (
-                        b_id,
-                        today_date
-                    )
-                ).fetchone()
+                    (b_id, today_date)
+                ).fetchall()
 
-                day_sales = float(
-                    day_sales_row[0] or 0
-                )
+                z_summary = summarize_invoice_rows(z_invoice_rows)
 
                 st.metric(
-                    "مبيعات اليوم غير المغلقة",
-                    f"{day_sales:,.2f} د.ل"
+                    "صافي مبيعات اليوم غير المغلقة",
+                    f"{z_summary['net_total']:,.2f} د.ل"
                 )
 
+                st.caption(
+                    f"قبل الخصم: {z_summary['gross_total']:,.2f} د.ل | "
+                    f"الخصومات: {z_summary['discount_total']:,.2f} د.ل | "
+                    f"فواتير عليها خصم: {z_summary['discounted_count']}"
+                )
+
+                z_html = build_shift_report_html(
+                    "تقرير Z - الإغلاق المالي",
+                    branch_name_display,
+                    username,
+                    current_shift_num,
+                    z_summary
+                )
+
+                st.components.v1.html(z_html, height=180, scrolling=True)
+
                 if st.button(
-                    "⚙️ تنفيذ الإغلاق المالي "
-                    "لليوم",
+                    "⚙️ تنفيذ الإغلاق المالي لليوم",
                     type="primary",
                     use_container_width=True
                 ):
-
                     try:
+                        st.session_state["last_z_report_html"] = z_html
 
                         conn.execute(
                             """
                             UPDATE invoices
-                            SET shift_status =
-                                'Z_Closed'
+                            SET shift_status = 'Z_Closed'
                             WHERE branch_id = ?
-                              AND DATE(created_at)
-                                  = ?
-                              AND shift_status
-                                  != 'Z_Closed'
+                              AND DATE(created_at) = ?
+                              AND shift_status != 'Z_Closed'
                             """,
-                            (
-                                b_id,
-                                today_date
-                            )
+                            (b_id, today_date)
                         )
 
                         conn.commit()
-
-                        st.success(
-                            "✅ تم إغلاق مبيعات "
-                            "اليوم."
-                        )
-
+                        st.success("✅ تم إغلاق مبيعات اليوم.")
                         st.rerun()
 
                     except Exception:
-
                         conn.rollback()
                         raise
+
+                if st.session_state.get("last_z_report_html"):
+                    st.markdown("#### 🧾 آخر تقرير Z تم إغلاقه")
+                    st.components.v1.html(
+                        st.session_state["last_z_report_html"],
+                        height=180,
+                        scrolling=True
+                    )
 
             st.markdown("---")
 
         # ====================================================
-        # آخر فاتورة
+        # آخر فاتورة - عرض وطباعة مباشرة
         # ====================================================
 
-        if st.session_state.get(
-            "last_invoice"
-        ):
+        if st.session_state.get("last_invoice"):
 
-            inv = st.session_state[
-                "last_invoice"
-            ]
+            inv = st.session_state["last_invoice"]
+            html_file_content = build_invoice_print_html(inv)
 
-            items_html = "".join(
-                [
-                    (
-                        "<tr>"
-                        f"<td>{i['name']}</td>"
-                        f"<td>{i['qty']}</td>"
-                        f"<td>{i['price']:.2f}</td>"
-                        f"<td>{i['total']:.2f}</td>"
-                        "</tr>"
-                    )
-                    for i in inv["items"]
-                ]
-            )
-
-            discount_html = ""
-
-            if (
-                inv.get(
-                    "discount_amount",
-                    0
-                ) > 0
-            ):
-
-                discount_html = f"""
-                <p style="
-                    text-align:left;
-                    margin:4px;
-                ">
-                    الإجمالي قبل الخصم:
-                    {
-                        inv.get(
-                            "gross_total",
-                            inv["total"]
-                        )
-                        :,.2f
-                    }
-                    د.ل
-                </p>
-
-                <p style="
-                    text-align:left;
-                    margin:4px;
-                ">
-                    الخصم:
-                    {
-                        inv.get(
-                            "discount_amount",
-                            0
-                        )
-                        :,.2f
-                    }
-                    د.ل
-                </p>
-                """
-
-            html_file_content = f"""
-            <html dir="rtl">
-
-            <head>
-                <meta charset="utf-8">
-            </head>
-
-            <body style="
-                font-family:Arial;
-                text-align:center;
-                max-width:350px;
-                margin:auto;
-                padding:20px;
-                border:1px dashed #000;
-            ">
-
-                <h2>
-                    مجموعة أبو زيد التجارية
-                </h2>
-
-                <p>
-                    فرع:
-                    {inv['branch']}
-                </p>
-
-                <hr>
-
-                <p style="text-align:right;">
-                    <b>رقم فاتورة اليوم:</b>
-                    #{inv['daily_inv_num']}
-                    <br>
-
-                    <b>رقم الفاتورة:</b>
-                    #{inv['inv_id']}
-                    <br>
-
-                    <b>التاريخ:</b>
-                    {inv['date_time']}
-                    <br>
-
-                    <b>الكاشير:</b>
-                    {inv['cashier']}
-                    <br>
-
-                    <b>الوردية:</b>
-                    {inv['shift']}
-                    <br>
-
-                    <b>الزبون:</b>
-                    {inv['customer']}
-                    <br>
-
-                    <b>طريقة الدفع:</b>
-                    {inv['method']}
-                </p>
-
-                <hr>
-
-                <table style="
-                    width:100%;
-                    text-align:right;
-                    border-collapse:collapse;
-                ">
-
-                    <tr>
-                        <th>الصنف</th>
-                        <th>الكمية</th>
-                        <th>السعر</th>
-                        <th>المجموع</th>
-                    </tr>
-
-                    {items_html}
-
-                </table>
-
-                <hr>
-
-                {discount_html}
-
-                <h3 style="text-align:left;">
-                    الصافي:
-                    {inv['total']:,.2f}
-                    د.ل
-                </h3>
-
-                <p style="
-                    font-size:12px;
-                    margin-top:20px;
-                ">
-                    شكراً لتسوقكم معنا 🥜
-                </p>
-
-            </body>
-            </html>
-            """
-
-            st.success(
-                "✅ تمت عملية الدفع بنجاح."
+            st.success("✅ تمت عملية الدفع بنجاح.")
+            st.info(
+                "🖨️ اضغط «طباعة الآن» داخل الفاتورة لفتح نافذة "
+                "الطباعة مباشرة من المتصفح."
             )
 
             st.components.v1.html(
                 html_file_content,
-                height=500,
+                height=620,
                 scrolling=True
             )
 
-            c_inv1, c_inv2 = (
-                st.columns(2)
-            )
+            c_inv1, c_inv2 = st.columns(2)
 
             with c_inv1:
-
                 st.download_button(
                     "📥 تحميل الفاتورة (HTML)",
-                    data=html_file_content.encode(
-                        "utf-8"
-                    ),
-                    file_name=(
-                        f"Invoice_"
-                        f"{inv['inv_id']}.html"
-                    ),
+                    data=html_file_content.encode("utf-8"),
+                    file_name=f"Invoice_{inv['inv_id']}.html",
                     mime="text/html",
                     use_container_width=True
                 )
 
             with c_inv2:
-
                 if st.button(
-                    "✖️ إخفاء الفاتورة "
-                    "ومتابعة البيع",
+                    "✖️ إخفاء الفاتورة ومتابعة البيع",
                     type="primary",
                     use_container_width=True
                 ):
-
-                    st.session_state[
-                        "last_invoice"
-                    ] = None
-
+                    st.session_state["last_invoice"] = None
                     st.rerun()
 
         # ====================================================
@@ -2336,9 +2255,40 @@ def show_page():
                         </html>
                         """
 
+                        archive_print_inv = {
+                            "inv_id": inv_data["id"],
+                            "daily_inv_num": "-",
+                            "branch": branch_name_display,
+                            "cashier": "-",
+                            "shift": inv_data["shift_status"],
+                            "date_time": inv_data["created_at"],
+                            "customer": inv_data["customer_name"],
+                            "items": saved_items,
+                            "gross_total": float(
+                                details.get(
+                                    "gross_total",
+                                    inv_data["total_amount"]
+                                ) or 0
+                            ),
+                            "discount_amount": float(
+                                details.get("discount_amount", 0) or 0
+                            ),
+                            "total": float(inv_data["total_amount"] or 0),
+                            "method": inv_data["payment_method"]
+                        }
+
+                        html_reprint_content = build_invoice_print_html(
+                            archive_print_inv
+                        )
+
+                        st.info(
+                            "🖨️ اضغط «طباعة الآن» داخل الفاتورة "
+                            "لإعادة طباعتها."
+                        )
+
                         st.components.v1.html(
                             html_reprint_content,
-                            height=450,
+                            height=620,
                             scrolling=True
                         )
 
