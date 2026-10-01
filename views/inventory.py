@@ -3,29 +3,57 @@ import pandas as pd
 from database import get_db_connection
 
 
-# ============================================================
-# تحميل الفروع
-# ============================================================
+def ensure_inventory_columns():
+    conn = None
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            """
+            ALTER TABLE items
+            ADD COLUMN IF NOT EXISTS unit_type TEXT DEFAULT 'piece'
+            """
+        )
+        conn.execute(
+            """
+            ALTER TABLE items
+            ADD COLUMN IF NOT EXISTS pieces_per_carton INTEGER DEFAULT 1
+            """
+        )
+        conn.execute(
+            """
+            UPDATE items
+            SET unit_type = 'piece'
+            WHERE unit_type IS NULL OR TRIM(unit_type) = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE items
+            SET pieces_per_carton = 1
+            WHERE pieces_per_carton IS NULL OR pieces_per_carton < 1
+            """
+        )
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
+
 
 def get_branches():
     conn = None
     try:
         conn = get_db_connection()
         return conn.execute(
-            """
-            SELECT id, branch_name
-            FROM branches
-            ORDER BY id ASC
-            """
+            "SELECT id, branch_name FROM branches ORDER BY id ASC"
         ).fetchall()
     finally:
         if conn:
             conn.close()
 
-
-# ============================================================
-# تحميل أصناف الفرع للاختيار
-# ============================================================
 
 def get_branch_items_rows(branch_id):
     conn = None
@@ -33,14 +61,10 @@ def get_branch_items_rows(branch_id):
         conn = get_db_connection()
         return conn.execute(
             """
-            SELECT
-                id,
-                item_code,
-                item_name,
-                quantity,
-                buy_price,
-                avg_cost,
-                sale_price
+            SELECT id, item_code, item_name, quantity, buy_price,
+                   avg_cost, sale_price,
+                   COALESCE(unit_type, 'piece') AS unit_type,
+                   COALESCE(pieces_per_carton, 1) AS pieces_per_carton
             FROM items
             WHERE branch_id = ?
             ORDER BY item_name ASC, item_code ASC
@@ -52,187 +76,140 @@ def get_branch_items_rows(branch_id):
             conn.close()
 
 
-# ============================================================
-# جدول أصناف الفرع
-# ============================================================
-
 def get_branch_items(branch_id):
     rows = get_branch_items_rows(branch_id)
     data = []
-
     for row in rows:
-        data.append(
-            {
-                "الكود": row["item_code"],
-                "اسم الصنف": row["item_name"],
-                "الرصيد": float(row["quantity"] or 0),
-                "آخر تكلفة للوحدة": float(row["buy_price"] or 0),
-                "متوسط تكلفة الوحدة": float(row["avg_cost"] or 0),
-                "سعر بيع الوحدة": float(row["sale_price"] or 0),
-            }
-        )
-
+        unit_type = row["unit_type"] or "piece"
+        data.append({
+            "الكود": row["item_code"],
+            "اسم الصنف": row["item_name"],
+            "الوحدة": "كجم" if unit_type == "kg" else "قطعة",
+            "قطع/كرتون": (
+                int(row["pieces_per_carton"] or 1)
+                if unit_type == "piece" else "-"
+            ),
+            "الرصيد": float(row["quantity"] or 0),
+            "آخر تكلفة للوحدة": float(row["buy_price"] or 0),
+            "متوسط تكلفة الوحدة": float(row["avg_cost"] or 0),
+            "سعر بيع الوحدة": float(row["sale_price"] or 0),
+        })
     return pd.DataFrame(data)
 
 
-# ============================================================
-# إضافة كمية لصنف موجود
-# ============================================================
-
 def add_stock_to_existing_item(
-    branch_id,
-    item_id,
-    added_quantity,
-    unit_buy_price,
-    unit_label,
+    branch_id, item_id, added_quantity, unit_buy_price, unit_type,
+    pieces_per_carton=None
 ):
     conn = None
-
     try:
         added_quantity = float(added_quantity)
         unit_buy_price = float(unit_buy_price)
 
         if added_quantity <= 0:
-            raise ValueError(
-                "الكمية المضافة يجب أن تكون أكبر من صفر."
-            )
-
+            raise ValueError("الكمية المضافة يجب أن تكون أكبر من صفر.")
         if unit_buy_price < 0:
-            raise ValueError(
-                "سعر الشراء لا يمكن أن يكون سالباً."
-            )
+            raise ValueError("سعر الشراء لا يمكن أن يكون سالباً.")
 
         conn = get_db_connection()
-
         existing = conn.execute(
             """
-            SELECT
-                id,
-                item_code,
-                item_name,
-                quantity,
-                buy_price,
-                avg_cost,
-                sale_price
+            SELECT id, item_name, quantity, buy_price, avg_cost,
+                   COALESCE(unit_type, 'piece') AS unit_type,
+                   COALESCE(pieces_per_carton, 1) AS pieces_per_carton
             FROM items
-            WHERE id = ?
-              AND branch_id = ?
+            WHERE id = ? AND branch_id = ?
             FOR UPDATE
             """,
             (item_id, branch_id)
         ).fetchone()
 
         if not existing:
-            raise ValueError(
-                "الصنف المحدد غير موجود في هذا الفرع."
-            )
+            raise ValueError("الصنف المحدد غير موجود في هذا الفرع.")
+
+        stored_type = existing["unit_type"] or "piece"
+        if stored_type != unit_type:
+            raise ValueError("وحدة الإضافة لا تطابق وحدة الصنف المسجلة.")
 
         old_qty = float(existing["quantity"] or 0)
-        old_avg_cost = float(existing["avg_cost"] or 0)
-        old_buy_price = float(existing["buy_price"] or 0)
-
-        if old_avg_cost <= 0:
-            old_avg_cost = old_buy_price
+        old_avg = float(existing["avg_cost"] or 0)
+        old_buy = float(existing["buy_price"] or 0)
+        if old_avg <= 0:
+            old_avg = old_buy
 
         new_qty = old_qty + added_quantity
-
-        if new_qty > 0:
-            new_avg_cost = (
-                (old_qty * old_avg_cost)
-                + (added_quantity * unit_buy_price)
-            ) / new_qty
-        else:
-            new_avg_cost = unit_buy_price
-
-        conn.execute(
-            """
-            UPDATE items
-            SET
-                quantity = ?,
-                buy_price = ?,
-                avg_cost = ?
-            WHERE id = ?
-              AND branch_id = ?
-            """,
-            (
-                new_qty,
-                unit_buy_price,
-                new_avg_cost,
-                item_id,
-                branch_id,
-            )
+        new_avg = (
+            ((old_qty * old_avg) + (added_quantity * unit_buy_price)) / new_qty
+            if new_qty > 0 else unit_buy_price
         )
+
+        if stored_type == "piece" and pieces_per_carton:
+            conn.execute(
+                """
+                UPDATE items
+                SET quantity = ?, buy_price = ?, avg_cost = ?,
+                    pieces_per_carton = ?
+                WHERE id = ? AND branch_id = ?
+                """,
+                (
+                    new_qty, unit_buy_price, new_avg,
+                    int(pieces_per_carton), item_id, branch_id
+                )
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE items
+                SET quantity = ?, buy_price = ?, avg_cost = ?
+                WHERE id = ? AND branch_id = ?
+                """,
+                (new_qty, unit_buy_price, new_avg, item_id, branch_id)
+            )
 
         conn.commit()
-
+        label = "كجم" if stored_type == "kg" else "قطعة"
         st.success(
-            f"✅ تمت إضافة {added_quantity:,.3f} {unit_label} "
-            f"إلى ({existing['item_name']}). "
-            f"الرصيد الجديد: {new_qty:,.3f} {unit_label}."
+            f"✅ تمت إضافة {added_quantity:,.3f} {label} إلى "
+            f"({existing['item_name']}). الرصيد الجديد: "
+            f"{new_qty:,.3f} {label}."
         )
-
         st.rerun()
-
     except Exception as e:
         if conn:
             conn.rollback()
-
         st.error("❌ تعذر إضافة الكمية للصنف.")
         st.code(str(e))
-
     finally:
         if conn:
             conn.close()
 
 
-# ============================================================
-# إنشاء صنف جديد فقط
-# ============================================================
-
 def create_new_inventory_item(
-    branch_id,
-    item_code,
-    item_name,
-    initial_quantity,
-    unit_buy_price,
-    sale_price,
-    unit_label,
+    branch_id, item_code, item_name, initial_quantity,
+    unit_buy_price, sale_price, unit_type, pieces_per_carton
 ):
     conn = None
-
     try:
         item_code = item_code.strip()
         item_name = item_name.strip()
-
         if not item_code:
-            raise ValueError(
-                "يجب إدخال كود الصنف / الباركود."
-            )
-
+            raise ValueError("يجب إدخال كود الصنف / الباركود.")
         if not item_name:
-            raise ValueError(
-                "يجب إدخال اسم الصنف."
-            )
+            raise ValueError("يجب إدخال اسم الصنف.")
 
         initial_quantity = float(initial_quantity)
         unit_buy_price = float(unit_buy_price)
         sale_price = float(sale_price)
 
         if initial_quantity <= 0:
-            raise ValueError(
-                "الكمية الأولية يجب أن تكون أكبر من صفر."
-            )
-
+            raise ValueError("الكمية الأولية يجب أن تكون أكبر من صفر.")
         if unit_buy_price < 0 or sale_price < 0:
-            raise ValueError(
-                "الأسعار لا يمكن أن تكون سالبة."
-            )
+            raise ValueError("الأسعار لا يمكن أن تكون سالبة.")
 
         conn = get_db_connection()
-
         duplicate = conn.execute(
             """
-            SELECT id, item_name
+            SELECT id
             FROM items
             WHERE branch_id = ?
               AND (
@@ -241,243 +218,161 @@ def create_new_inventory_item(
                   )
             LIMIT 1
             """,
-            (
-                branch_id,
-                item_code,
-                item_name,
-            )
+            (branch_id, item_code, item_name)
         ).fetchone()
 
         if duplicate:
             raise ValueError(
                 "هذا الصنف موجود بالفعل في الفرع. "
-                "استخدم خيار «إضافة كمية لصنف موجود» "
-                "بدلاً من إنشاء صنف جديد."
+                "استخدم «إضافة كمية لصنف موجود»."
             )
 
         conn.execute(
             """
             INSERT INTO items
             (
-                item_code,
-                item_name,
-                branch_id,
-                quantity,
-                buy_price,
-                sale_price,
-                avg_cost
+                item_code, item_name, branch_id, quantity,
+                buy_price, sale_price, avg_cost,
+                unit_type, pieces_per_carton
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                item_code,
-                item_name,
-                branch_id,
-                initial_quantity,
-                unit_buy_price,
-                sale_price,
-                unit_buy_price,
+                item_code, item_name, branch_id, initial_quantity,
+                unit_buy_price, sale_price, unit_buy_price,
+                unit_type, int(pieces_per_carton or 1)
             )
         )
-
         conn.commit()
 
+        label = "كجم" if unit_type == "kg" else "قطعة"
         st.success(
-            f"✅ تم إنشاء الصنف ({item_name}) "
-            f"برصيد أولي {initial_quantity:,.3f} "
-            f"{unit_label}."
+            f"✅ تم إنشاء الصنف ({item_name}) برصيد أولي "
+            f"{initial_quantity:,.3f} {label}."
         )
-
         st.rerun()
-
     except Exception as e:
         if conn:
             conn.rollback()
-
         st.error("❌ تعذر إنشاء الصنف الجديد.")
         st.code(str(e))
-
     finally:
         if conn:
             conn.close()
 
 
-# ============================================================
-# حقول تحديد كمية وتكلفة الإضافة
-# ============================================================
-
-def stock_input_fields(prefix, existing_sale_price=None):
-    inventory_mode = st.selectbox(
-        "طريقة شراء / تخزين الكمية:",
-        [
-            "📦 كراتين وقطع",
-            "⚖️ بالكيلو",
-            "⚖️ بالجرام",
-        ],
-        key=f"{prefix}_inventory_mode",
+def piece_input_fields(prefix, default_pieces=1):
+    c1, c2 = st.columns(2)
+    pieces_per_carton = c1.number_input(
+        "عدد القطع داخل الكرتون:",
+        min_value=1, value=max(1, int(default_pieces or 1)), step=1,
+        key=f"{prefix}_pieces_per_carton"
     )
-
-    added_quantity = 0.0
-    unit_buy_price = 0.0
-    unit_label = ""
-
-    if inventory_mode == "📦 كراتين وقطع":
-        c1, c2 = st.columns(2)
-
-        pieces_per_carton = c1.number_input(
-            "عدد القطع داخل الكرتون:",
-            min_value=1,
-            value=1,
-            step=1,
-            key=f"{prefix}_pieces_per_carton",
-        )
-
-        cartons_count = c2.number_input(
-            "عدد الكراتين المضافة:",
-            min_value=0.0,
-            value=1.0,
-            step=1.0,
-            key=f"{prefix}_cartons_count",
-        )
-
-        box_buy_price = st.number_input(
-            "سعر شراء الكرتون بالكامل (د.ل):",
-            min_value=0.0,
-            value=0.0,
-            step=0.5,
-            format="%.2f",
-            key=f"{prefix}_box_buy_price",
-        )
-
-        added_quantity = (
-            float(cartons_count)
-            * int(pieces_per_carton)
-        )
-
-        unit_buy_price = (
-            float(box_buy_price)
-            / int(pieces_per_carton)
-            if pieces_per_carton > 0
-            else 0.0
-        )
-
-        unit_label = "قطعة"
-
-        st.info(
-            f"📊 سيتم إضافة **{added_quantity:,.0f} قطعة** "
-            f"| تكلفة القطعة **{unit_buy_price:,.2f} د.ل**"
-        )
-
-    elif inventory_mode == "⚖️ بالكيلو":
-        c1, c2 = st.columns(2)
-
-        kg_quantity = c1.number_input(
-            "الوزن المضاف (كجم):",
-            min_value=0.001,
-            value=1.000,
-            step=0.100,
-            format="%.3f",
-            key=f"{prefix}_kg_quantity",
-        )
-
-        price_per_kg = c2.number_input(
-            "سعر شراء الكيلو (د.ل):",
-            min_value=0.0,
-            value=0.0,
-            step=0.5,
-            format="%.2f",
-            key=f"{prefix}_price_per_kg",
-        )
-
-        added_quantity = float(kg_quantity)
-        unit_buy_price = float(price_per_kg)
-        unit_label = "كجم"
-
-        st.info(
-            f"⚖️ سيتم إضافة **{added_quantity:,.3f} كجم** "
-            f"| قيمة الشراء "
-            f"**{added_quantity * unit_buy_price:,.2f} د.ل**"
-        )
-
-    else:
-        c1, c2 = st.columns(2)
-
-        grams_quantity = c1.number_input(
-            "الوزن المضاف (جرام):",
-            min_value=1.0,
-            value=1000.0,
-            step=50.0,
-            format="%.0f",
-            key=f"{prefix}_grams_quantity",
-        )
-
-        total_purchase_price = c2.number_input(
-            "إجمالي سعر شراء هذه الكمية (د.ل):",
-            min_value=0.0,
-            value=0.0,
-            step=0.5,
-            format="%.2f",
-            key=f"{prefix}_grams_total_price",
-        )
-
-        added_quantity = float(grams_quantity) / 1000.0
-
-        unit_buy_price = (
-            float(total_purchase_price) / added_quantity
-            if added_quantity > 0
-            else 0.0
-        )
-
-        unit_label = "كجم"
-
-        st.info(
-            f"⚖️ {grams_quantity:,.0f} جرام = "
-            f"**{added_quantity:,.3f} كجم** "
-            f"| تكلفة الكيلو "
-            f"**{unit_buy_price:,.2f} د.ل**"
-        )
-
-    return (
-        inventory_mode,
-        added_quantity,
-        unit_buy_price,
-        unit_label,
+    cartons = c2.number_input(
+        "عدد الكراتين المضافة:",
+        min_value=0.0, value=1.0, step=1.0,
+        key=f"{prefix}_cartons"
     )
+    box_price = st.number_input(
+        "سعر شراء الكرتون بالكامل (د.ل):",
+        min_value=0.0, value=0.0, step=0.5, format="%.2f",
+        key=f"{prefix}_box_price"
+    )
+    qty = float(cartons) * int(pieces_per_carton)
+    unit_cost = (
+        float(box_price) / int(pieces_per_carton)
+        if pieces_per_carton else 0.0
+    )
+    st.info(
+        f"📊 سيتم إضافة **{qty:,.0f} قطعة** | "
+        f"تكلفة القطعة **{unit_cost:,.2f} د.ل**"
+    )
+    return qty, unit_cost, int(pieces_per_carton)
 
 
-# ============================================================
-# الصفحة
-# ============================================================
+def weight_input_fields(prefix):
+    mode = st.radio(
+        "طريقة إدخال الوزن:",
+        ["⚖️ بالكيلو", "⚖️ بالجرام"],
+        horizontal=True,
+        key=f"{prefix}_weight_mode"
+    )
+    if mode == "⚖️ بالكيلو":
+        c1, c2 = st.columns(2)
+        qty = c1.number_input(
+            "الوزن المضاف (كجم):", min_value=0.001,
+            value=1.000, step=0.100, format="%.3f",
+            key=f"{prefix}_kg"
+        )
+        cost = c2.number_input(
+            "سعر شراء الكيلو (د.ل):", min_value=0.0,
+            value=0.0, step=0.5, format="%.2f",
+            key=f"{prefix}_kg_cost"
+        )
+        st.info(
+            f"⚖️ سيتم إضافة **{float(qty):,.3f} كجم** | "
+            f"قيمة الشراء **{float(qty)*float(cost):,.2f} د.ل**"
+        )
+        return float(qty), float(cost)
+
+    c1, c2 = st.columns(2)
+    grams = c1.number_input(
+        "الوزن المضاف (جرام):", min_value=1.0,
+        value=1000.0, step=50.0, format="%.0f",
+        key=f"{prefix}_grams"
+    )
+    total = c2.number_input(
+        "إجمالي سعر شراء هذه الكمية (د.ل):", min_value=0.0,
+        value=0.0, step=0.5, format="%.2f",
+        key=f"{prefix}_grams_total"
+    )
+    qty = float(grams) / 1000.0
+    cost = float(total) / qty if qty > 0 else 0.0
+    st.info(
+        f"⚖️ {grams:,.0f} جرام = **{qty:,.3f} كجم** | "
+        f"تكلفة الكيلو **{cost:,.2f} د.ل**"
+    )
+    return qty, cost
+
+
+def change_legacy_unit(item_id, branch_id, new_type, pieces_per_carton=1):
+    conn = None
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            """
+            UPDATE items
+            SET unit_type = ?, pieces_per_carton = ?
+            WHERE id = ? AND branch_id = ?
+            """,
+            (new_type, int(pieces_per_carton or 1), item_id, branch_id)
+        )
+        conn.commit()
+        st.success("✅ تم تحديث وحدة الصنف.")
+        st.rerun()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        st.error("تعذر تحديث وحدة الصنف.")
+        st.code(str(e))
+    finally:
+        if conn:
+            conn.close()
+
 
 def show_page():
+    try:
+        ensure_inventory_columns()
+    except Exception as e:
+        st.error("❌ تعذر تجهيز حقول وحدات المخزون.")
+        st.code(str(e))
+        return
 
-    st.markdown(
-        """
-        <style>
-        .rtl-container {
-            direction: rtl !important;
-            text-align: right !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        """
-        <h2 class="rtl-container">
-        📦 إدارة المخزن - الأصناف والكميات والباركود
-        </h2>
-        """,
-        unsafe_allow_html=True,
-    )
-
+    st.markdown("## 📦 إدارة المخزن - الأصناف والكميات والباركود")
     st.caption(
-        "اختر صنفاً موجوداً لإضافة رصيد جديد، "
-        "أو أنشئ صنفاً جديداً لأول مرة."
+        "كل صنف يُحفظ بوحدته الأساسية: قطعة أو كجم. "
+        "الجرام يتحول إلى كجم داخلياً."
     )
-
-    st.markdown("---")
 
     try:
         branches = get_branches()
@@ -487,28 +382,17 @@ def show_page():
         return
 
     if not branches:
-        st.warning(
-            "⚠️ يرجى إنشاء مخزن أو فرع أولاً "
-            "من إدارة الفروع."
-        )
+        st.warning("⚠️ يرجى إنشاء مخزن أو فرع أولاً.")
         return
 
-    b_dict = {
-        b["branch_name"]: b["id"]
-        for b in branches
-    }
-
+    b_dict = {b["branch_name"]: b["id"] for b in branches}
     selected_branch = st.selectbox(
-        "اختر المخزن أو الفرع الحالي:",
-        list(b_dict.keys()),
+        "اختر المخزن أو الفرع الحالي:", list(b_dict.keys())
     )
-
-    target_branch_id = b_dict[selected_branch]
+    branch_id = b_dict[selected_branch]
 
     try:
-        existing_items = get_branch_items_rows(
-            target_branch_id
-        )
+        existing_items = get_branch_items_rows(branch_id)
     except Exception as e:
         st.error("❌ تعذر تحميل أصناف الفرع.")
         st.code(str(e))
@@ -516,202 +400,150 @@ def show_page():
 
     operation = st.radio(
         "ماذا تريد أن تفعل؟",
-        [
-            "📦 إضافة كمية لصنف موجود",
-            "➕ إنشاء صنف جديد",
-        ],
-        horizontal=True,
+        ["📦 إضافة كمية لصنف موجود", "➕ إنشاء صنف جديد"],
+        horizontal=True
     )
-
     st.markdown("---")
 
-    # ========================================================
-    # إضافة كمية لصنف موجود
-    # ========================================================
     if operation == "📦 إضافة كمية لصنف موجود":
-
-        st.markdown(
-            "### 📦 إضافة مخزون لصنف مسجل"
-        )
-
+        st.markdown("### 📦 إضافة مخزون لصنف مسجل")
         if not existing_items:
-            st.info(
-                "لا توجد أصناف في هذا الفرع حتى الآن. "
-                "اختر «إنشاء صنف جديد» أولاً."
-            )
+            st.info("لا توجد أصناف في هذا الفرع حتى الآن.")
         else:
             item_map = {}
-
             for item in existing_items:
+                unit = "كجم" if item["unit_type"] == "kg" else "قطعة"
                 label = (
-                    f"{item['item_name']} "
-                    f"— {item['item_code']} "
-                    f"— الرصيد: "
-                    f"{float(item['quantity'] or 0):,.3f}"
+                    f"{item['item_name']} — {item['item_code']} — "
+                    f"الرصيد: {float(item['quantity'] or 0):,.3f} {unit}"
                 )
                 item_map[label] = item
 
-            selected_item_label = st.selectbox(
-                "اختر الصنف:",
-                list(item_map.keys()),
-            )
-
-            selected_item = item_map[
-                selected_item_label
+            selected = item_map[
+                st.selectbox("اختر الصنف:", list(item_map.keys()))
             ]
+            unit_type = selected["unit_type"] or "piece"
+            unit_label = "كجم" if unit_type == "kg" else "قطعة"
 
             c1, c2, c3 = st.columns(3)
-
             c1.metric(
                 "الرصيد الحالي",
-                f"{float(selected_item['quantity'] or 0):,.3f}",
+                f"{float(selected['quantity'] or 0):,.3f} {unit_label}"
             )
-
             c2.metric(
                 "متوسط التكلفة",
-                f"{float(selected_item['avg_cost'] or 0):,.2f} د.ل",
+                f"{float(selected['avg_cost'] or 0):,.2f} د.ل/{unit_label}"
             )
-
             c3.metric(
                 "سعر البيع الحالي",
-                f"{float(selected_item['sale_price'] or 0):,.2f} د.ل",
+                f"{float(selected['sale_price'] or 0):,.2f} د.ل/{unit_label}"
             )
 
-            st.caption(
-                "اسم الصنف والباركود وسعر البيع الحالي "
-                "لن يتغيروا من هذه العملية؛ "
-                "سيتم فقط إضافة الرصيد وتحديث متوسط التكلفة."
-            )
-
-            with st.form(
-                "add_existing_stock_form",
-                clear_on_submit=True,
-            ):
-                (
-                    _mode,
-                    added_quantity,
-                    unit_buy_price,
-                    unit_label,
-                ) = stock_input_fields(
-                    "existing"
+            # أداة تصحيح لمرة واحدة للأصناف القديمة التي تم ترحيلها
+            # افتراضياً كقطعة.
+            with st.expander("🛠️ تصحيح وحدة صنف قديم"):
+                st.warning(
+                    "استخدم هذا الخيار فقط إذا كان الصنف القديم موزوناً "
+                    "بالكيلو وتم تسجيله افتراضياً كقطعة."
                 )
-
-                submitted_existing = (
-                    st.form_submit_button(
-                        "➕ إضافة الكمية للصنف",
-                        type="primary",
-                        use_container_width=True,
+                corrected = st.selectbox(
+                    "الوحدة الصحيحة:",
+                    ["قطعة", "كجم"],
+                    index=1 if unit_type == "kg" else 0,
+                    key=f"legacy_unit_{selected['id']}"
+                )
+                legacy_ppc = 1
+                if corrected == "قطعة":
+                    legacy_ppc = st.number_input(
+                        "عدد القطع في الكرتون:",
+                        min_value=1,
+                        value=max(1, int(selected["pieces_per_carton"] or 1)),
+                        step=1,
+                        key=f"legacy_ppc_{selected['id']}"
                     )
+                if st.button(
+                    "حفظ تصحيح الوحدة",
+                    key=f"save_legacy_unit_{selected['id']}"
+                ):
+                    change_legacy_unit(
+                        selected["id"], branch_id,
+                        "kg" if corrected == "كجم" else "piece",
+                        legacy_ppc
+                    )
+
+            with st.form("add_existing_stock_form", clear_on_submit=True):
+                if unit_type == "piece":
+                    added_qty, unit_cost, ppc = piece_input_fields(
+                        "existing",
+                        selected["pieces_per_carton"]
+                    )
+                else:
+                    added_qty, unit_cost = weight_input_fields("existing")
+                    ppc = 1
+
+                submit = st.form_submit_button(
+                    "➕ إضافة الكمية للصنف",
+                    type="primary",
+                    use_container_width=True
                 )
 
-            if submitted_existing:
+            if submit:
                 add_stock_to_existing_item(
-                    target_branch_id,
-                    selected_item["id"],
-                    added_quantity,
-                    unit_buy_price,
-                    unit_label,
+                    branch_id, selected["id"], added_qty,
+                    unit_cost, unit_type, ppc
                 )
 
-    # ========================================================
-    # إنشاء صنف جديد
-    # ========================================================
     else:
-
-        st.markdown(
-            "### ➕ إنشاء صنف جديد لأول مرة"
-        )
-
-        with st.form(
-            "create_new_item_form",
-            clear_on_submit=True,
-        ):
+        st.markdown("### ➕ إنشاء صنف جديد لأول مرة")
+        with st.form("create_new_item_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
+            item_code = c1.text_input("كود الصنف / الباركود:")
+            item_name = c2.text_input("اسم الصنف:")
 
-            item_code = c1.text_input(
-                "كود الصنف / الباركود:"
+            unit_choice = st.radio(
+                "الوحدة الأساسية للصنف:",
+                ["📦 قطعة / كرتون", "⚖️ وزن (كجم / جرام)"],
+                horizontal=True
             )
 
-            item_name = c2.text_input(
-                "اسم الصنف:"
-            )
-
-            (
-                inventory_mode,
-                initial_quantity,
-                unit_buy_price,
-                unit_label,
-            ) = stock_input_fields(
-                "new"
-            )
-
-            sale_label = (
-                "سعر بيع القطعة (د.ل):"
-                if inventory_mode == "📦 كراتين وقطع"
-                else "سعر بيع الكيلو (د.ل):"
-            )
+            if unit_choice == "📦 قطعة / كرتون":
+                unit_type = "piece"
+                qty, cost, ppc = piece_input_fields("new", 1)
+                sale_label = "سعر بيع القطعة (د.ل):"
+            else:
+                unit_type = "kg"
+                qty, cost = weight_input_fields("new")
+                ppc = 1
+                sale_label = "سعر بيع الكيلو (د.ل):"
 
             sale_price = st.number_input(
-                sale_label,
-                min_value=0.0,
-                value=0.0,
-                step=0.5,
-                format="%.2f",
-                key="new_sale_price",
+                sale_label, min_value=0.0, value=0.0,
+                step=0.5, format="%.2f", key="new_sale_price"
             )
 
-            submitted_new = (
-                st.form_submit_button(
-                    "💾 إنشاء الصنف وحفظ الرصيد",
-                    type="primary",
-                    use_container_width=True,
-                )
+            submit_new = st.form_submit_button(
+                "💾 إنشاء الصنف وحفظ الرصيد",
+                type="primary",
+                use_container_width=True
             )
 
-        if submitted_new:
+        if submit_new:
             create_new_inventory_item(
-                target_branch_id,
-                item_code,
-                item_name,
-                initial_quantity,
-                unit_buy_price,
-                sale_price,
-                unit_label,
+                branch_id, item_code, item_name, qty,
+                cost, sale_price, unit_type, ppc
             )
-
-    # ========================================================
-    # جدول الأصناف
-    # ========================================================
 
     st.markdown("---")
-    st.markdown(
-        "### 📋 جدول الأصناف المسجلة في هذا المخزن"
-    )
-
-    st.caption(
-        "الأصناف الموزونة تُحسب داخلياً بالكيلو: "
-        "250 جرام = 0.250 كجم."
-    )
+    st.markdown("### 📋 جدول الأصناف المسجلة في هذا المخزن")
 
     try:
-        items_df = get_branch_items(
-            target_branch_id
-        )
+        df = get_branch_items(branch_id)
     except Exception as e:
-        st.error(
-            "❌ تعذر تحميل أصناف المخزن."
-        )
+        st.error("❌ تعذر تحميل أصناف المخزن.")
         st.code(str(e))
-        items_df = pd.DataFrame()
+        df = pd.DataFrame()
 
-    if not items_df.empty:
-        st.dataframe(
-            items_df,
-            use_container_width=True,
-            hide_index=True,
-        )
+    if not df.empty:
+        st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        st.info(
-            "لا توجد أصناف مسجلة "
-            "في هذا المخزن حتى الآن."
-        )
+        st.info("لا توجد أصناف مسجلة في هذا المخزن حتى الآن.")
