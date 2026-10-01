@@ -1209,15 +1209,15 @@ def show_production_report(branches, is_admin_or_supervisor):
             p.id AS "رقم العملية",
             p.created_at AS "التاريخ والوقت",
             b.branch_name AS "المخزن / الفرع",
-            p.production_type AS "نوع العملية",
-            p.source_item_name AS "الخامة / المصدر",
+            p.operation_type AS "نوع العملية",
+            p.source_details AS "الخامة / المصدر",
             p.target_item_name AS "الصنف الناتج",
-            p.input_quantity AS "الكمية الداخلة",
-            p.output_quantity AS "الكمية الناتجة",
-            p.loss_quantity AS "الفقد",
+            p.input_weight AS "الكمية الداخلة",
+            p.output_weight AS "الكمية الناتجة",
+            p.loss_weight AS "الفقد",
             p.total_cost AS "إجمالي التكلفة",
             p.unit_cost AS "تكلفة الوحدة",
-            p.sale_price AS "سعر البيع",
+            0.0 AS "سعر البيع",
             p.notes AS "التفاصيل"
         FROM production_logs p
         LEFT JOIN branches b
