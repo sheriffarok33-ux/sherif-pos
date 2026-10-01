@@ -1,13 +1,15 @@
+import json
 import streamlit as st
 from datetime import datetime
 from database import get_db_connection
 
 
 # ============================================================
-# الجداول التي يتم تصفير حركاتها عند بدء سنة مالية جديدة
+# إقفال وأرشفة السنة المالية
 # ============================================================
 
-RESET_TABLES = [
+# ترتيب الحذف مهم لتقليل مشاكل العلاقات بين الجداول.
+ARCHIVE_TABLES = [
     ("negative_sales_logs", "سجل البيع بالسالب"),
     ("stock_adjustments", "حركات التوالف والفائض والتعديلات"),
     ("production_logs", "عمليات التحميص والخلط"),
@@ -21,9 +23,9 @@ RESET_TABLES = [
 KEEP_DATA = [
     "الأصناف وكمياتها الحالية وأسعارها",
     "الفروع",
-    "المستخدمون",
-    "الصلاحيات وإعدادات القوائم",
-    "الموردون والعملاء وأرصدتهم الحالية",
+    "المستخدمون والصلاحيات",
+    "الموردون وأرصدتهم الحالية",
+    "العملاء وأرصدتهم الحالية",
 ]
 
 
@@ -39,16 +41,30 @@ def _table_exists(conn, table_name):
         """,
         (table_name,)
     ).fetchone()
-
     return bool(row[0]) if row else False
 
 
 def _count_rows(conn, table_name):
-    # table_name يأتي حصراً من RESET_TABLES الثابتة أعلاه
     row = conn.execute(
         f"SELECT COUNT(*) FROM {table_name}"
     ).fetchone()
     return int(row[0] or 0) if row else 0
+
+
+def _json_value(value):
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
+
+
+def _row_to_dict(cursor, row):
+    columns = [desc[0] for desc in cursor.description]
+    return {
+        col: _json_value(row[col])
+        for col in columns
+    }
 
 
 def get_reset_summary():
@@ -56,37 +72,158 @@ def get_reset_summary():
     try:
         conn = get_db_connection()
         result = []
-
-        for table_name, label in RESET_TABLES:
+        for table_name, label in ARCHIVE_TABLES:
             if _table_exists(conn, table_name):
-                count = _count_rows(conn, table_name)
-                result.append((table_name, label, count))
-
+                result.append(
+                    (table_name, label, _count_rows(conn, table_name))
+                )
         return result
     finally:
         if conn:
             conn.close()
 
 
-def perform_annual_reset():
+def get_archived_years():
     conn = None
+    try:
+        conn = get_db_connection()
+        if not _table_exists(conn, "financial_year_archives"):
+            return []
+        return conn.execute(
+            """
+            SELECT
+                financial_year,
+                closed_at,
+                closed_by_username,
+                summary_json
+            FROM financial_year_archives
+            ORDER BY financial_year DESC
+            """
+        ).fetchall()
+    finally:
+        if conn:
+            conn.close()
 
+
+def archive_and_reset(financial_year, user_id, username):
+    conn = None
     try:
         conn = get_db_connection()
 
-        # كل العملية Transaction واحدة:
-        # أي خطأ = rollback وعدم تنفيذ تصفير جزئي.
-        existing_tables = [
-            table_name
-            for table_name, _ in RESET_TABLES
-            if _table_exists(conn, table_name)
-        ]
+        # منع إقفال نفس السنة مرتين.
+        exists = conn.execute(
+            """
+            SELECT id
+            FROM financial_year_archives
+            WHERE financial_year = ?
+            FOR UPDATE
+            """,
+            (financial_year,)
+        ).fetchone()
 
-        for table_name in existing_tables:
-            conn.execute(f"DELETE FROM {table_name}")
+        if exists:
+            raise ValueError(
+                f"السنة المالية {financial_year} مؤرشفة بالفعل."
+            )
+
+        summary = {}
+        table_rows = {}
+
+        # نقرأ كل البيانات أولاً قبل أي DELETE.
+        for table_name, label in ARCHIVE_TABLES:
+            if not _table_exists(conn, table_name):
+                continue
+
+            cursor = conn.execute(
+                f"SELECT * FROM {table_name} ORDER BY id ASC"
+            )
+            rows = cursor.fetchall()
+
+            converted = [
+                _row_to_dict(cursor, row)
+                for row in rows
+            ]
+
+            table_rows[table_name] = converted
+            summary[table_name] = {
+                "label": label,
+                "rows": len(converted),
+            }
+
+        # إنشاء رأس الأرشيف.
+        archive_cursor = conn.execute(
+            """
+            INSERT INTO financial_year_archives
+            (
+                financial_year,
+                closed_by,
+                closed_by_username,
+                summary_json
+            )
+            VALUES (?, ?, ?, ?)
+            RETURNING id
+            """,
+            (
+                financial_year,
+                user_id,
+                username,
+                json.dumps(summary, ensure_ascii=False)
+            )
+        )
+
+        archive_id = archive_cursor.fetchone()[0]
+
+        # حفظ نسخة JSON كاملة لكل سجل.
+        archived_counts = {}
+
+        for table_name, rows in table_rows.items():
+            archived_counts[table_name] = 0
+
+            for row_data in rows:
+                source_row_id = row_data.get("id")
+
+                conn.execute(
+                    """
+                    INSERT INTO financial_year_archive_rows
+                    (
+                        archive_id,
+                        source_table,
+                        source_row_id,
+                        row_data
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        archive_id,
+                        table_name,
+                        (
+                            str(source_row_id)
+                            if source_row_id is not None
+                            else None
+                        ),
+                        json.dumps(
+                            row_data,
+                            ensure_ascii=False,
+                            default=str
+                        )
+                    )
+                )
+                archived_counts[table_name] += 1
+
+        # تحقق قبل الحذف: عدد المؤرشف = عدد المصدر.
+        for table_name, rows in table_rows.items():
+            if archived_counts.get(table_name, 0) != len(rows):
+                raise RuntimeError(
+                    f"فشل التحقق من أرشفة جدول {table_name}."
+                )
+
+        # لا يبدأ الحذف إلا بعد نجاح الأرشفة والتحقق.
+        for table_name, _ in ARCHIVE_TABLES:
+            if table_name in table_rows:
+                conn.execute(f"DELETE FROM {table_name}")
 
         conn.commit()
-        return True, None
+        return True, archive_id, summary, None
 
     except Exception as e:
         if conn:
@@ -94,8 +231,7 @@ def perform_annual_reset():
                 conn.rollback()
             except Exception:
                 pass
-
-        return False, str(e)
+        return False, None, None, str(e)
 
     finally:
         if conn:
@@ -103,108 +239,126 @@ def perform_annual_reset():
 
 
 def show_page():
-    st.markdown("## ⚙️ الجرد والتصفير السنوي")
+    st.markdown("## ⚙️ إقفال وأرشفة السنة المالية")
 
     role = st.session_state.get("role", "")
 
     if role != "Admin":
-        st.error("🔒 هذه العملية متاحة للمدير Admin فقط.")
+        st.error("🔒 إقفال السنة المالية متاح للمدير Admin فقط.")
         return
 
-    st.error(
-        "⚠️ هذه شاشة إقفال السنة المالية وبدء سنة جديدة. "
-        "التنفيذ يحذف الحركات المالية والتشغيلية القديمة نهائياً "
-        "من قاعدة البيانات، ولا يمكن التراجع عنه من داخل البرنامج."
-    )
-
     st.info(
-        "✅ لن يتم تصفير المخزون. ستظل الأصناف وكمياتها الحالية "
-        "والفروع والمستخدمون محفوظة كما هي."
+        "📚 عند التنفيذ يتم أولاً حفظ نسخة كاملة من الحركات "
+        "في أرشيف السنوات المالية داخل قاعدة البيانات، ثم يتم "
+        "التحقق من الأرشيف، وبعدها فقط يتم تصفير حركات السنة الحالية."
     )
 
-    st.markdown("### ✅ بيانات ستبقى محفوظة")
+    st.success(
+        "✅ الأصناف وكمياتها وأسعارها والفروع والمستخدمون "
+        "وأرصدة الموردين والعملاء لن يتم حذفها."
+    )
 
+    st.markdown("### البيانات التي ستبقى")
     for item in KEEP_DATA:
         st.write(f"• {item}")
 
-    st.markdown("### 🗑️ بيانات سيتم تصفيرها")
-
     try:
         summary = get_reset_summary()
+        archived_years = get_archived_years()
     except Exception as e:
-        st.error("تعذر قراءة بيانات قاعدة البيانات.")
+        st.error("تعذر قراءة بيانات الإقفال السنوي.")
         st.code(str(e))
         return
 
+    st.markdown("### الحركات التي ستتم أرشفتها ثم تصفيرها")
+
     total_rows = 0
+    for _, label, count in summary:
+        total_rows += count
+        st.write(f"• {label}: **{count:,}** سجل")
 
-    if summary:
-        for _, label, count in summary:
-            total_rows += count
-            st.write(f"• {label}: **{count:,}** سجل")
-    else:
-        st.info("لا توجد جداول تشغيلية متاحة للتصفير.")
-
-    st.metric("إجمالي السجلات التي سيتم حذفها", f"{total_rows:,}")
-
-    st.warning(
-        "💡 أرصدة الموردين والعملاء لن يتم تصفيرها، لأنها قد تمثل "
-        "ديوناً أو مستحقات تنتقل كرصد افتتاحي للسنة الجديدة."
+    st.metric(
+        "إجمالي السجلات التي ستدخل الأرشيف",
+        f"{total_rows:,}"
     )
 
+    if archived_years:
+        st.markdown("### 📁 السنوات المؤرشفة")
+        for row in archived_years:
+            closed_by = row["closed_by_username"] or "غير محدد"
+            st.write(
+                f"• سنة **{row['financial_year']}** — "
+                f"أغلقت بواسطة **{closed_by}** — "
+                f"{row['closed_at']}"
+            )
+
     st.markdown("---")
-    st.markdown("### 🔐 تأكيد العملية")
+    st.markdown("### 🔐 تأكيد إقفال السنة")
 
-    current_year = datetime.now().year
+    default_year = datetime.now().year
 
-    st.caption(
-        f"للتنفيذ اكتب العبارة التالية حرفياً: "
-        f"تأكيد التصفير السنوي {current_year}"
+    financial_year = st.number_input(
+        "السنة المالية المراد إقفالها:",
+        min_value=2000,
+        max_value=2100,
+        value=default_year,
+        step=1,
+        key="annual_close_year"
+    )
+
+    expected = f"إقفال السنة {int(financial_year)}"
+
+    st.warning(
+        f"للتنفيذ اكتب العبارة التالية حرفياً: {expected}"
     )
 
     confirmation = st.text_input(
         "عبارة التأكيد:",
-        key="annual_reset_confirmation"
+        key="annual_close_confirmation"
     )
 
     acknowledge = st.checkbox(
-        "أؤكد أنني راجعت البيانات وأفهم أن الحركات القديمة سيتم حذفها.",
-        key="annual_reset_ack"
+        "أؤكد أنني راجعت السنة المختارة وأوافق على أرشفة "
+        "الحركات ثم تصفيرها لبدء سنة مالية جديدة.",
+        key="annual_close_ack"
     )
 
-    expected_text = f"تأكيد التصفير السنوي {current_year}"
-
-    can_reset = (
-        confirmation.strip() == expected_text
+    can_close = (
+        total_rows > 0
+        and confirmation.strip() == expected
         and acknowledge
-        and total_rows > 0
     )
 
     if st.button(
-        "🚨 تنفيذ التصفير السنوي وبدء سنة مالية جديدة",
+        "📚 أرشفة السنة ثم بدء سنة مالية جديدة",
         type="primary",
-        disabled=not can_reset,
+        disabled=not can_close,
         use_container_width=True,
-        key="annual_reset_execute"
+        key="annual_close_execute"
     ):
-        with st.spinner("جاري تنفيذ التصفير السنوي..."):
-            success, error = perform_annual_reset()
+        with st.spinner(
+            "جاري الأرشفة والتحقق ثم التصفير..."
+        ):
+            success, archive_id, saved_summary, error = (
+                archive_and_reset(
+                    int(financial_year),
+                    st.session_state.get("user_id"),
+                    st.session_state.get("username", "")
+                )
+            )
 
         if success:
             st.success(
-                "✅ تم تصفير الحركات السنوية بنجاح. "
-                "الأصناف وكمياتها والفروع والمستخدمون لم تتغير."
+                f"✅ تم إقفال وأرشفة السنة المالية "
+                f"{int(financial_year)} بنجاح. "
+                f"رقم الأرشيف: {archive_id}"
             )
-
-            st.session_state["annual_reset_confirmation"] = ""
-            st.session_state["annual_reset_ack"] = False
-
+            st.balloons()
             st.rerun()
-
         else:
             st.error(
-                "❌ لم يتم تنفيذ التصفير. تم التراجع عن العملية "
-                "ولم يتم اعتماد حذف جزئي."
+                "❌ لم يتم إقفال السنة. تم تنفيذ Rollback "
+                "ولم يتم اعتماد أرشفة أو حذف جزئي."
             )
             if error:
                 st.code(error)
