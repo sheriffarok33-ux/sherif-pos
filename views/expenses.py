@@ -256,7 +256,8 @@ def add_revenue(
     branch_id,
     revenue_source,
     amount,
-    notes
+    notes,
+    revenue_date
 ):
 
     conn = None
@@ -274,6 +275,13 @@ def add_revenue(
                 "يجب إدخال مصدر الإيراد."
             )
 
+        description = revenue_source.strip()
+
+        if notes.strip():
+            description = (
+                f"{description} - {notes.strip()}"
+            )
+
         conn.execute(
             """
             INSERT INTO revenues
@@ -281,15 +289,19 @@ def add_revenue(
                 branch_id,
                 revenue_source,
                 amount,
-                notes
+                notes,
+                description,
+                revenue_date
             )
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 branch_id,
                 revenue_source.strip(),
                 amount,
-                notes.strip()
+                notes.strip(),
+                description,
+                revenue_date.strftime("%Y-%m-%d")
             )
         )
 
@@ -774,6 +786,12 @@ def show_page():
                 format="%.2f"
             )
 
+            rev_date = st.date_input(
+                "تاريخ الإيراد:",
+                value=datetime.now(),
+                key="revenue_date"
+            )
+
             rev_notes = st.text_area(
                 "ملاحظات إضافية:"
             )
@@ -808,7 +826,8 @@ def show_page():
                     b_id,
                     rev_source,
                     rev_amount,
-                    rev_notes
+                    rev_notes,
+                    rev_date
                 )
 
     # ========================================================
