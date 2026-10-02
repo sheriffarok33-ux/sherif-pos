@@ -2,6 +2,7 @@ import os
 import re
 import streamlit as st
 from database import initialize_database, get_db_connection
+from offline_store import ensure_local_schema, offline_login, sync_reference_data, sync_pending_sales, pending_count
 
 # إعدادات الصفحة الأساسية
 # يجب أن تكون أول أمر Streamlit في الملف.
@@ -22,12 +23,12 @@ def initialize_app_database():
     return True
 
 
+ensure_local_schema()
 try:
     initialize_app_database()
-except Exception as e:
-    st.error("❌ تعذر تهيئة قاعدة البيانات.")
-    st.code(str(e))
-    st.stop()
+except Exception:
+    # عند انقطاع الإنترنت لا نوقف البرنامج؛ يسمح بالدخول من النسخة المحلية.
+    pass
 
 
 def load_appearance_settings():
@@ -314,19 +315,36 @@ if not st.session_state["logged_in"]:
                 ).fetchone()
 
                 if user:
+                    try:
+                        sync_pending_sales(conn)
+                        sync_reference_data(conn)
+                    except Exception:
+                        pass
                     st.session_state["logged_in"] = True
                     st.session_state["username"] = user["username"]
                     st.session_state["role"] = user["role"]
                     st.session_state["user_id"] = user["id"]
                     st.session_state["branch_id"] = user["branch_id"]
+                    st.session_state["connection_mode"] = "online"
                     st.session_state["page"] = "🏠 الرئيسية واللوحة"
                     st.rerun()
                 else:
                     st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة، أو الحساب موقوف.")
 
-            except Exception as e:
-                st.error("❌ تعذر تسجيل الدخول حالياً.")
-                st.code(str(e))
+            except Exception:
+                user = offline_login(u_name, u_pass)
+                if user:
+                    st.session_state["logged_in"] = True
+                    st.session_state["username"] = user["username"]
+                    st.session_state["role"] = user["role"]
+                    st.session_state["user_id"] = user["id"]
+                    st.session_state["branch_id"] = user["branch_id"]
+                    st.session_state["connection_mode"] = "offline"
+                    st.session_state["page"] = "🛒 نقطة البيع (POS)"
+                    st.warning("🟠 تم الدخول بالنسخة المحلية. نقطة البيع متاحة حتى عودة الإنترنت.")
+                    st.rerun()
+                else:
+                    st.error("❌ لا يوجد اتصال بالسيرفر ولا توجد بيانات دخول محلية صالحة. يجب أن يتصل هذا الجهاز بالسيرفر مرة واحدة على الأقل لتحديث النسخة المحلية.")
             finally:
                 if conn:
                     conn.close()
