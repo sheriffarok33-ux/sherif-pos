@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import io
-from database import get_db_connection
+from datetime import datetime
+from database import get_db_connection, ensure_pos_extensions_schema
 
 
 def _excel_bytes(df, sheet_name):
@@ -16,7 +17,19 @@ def _set_mode(mode):
     st.rerun()
 
 
+def _current_shift_number():
+    hour = datetime.now().hour
+    return 1 if 6 <= hour < 16 else 2
+
+
 def show_page():
+    try:
+        ensure_pos_extensions_schema()
+    except Exception as e:
+        st.error("❌ تعذر تجهيز سجل دفعات الموردين.")
+        st.code(str(e))
+        return
+
     st.header("👥 الموردون والعملاء والحسابات")
     st.info("الإضافة، التعديل، الحذف، السداد والتحصيل والتصدير من شاشة واحدة.")
 
@@ -197,9 +210,30 @@ def show_page():
                     if amount <= 0:
                         st.warning("أدخل مبلغًا أكبر من صفر.")
                     else:
+                        branch_id = st.session_state.get("branch_id")
+                        user_id = st.session_state.get("user_id")
+                        if not branch_id:
+                            st.error("⚠️ المستخدم غير مرتبط بفرع؛ لا يمكن تسجيل الدفعة.")
+                            return
+
                         conn.execute(
                             "UPDATE suppliers SET balance = balance - ? WHERE id = ?",
                             (amount, supplier["id"])
+                        )
+                        conn.execute(
+                            """
+                            INSERT INTO supplier_payments
+                            (supplier_id, branch_id, user_id, amount, shift_number, notes)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                supplier["id"],
+                                branch_id,
+                                user_id,
+                                float(amount),
+                                _current_shift_number(),
+                                "دفعة من حساب مورد"
+                            )
                         )
                         conn.commit()
                         st.success("✅ تم تسجيل الدفعة وتحديث رصيد المورد.")
