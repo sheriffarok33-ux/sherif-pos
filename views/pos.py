@@ -1,7 +1,7 @@
 import streamlit as st
 import json
 from datetime import datetime
-from database import get_db_connection
+from database import get_db_connection, ensure_pos_extensions_schema
 
 
 # ============================================================
@@ -300,12 +300,17 @@ def checkout_payment_dialog(
 
     cust_name = st.text_input(
         "اسم الزبون:",
-        value="زبون نقدي"
+        value=st.session_state.get("pos_customer_name", "زبون نقدي")
     )
 
     cust_phone = st.text_input(
         "رقم الهاتف (اختياري):",
-        value=""
+        value=st.session_state.get("pos_customer_phone", "")
+    )
+
+    marketing_consent = st.checkbox(
+        "يوافق العميل على استقبال العروض والرسائل التسويقية",
+        value=bool(st.session_state.get("pos_marketing_consent", False))
     )
 
     # ========================================================
@@ -663,6 +668,43 @@ def checkout_payment_dialog(
             invoice_details,
             ensure_ascii=False
         )
+
+        # ====================================================
+        # حفظ/تحديث بيانات العميل عند إدخال الهاتف
+        # ====================================================
+
+        clean_phone = cust_phone.strip()
+        clean_name = cust_name.strip() or "زبون نقدي"
+
+        if clean_phone:
+            existing_customer = conn.execute(
+                "SELECT id FROM customers WHERE phone = ? LIMIT 1",
+                (clean_phone,)
+            ).fetchone()
+
+            if existing_customer:
+                conn.execute(
+                    """
+                    UPDATE customers
+                    SET customer_name = ?,
+                        marketing_consent = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        clean_name,
+                        bool(marketing_consent),
+                        existing_customer["id"]
+                    )
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO customers
+                    (customer_name, phone, total_purchases, balance, marketing_consent)
+                    VALUES (?, ?, 0.0, 0.0, ?)
+                    """,
+                    (clean_name, clean_phone, bool(marketing_consent))
+                )
 
         # ====================================================
         # حفظ الفاتورة - PostgreSQL
@@ -1109,24 +1151,56 @@ def summarize_invoice_rows(rows):
     discount_total = 0.0
     net_total = 0.0
     discounted_count = 0
+    payment_totals = {
+        "كاش (نقدي)": 0.0,
+        "شبكة / بطاقة": 0.0,
+        "آجل (على الحساب)": 0.0
+    }
+    manual_item_lines = 0
+    manual_item_qty = 0.0
+    manual_item_total = 0.0
+    exceptions = []
 
     for row in rows:
         net = float(row["total_amount"] or 0)
         details = parse_invoice_notes(row["notes"], net)
         gross = float(details.get("gross_total", net) or net)
         discount = float(details.get("discount_amount", 0) or 0)
+        method = row.get("payment_method", "") if hasattr(row, "get") else row["payment_method"]
+
         gross_total += gross
         discount_total += discount
         net_total += net
+
+        if method in payment_totals:
+            payment_totals[method] += net
+
         if discount > 0:
             discounted_count += 1
+            exceptions.append(f"خصم على فاتورة بقيمة {discount:,.2f} د.ل")
+
+        for item in details.get("items", []) or []:
+            source = item.get("entry_source", "")
+            if source in ("manual_search", "free_item") or item.get("id") == 99999:
+                manual_item_lines += 1
+                manual_item_qty += float(item.get("qty", 0) or 0)
+                manual_item_total += float(item.get("total", 0) or 0)
+                label = "صنف حر بدون كود" if (source == "free_item" or item.get("id") == 99999) else "إضافة يدوية"
+                exceptions.append(f"{label}: {item.get('name', '-')} × {float(item.get('qty', 0) or 0):,.2f}")
 
     return {
         "gross_total": gross_total,
         "discount_total": discount_total,
         "net_total": net_total,
         "discounted_count": discounted_count,
-        "invoice_count": len(rows)
+        "invoice_count": len(rows),
+        "cash_total": payment_totals["كاش (نقدي)"],
+        "card_total": payment_totals["شبكة / بطاقة"],
+        "credit_total": payment_totals["آجل (على الحساب)"],
+        "manual_item_lines": manual_item_lines,
+        "manual_item_qty": manual_item_qty,
+        "manual_item_total": manual_item_total,
+        "exceptions": exceptions
     }
 
 
@@ -1225,7 +1299,16 @@ def build_invoice_print_html(inv):
     return make_printable_html(body, f"Invoice {inv.get('inv_id', '')}")
 
 
-def build_shift_report_html(report_title, branch_name, username, shift_num, summary):
+def build_shift_report_html(
+    report_title, branch_name, username, shift_num, summary,
+    supplier_payments_total=0.0
+):
+    exceptions = summary.get("exceptions", [])
+    exceptions_html = (
+        "<br>".join(f"• {x}" for x in exceptions)
+        if exceptions else "لا توجد حركات استثنائية مسجلة."
+    )
+
     body = f"""
         <h2>مجموعة أبو زيد التجارية</h2>
         <p>فرع: {branch_name}</p>
@@ -1240,11 +1323,37 @@ def build_shift_report_html(report_title, branch_name, username, shift_num, summ
         <p class="left">عدد الفواتير: <b>{summary["invoice_count"]}</b></p>
         <p class="left">إجمالي قبل الخصم: <b>{summary["gross_total"]:,.2f} د.ل</b></p>
         <p class="left">إجمالي الخصومات: <b>{summary["discount_total"]:,.2f} د.ل</b></p>
-        <p class="left">عدد فواتير الخصم: <b>{summary["discounted_count"]}</b></p>
+        <p class="left">إجمالي النقدي: <b>{summary.get("cash_total", 0):,.2f} د.ل</b></p>
+        <p class="left">إجمالي البطاقة: <b>{summary.get("card_total", 0):,.2f} د.ل</b></p>
+        <p class="left">إجمالي الآجل: <b>{summary.get("credit_total", 0):,.2f} د.ل</b></p>
+        <p class="left">المدفوع من حسابات الموردين: <b>{supplier_payments_total:,.2f} د.ل</b></p>
+        <p class="left">الأصناف المضافة يدوياً: <b>{summary.get("manual_item_lines", 0)}</b> حركة /
+            {summary.get("manual_item_total", 0):,.2f} د.ل</p>
         <h3 class="left">صافي المبيعات: {summary["net_total"]:,.2f} د.ل</h3>
+        <hr>
+        <h4>⚠️ الحركات والاستثناءات أثناء الوردية</h4>
+        <p style="text-align:right;">{exceptions_html}</p>
     """
     return make_printable_html(body, report_title)
 
+
+
+
+def get_shift_supplier_payments_total(conn, branch_id, shift_num, report_date):
+    try:
+        row = conn.execute(
+            """
+            SELECT COALESCE(SUM(amount), 0) AS total
+            FROM supplier_payments
+            WHERE branch_id = ?
+              AND DATE(created_at) = ?
+              AND shift_number = ?
+            """,
+            (branch_id, report_date, int(shift_num))
+        ).fetchone()
+        return float(row["total"] or 0) if row else 0.0
+    except Exception:
+        return 0.0
 
 
 # ============================================================
@@ -1277,7 +1386,7 @@ def build_historical_z_html(
 ):
     rows = conn.execute(
         """
-        SELECT total_amount, notes
+        SELECT total_amount, notes, payment_method
         FROM invoices
         WHERE branch_id = ?
           AND DATE(created_at) = ?
@@ -1293,7 +1402,7 @@ def build_historical_z_html(
         <h2>مجموعة أبو زيد التجارية</h2>
         <p>فرع: {branch_name}</p>
         <hr>
-        <h3>تقرير Z سابق - الإغلاق المالي</h3>
+        <h3>إغلاق وردية سابق</h3>
         <p style="text-align:right;">
             <b>تاريخ التقرير:</b> {selected_date}<br>
             <b>الحالة:</b> مغلق
@@ -1307,7 +1416,7 @@ def build_historical_z_html(
     """
     return make_printable_html(
         body,
-        f"Z Report {branch_name} {selected_date}"
+        f"Shift Close {branch_name} {selected_date}"
     ), summary
 
 
@@ -1318,6 +1427,12 @@ def build_historical_z_html(
 def show_page():
 
     ensure_cart()
+    try:
+        ensure_pos_extensions_schema()
+    except Exception as e:
+        st.error("❌ تعذر تجهيز إضافات نقطة البيع.")
+        st.code(str(e))
+        return
 
     st.markdown(
         """
@@ -1861,6 +1976,33 @@ def show_page():
 
             st.write("")
 
+            if st.button(
+                "📱 إضافة بيانات العميل",
+                use_container_width=True,
+                key="pos_customer_data_btn"
+            ):
+                st.session_state["pos_show_customer_data"] = not st.session_state.get(
+                    "pos_show_customer_data", False
+                )
+
+            if st.session_state.get("pos_show_customer_data", False):
+                cc1, cc2 = st.columns(2)
+                st.session_state["pos_customer_name"] = cc1.text_input(
+                    "اسم العميل (اختياري):",
+                    value=st.session_state.get("pos_customer_name", ""),
+                    key="pos_customer_name_input"
+                )
+                st.session_state["pos_customer_phone"] = cc2.text_input(
+                    "رقم هاتف العميل:",
+                    value=st.session_state.get("pos_customer_phone", ""),
+                    key="pos_customer_phone_input"
+                )
+                st.session_state["pos_marketing_consent"] = st.checkbox(
+                    "يوافق على استقبال العروض والرسائل التسويقية",
+                    value=bool(st.session_state.get("pos_marketing_consent", False)),
+                    key="pos_marketing_consent_input"
+                )
+
             c_btn1, c_btn2 = (
                 st.columns([2, 1])
             )
@@ -1927,17 +2069,17 @@ def show_page():
                 report_action = st.selectbox(
                     "اختر التقرير أو العملية:",
                     [
-                        "تقرير X - الوردية الحالية",
-                        "تقرير Z - إغلاق اليوم"
+                        "📊 ملخص الوردية الحالية",
+                        "🔒 إغلاق الوردية"
                     ],
                     key="pos_report_action"
                 )
 
-                if report_action == "تقرير X - الوردية الحالية":
+                if report_action == "📊 ملخص الوردية الحالية":
 
                     shift_invoice_rows = conn.execute(
                         """
-                        SELECT total_amount, notes
+                        SELECT total_amount, notes, payment_method
                         FROM invoices
                         WHERE branch_id = ?
                           AND DATE(created_at) = ?
@@ -1969,12 +2111,17 @@ def show_page():
                         f"{x_summary['invoice_count']}"
                     )
 
+                    supplier_payments_total = get_shift_supplier_payments_total(
+                        conn, b_id, current_shift_num, today_date
+                    )
+
                     x_html = build_shift_report_html(
-                        "تقرير X - تسليم الوردية",
+                        "ملخص الوردية الحالية",
                         branch_name_display,
                         username,
                         current_shift_num,
-                        x_summary
+                        x_summary,
+                        supplier_payments_total
                     )
 
                     st.components.v1.html(
@@ -1987,14 +2134,14 @@ def show_page():
 
                     z_invoice_rows = conn.execute(
                         """
-                        SELECT total_amount, notes
+                        SELECT total_amount, notes, payment_method
                         FROM invoices
                         WHERE branch_id = ?
                           AND DATE(created_at) = ?
-                          AND shift_status != 'Z_Closed'
+                          AND shift_status = ?
                         ORDER BY id ASC
                         """,
-                        (b_id, today_date)
+                        (b_id, today_date, str(current_shift_num))
                     ).fetchall()
 
                     z_summary = summarize_invoice_rows(
@@ -2015,12 +2162,17 @@ def show_page():
                         f"{z_summary['invoice_count']}"
                     )
 
+                    supplier_payments_total = get_shift_supplier_payments_total(
+                        conn, b_id, current_shift_num, today_date
+                    )
+
                     z_html = build_shift_report_html(
-                        "تقرير Z - الإغلاق المالي",
+                        "إغلاق الوردية",
                         branch_name_display,
                         username,
                         current_shift_num,
-                        z_summary
+                        z_summary,
+                        supplier_payments_total
                     )
 
                     st.components.v1.html(
@@ -2031,10 +2183,10 @@ def show_page():
 
                     if not z_invoice_rows:
                         st.info(
-                            "لا توجد فواتير غير مغلقة لهذا اليوم."
+                            "لا توجد فواتير غير مغلقة لهذه الوردية."
                         )
                     elif st.button(
-                        "🔒 تنفيذ إغلاق Z لليوم",
+                        "🔒 تنفيذ إغلاق الوردية",
                         type="primary",
                         use_container_width=True
                     ):
@@ -2049,14 +2201,14 @@ def show_page():
                                 SET shift_status = 'Z_Closed'
                                 WHERE branch_id = ?
                                   AND DATE(created_at) = ?
-                                  AND shift_status != 'Z_Closed'
+                                  AND shift_status = ?
                                 """,
-                                (b_id, today_date)
+                                (b_id, today_date, str(current_shift_num))
                             )
                             conn.commit()
                             st.success(
-                                "✅ تم إغلاق مبيعات اليوم "
-                                "وحفظها في أرشيف Z."
+                                "✅ تم إغلاق الوردية "
+                                "وحفظها في أرشيف إغلاق الوردية."
                             )
                             st.rerun()
 
@@ -2190,7 +2342,8 @@ def show_page():
                                     * float(
                                         manual_qty
                                     )
-                                )
+                                ),
+                            "entry_source": "manual_search"
                         }
                     )
 
@@ -2274,7 +2427,8 @@ def show_page():
                                     * float(
                                         free_qty
                                     )
-                                )
+                                ),
+                            "entry_source": "free_item"
                         }
                     )
 
@@ -2307,7 +2461,7 @@ def show_page():
                 "ماذا تريد عرض أو إعادة طباعته؟",
                 [
                     "🧾 فاتورة مبيعات سابقة",
-                    "📊 تقرير Z سابق",
+                    "📊 إغلاق وردية سابق",
                     "📦 سجل التزويد"
                 ],
                 key="pos_archive_action"
@@ -2429,7 +2583,7 @@ def show_page():
             # ------------------------------------------------
             # أرشيف Z
             # ------------------------------------------------
-            elif archive_action == "📊 تقرير Z سابق":
+            elif archive_action == "📊 إغلاق وردية سابق":
 
                 z_dates = get_z_archive_dates(
                     conn,
@@ -2453,13 +2607,13 @@ def show_page():
                     }
 
                     selected_z_label = st.selectbox(
-                        "اختر تقرير Z السابق:",
-                        ["-- اختر تقرير Z --"]
+                        "اختر إغلاق الوردية السابق:",
+                        ["-- اختر إغلاق وردية --"]
                         + list(z_options.keys()),
                         key="archive_z_select"
                     )
 
-                    if selected_z_label != "-- اختر تقرير Z --":
+                    if selected_z_label != "-- اختر إغلاق وردية --":
 
                         selected_z_date = z_options[
                             selected_z_label
@@ -2495,7 +2649,7 @@ def show_page():
                         )
 
                         st.download_button(
-                            "📥 تحميل تقرير Z",
+                            "📥 تحميل تقرير إغلاق الوردية",
                             data=historical_z_html.encode("utf-8"),
                             file_name=(
                                 f"Z_Report_{b_id}_"
