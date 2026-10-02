@@ -436,8 +436,9 @@ elif choice == "🛒 نقطة البيع (POS)":
     try:
         from views import pos
         pos.show_page()
-    except ImportError:
-        st.info("🛒 شاشة نقطة البيع قيد الترتيب...")
+    except ImportError as e:
+        st.error("❌ تعذر تحميل شاشة نقطة البيع بسبب ملف أو مكتبة مفقودة.")
+        st.code(str(e))
 elif choice == "🏢 إدارة الفروع":
     try:
         from views import branches
