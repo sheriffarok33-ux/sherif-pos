@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 import calendar
+from io import BytesIO
 from database import get_db_connection, ensure_hr_schema
 
 ROLES=["Admin","General_Supervisor","Branch_Supervisor","Cashier","Viewer"]
@@ -38,6 +39,12 @@ def financial(conn,e,kind,amount,notes="",y=None,m=None,wd=None,md=None):
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
         (e["id"],e["branch_id"],kind,amount,y,m,wd,md,float(e["monthly_salary"] or 0),
          notes,exp_id,st.session_state.get("user_id")))
+
+def _xlsx_bytes(df, sheet_name="Data"):
+    out = BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+    return out.getvalue()
 
 def show_page():
     try:
@@ -78,8 +85,8 @@ def show_page():
               "الحالة":"على رأس العمل" if r["employment_status"]=="active" else "منتهي",
               "حساب الدخول":r["username"] or "بدون حساب"} for r in rs])
             st.dataframe(df,use_container_width=True,hide_index=True)
-            st.download_button("📥 تصدير CSV",df.to_csv(index=False).encode("utf-8-sig"),
-                               "employees.csv","text/csv",use_container_width=True)
+            st.download_button("📥 تصدير Excel", _xlsx_bytes(df, "Employees"),
+                               "employees.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
         elif v=="add":
             us=conn.execute("""SELECT id,username FROM users WHERE id NOT IN
@@ -96,6 +103,13 @@ def show_page():
                 notes=st.text_area("ملاحظات"); ok=st.form_submit_button("💾 حفظ",type="primary")
             if ok:
                 if not name.strip(): st.warning("أدخل اسم الموظف."); return
+                dup = conn.execute("""SELECT id FROM employees
+                    WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?))
+                       OR (? <> '' AND phone IS NOT NULL AND TRIM(phone)=TRIM(?))
+                    LIMIT 1""", (name.strip(), phone.strip(), phone.strip())).fetchone()
+                if dup:
+                    st.error("❌ يوجد موظف مسجل بنفس الاسم أو رقم الهاتف. افتح تعديل/إنهاء لتحديث بياناته بدلاً من إنشاء ملف مكرر.")
+                    return
                 conn.execute("""INSERT INTO employees(user_id,full_name,phone,address,emergency_name,
                     emergency_phone,emergency_relation,branch_id,monthly_salary,hire_date,notes)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(um[un],name.strip(),phone,addr,en,ep,er,bm[bn],sal,hd,notes))
@@ -174,8 +188,8 @@ def show_page():
               "أيام العمل":f"{r['work_days']}/{r['month_days']}" if r["work_days"] is not None else "",
               "ملاحظات":r["notes"] or "","التاريخ":r["created_at"]} for r in rs])
             st.dataframe(df,use_container_width=True,hide_index=True)
-            if not df.empty: st.download_button("📥 تصدير CSV",df.to_csv(index=False).encode("utf-8-sig"),
-                                                "hr_history.csv","text/csv",use_container_width=True)
+            if not df.empty: st.download_button("📥 تصدير Excel", _xlsx_bytes(df, "HR History"),
+                                                "hr_history.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
         else:
             st.subheader("🔐 حسابات الدخول والصلاحيات")
@@ -187,12 +201,50 @@ def show_page():
                 ok=st.form_submit_button("➕ إنشاء حساب",type="primary")
             if ok:
                 if not un.strip() or not pw: st.warning("الاسم وكلمة المرور مطلوبان."); return
+                if conn.execute("SELECT id FROM users WHERE LOWER(TRIM(username))=LOWER(TRIM(?)) LIMIT 1", (un.strip(),)).fetchone():
+                    st.error("❌ اسم المستخدم مستخدم بالفعل."); return
                 conn.execute("INSERT INTO users(username,phone,password,role,branch_id) VALUES(?,?,?,?,?)",
                              (un.strip(),ph,pw,rr,allbm[bn])); conn.commit(); st.success("✅ تم إنشاء الحساب."); st.rerun()
             rs=conn.execute("""SELECT u.id,u.username,u.phone,u.role,COALESCE(b.branch_name,'كافة الفروع') branch_name
                 FROM users u LEFT JOIN branches b ON b.id=u.branch_id ORDER BY u.id""").fetchall()
             st.dataframe(pd.DataFrame([{"رقم":r["id"],"المستخدم":r["username"],"الهاتف":r["phone"] or "",
               "الصلاحية":r["role"],"الفرع":r["branch_name"]} for r in rs]),use_container_width=True,hide_index=True)
+            if rs:
+                st.markdown("---")
+                labels={f"#{r['id']} - {r['username']} - {r['role']}":r for r in rs}
+                selected=labels[st.selectbox("اختر حساباً للتعديل أو الحذف", list(labels), key="hr_account_pick")]
+                if role == "Admin":
+                    with st.form("edit_user_account"):
+                        c1,c2=st.columns(2)
+                        eu=c1.text_input("اسم المستخدم", selected["username"])
+                        eph=c1.text_input("الهاتف", selected["phone"] or "")
+                        epw=c2.text_input("كلمة مرور جديدة (اتركها فارغة للإبقاء على الحالية)", type="password")
+                        erole=c2.selectbox("الصلاحية", ROLES, index=ROLES.index(selected["role"]) if selected["role"] in ROLES else 0)
+                        branch_names=list(allbm)
+                        current_branch=selected["branch_name"] if selected["branch_name"] in allbm else "🌐 كافة الفروع"
+                        ebn=st.selectbox("الفرع", branch_names, index=branch_names.index(current_branch))
+                        save=st.form_submit_button("💾 حفظ تعديل الحساب", type="primary")
+                    if save:
+                        duplicate=conn.execute("SELECT id FROM users WHERE LOWER(TRIM(username))=LOWER(TRIM(?)) AND id<>? LIMIT 1", (eu.strip(), selected["id"])).fetchone()
+                        if duplicate: st.error("❌ اسم المستخدم مستخدم بالفعل."); return
+                        if selected["id"] == st.session_state.get("user_id") and erole != "Admin" and selected["role"] == "Admin":
+                            admins=conn.execute("SELECT COUNT(*) FROM users WHERE role='Admin' AND is_active=1").fetchone()[0]
+                            if admins <= 1: st.error("❌ لا يمكن إزالة صلاحية آخر Admin نشط."); return
+                        if epw:
+                            conn.execute("UPDATE users SET username=?,phone=?,password=?,role=?,branch_id=? WHERE id=?", (eu.strip(),eph,epw,erole,allbm[ebn],selected["id"]))
+                        else:
+                            conn.execute("UPDATE users SET username=?,phone=?,role=?,branch_id=? WHERE id=?", (eu.strip(),eph,erole,allbm[ebn],selected["id"]))
+                        conn.commit(); st.success("✅ تم تعديل الحساب."); st.rerun()
+
+                    confirm=st.checkbox("أؤكد حذف الحساب المحدد", key="confirm_delete_user")
+                    if st.button("🗑️ حذف حساب الدخول", type="secondary", use_container_width=True, disabled=not confirm):
+                        if selected["id"] == st.session_state.get("user_id"):
+                            st.error("❌ لا يمكنك حذف حسابك أثناء تسجيل الدخول."); return
+                        if selected["role"] == "Admin":
+                            admins=conn.execute("SELECT COUNT(*) FROM users WHERE role='Admin' AND is_active=1").fetchone()[0]
+                            if admins <= 1: st.error("❌ لا يمكن حذف آخر Admin نشط."); return
+                        conn.execute("DELETE FROM users WHERE id=?", (selected["id"],))
+                        conn.commit(); st.success("✅ تم حذف حساب الدخول. ملف الموظف -إن كان مرتبطاً- سيبقى محفوظاً بدون حساب دخول."); st.rerun()
     except Exception as ex:
         if conn: conn.rollback()
         st.error("❌ حدث خطأ في HR."); st.code(str(ex))
