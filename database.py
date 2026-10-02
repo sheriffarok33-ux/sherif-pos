@@ -651,6 +651,63 @@ def get_db_connection():
 
 
 
+
+# ============================================================
+# امتدادات نقطة البيع وتقارير الوردية
+# ============================================================
+
+def ensure_pos_extensions_schema():
+    """تهيئة إضافات POS المطلوبة لتقارير الوردية وبيانات العملاء."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            ALTER TABLE customers
+            ADD COLUMN IF NOT EXISTS marketing_consent BOOLEAN DEFAULT FALSE
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS supplier_payments
+            (
+                id BIGSERIAL PRIMARY KEY,
+                supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+                shift_number INTEGER,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_supplier_payments_branch_date
+            ON supplier_payments(branch_id, created_at)
+            """
+        )
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        if conn:
+            conn.close()
+
+
 # ============================================================
 # ضمان جداول الموارد البشرية HR
 # ============================================================
