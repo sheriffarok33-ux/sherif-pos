@@ -1521,6 +1521,8 @@ def initialize_database():
             )
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_employees_branch ON employees(branch_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_employees_name ON employees(LOWER(TRIM(full_name)))")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_employees_phone ON employees(phone)")
         cursor.execute("""CREATE INDEX IF NOT EXISTS idx_employee_financial_employee_date
                           ON employee_financial_transactions(employee_id, created_at)""")
 
