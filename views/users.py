@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 import calendar
-from database import get_db_connection
+from database import get_db_connection, ensure_hr_schema
 
 ROLES=["Admin","General_Supervisor","Branch_Supervisor","Cashier","Viewer"]
 
@@ -40,6 +40,13 @@ def financial(conn,e,kind,amount,notes="",y=None,m=None,wd=None,md=None):
          notes,exp_id,st.session_state.get("user_id")))
 
 def show_page():
+    try:
+        ensure_hr_schema()
+    except Exception as e:
+        st.error("❌ تعذر تجهيز جداول الموارد البشرية في قاعدة البيانات.")
+        st.code(str(e))
+        return
+
     st.header("👥 إدارة الموظفين والمستخدمين — HR مصغرة")
     st.info("الراتب والسلفة يُحمّلان تلقائياً على مصروفات الفرع المسجل عليه الموظف.")
     role=st.session_state.get("role","")
