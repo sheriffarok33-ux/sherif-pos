@@ -104,6 +104,77 @@ st.markdown("""
     div[data-testid="InputInstructions"] {
         display: none !important;
     }
+
+    /* ========================================================
+       اتجاه الواجهة العربية RTL - طبقة عرض فقط
+       ======================================================== */
+    html, body, .stApp {
+        direction: rtl !important;
+        text-align: right !important;
+    }
+
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    [data-testid="stMainBlockContainer"],
+    [data-testid="stVerticalBlock"],
+    [data-testid="stForm"],
+    [data-testid="stExpander"],
+    [data-testid="stAlert"] {
+        direction: rtl !important;
+        text-align: right !important;
+    }
+
+    [data-testid="stSidebar"] {
+        direction: rtl !important;
+        right: 0 !important;
+        left: auto !important;
+    }
+
+    [data-testid="stSidebar"] > div,
+    [data-testid="stSidebar"] button,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] p {
+        direction: rtl !important;
+        text-align: right !important;
+    }
+
+    .stTextInput, .stTextArea, .stNumberInput, .stSelectbox,
+    .stMultiSelect, .stDateInput, .stTimeInput, .stRadio,
+    .stCheckbox, .stFileUploader {
+        direction: rtl !important;
+        text-align: right !important;
+    }
+
+    .stTextInput input,
+    .stTextArea textarea,
+    .stNumberInput input,
+    [data-baseweb="select"] > div {
+        text-align: right !important;
+    }
+
+    [role="radiogroup"] {
+        direction: rtl !important;
+        justify-content: flex-start !important;
+    }
+
+    [data-testid="stDataFrame"],
+    [data-testid="stTable"],
+    table, thead, tbody, tr, th, td {
+        direction: rtl !important;
+        text-align: right !important;
+    }
+
+    input[type="number"],
+    input[type="tel"],
+    input[type="password"] {
+        direction: ltr !important;
+        text-align: right !important;
+    }
+
+    [data-testid="stSidebarCollapseButton"],
+    [data-testid="collapsedControl"] {
+        direction: ltr !important;
+    }
     </style>
 
     <!-- 🌐 مؤشر حالة الاتصال (Online/Offline) في أعلى الصفحة -->
