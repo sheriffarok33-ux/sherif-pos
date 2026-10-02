@@ -650,6 +650,106 @@ def get_db_connection():
         )
 
 
+
+# ============================================================
+# ضمان جداول الموارد البشرية HR
+# ============================================================
+
+def ensure_hr_schema():
+    """
+    ينشئ/يضمن جداول HR بشكل مستقل عن initialize_database().
+    آمن للاستدعاء عند كل فتح لشاشة الموظفين.
+    """
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS employees
+            (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER UNIQUE,
+                full_name TEXT NOT NULL,
+                phone TEXT,
+                address TEXT,
+                emergency_name TEXT,
+                emergency_phone TEXT,
+                emergency_relation TEXT,
+                branch_id INTEGER NOT NULL,
+                monthly_salary DOUBLE PRECISION DEFAULT 0,
+                hire_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                termination_date DATE,
+                employment_status TEXT DEFAULT 'active',
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+                FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE RESTRICT
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS employee_financial_transactions
+            (
+                id BIGSERIAL PRIMARY KEY,
+                employee_id INTEGER NOT NULL,
+                branch_id INTEGER NOT NULL,
+                transaction_type TEXT NOT NULL,
+                amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+                payroll_year INTEGER,
+                payroll_month INTEGER,
+                work_days INTEGER,
+                month_days INTEGER,
+                base_salary DOUBLE PRECISION DEFAULT 0,
+                notes TEXT,
+                expense_id INTEGER,
+                created_by INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE RESTRICT,
+                FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE RESTRICT,
+                FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE SET NULL,
+                FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_employees_branch
+            ON employees(branch_id)
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_employee_financial_employee_date
+            ON employee_financial_transactions(employee_id, created_at)
+            """
+        )
+
+        conn.commit()
+
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        if conn:
+            conn.close()
+
+
 # ============================================================
 # النسخ الاحتياطي
 # ============================================================
