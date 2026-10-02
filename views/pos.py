@@ -2,6 +2,7 @@ import streamlit as st
 import json
 from datetime import datetime
 from database import get_db_connection, ensure_pos_extensions_schema
+from offline_store import get_pos_connection, server_available, pending_count
 
 
 # ============================================================
@@ -189,7 +190,11 @@ def add_missing_item_dialog(scanned_code, b_id):
     conn = None
 
     try:
-        conn = get_db_connection()
+        conn, _pos_mode = get_pos_connection()
+
+        if _pos_mode == "offline":
+            st.warning("🟠 إضافة صنف جديد غير متاحة أثناء Offline. استخدم الأصناف التي تم تنزيلها مسبقًا، ثم أضف الصنف الجديد بعد عودة الاتصال.")
+            return
 
         existing = conn.execute(
             """
@@ -436,7 +441,7 @@ def checkout_payment_dialog(
     selected_account_id = None
 
     try:
-        conn = get_db_connection()
+        conn, _pos_mode = get_pos_connection()
 
         if pay_method == "آجل (على الحساب)":
 
@@ -940,7 +945,7 @@ def process_barcode_scan():
 
     try:
 
-        conn = get_db_connection()
+        conn, _pos_mode = get_pos_connection()
 
         item = None
 
@@ -1427,12 +1432,13 @@ def build_historical_z_html(
 def show_page():
 
     ensure_cart()
-    try:
-        ensure_pos_extensions_schema()
-    except Exception as e:
-        st.error("❌ تعذر تجهيز إضافات نقطة البيع.")
-        st.code(str(e))
-        return
+    if server_available():
+        try:
+            ensure_pos_extensions_schema()
+        except Exception as e:
+            st.error("❌ تعذر تجهيز إضافات نقطة البيع.")
+            st.code(str(e))
+            return
 
     st.markdown(
         """
@@ -1501,7 +1507,13 @@ def show_page():
 
     try:
 
-        conn = get_db_connection()
+        conn, _pos_mode = get_pos_connection()
+
+        if _pos_mode == "offline":
+            st.warning(f"🟠 وضع العمل المحلي Offline — المبيعات ستُحفظ على هذا الجهاز وتُزامن عند عودة الاتصال. عمليات معلقة: {pending_count()}")
+        else:
+            pc = pending_count()
+            st.success(f"🟢 متصل بالسيرفر — المزامنة فعالة" + (f" | متبقي {pc} عملية" if pc else ""))
 
         # ====================================================
         # تحديد الفرع
