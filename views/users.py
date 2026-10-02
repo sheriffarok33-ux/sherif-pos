@@ -1,650 +1,193 @@
 import streamlit as st
 import pandas as pd
+from datetime import date
+import calendar
 from database import get_db_connection
 
+ROLES=["Admin","General_Supervisor","Branch_Supervisor","Cashier","Viewer"]
+
+def due(salary,hire,end,y,m):
+    md=calendar.monthrange(y,m)[1]; a=date(y,m,1); z=date(y,m,md)
+    start=max(hire,a); finish=min(end or z,z)
+    days=max(0,(finish-start).days+1) if finish>=start else 0
+    return round(float(salary or 0)*days/md,2),days,md
+
+def employees(conn,active=False):
+    w="WHERE e.employment_status='active'" if active else ""
+    return conn.execute(f"""SELECT e.*,b.branch_name,u.username,u.role
+        FROM employees e JOIN branches b ON b.id=e.branch_id
+        LEFT JOIN users u ON u.id=e.user_id {w} ORDER BY e.id DESC""").fetchall()
+
+def pick(rows,key):
+    d={f"#{r['id']} - {r['full_name']} - {r['branch_name']}":r for r in rows}
+    return d[st.selectbox("اختر الموظف:",list(d),key=key)] if d else None
+
+def financial(conn,e,kind,amount,notes="",y=None,m=None,wd=None,md=None):
+    amount=float(amount)
+    if amount<=0: raise ValueError("المبلغ يجب أن يكون أكبر من صفر.")
+    exp_id=None
+    label={"salary":"راتب موظف","advance":"سلفة موظف","advance_repayment":"تسوية سلفة"}[kind]
+    if kind in ("salary","advance"):
+        r=conn.execute("""INSERT INTO expenses(branch_id,amount,description,is_general_store,expense_date)
+            VALUES(?,?,?,0,CURRENT_DATE::text) RETURNING id""",
+            (e["branch_id"],amount,f"{label} - {e['full_name']} - {notes}".strip(" -"))).fetchone()
+        exp_id=r["id"]
+    conn.execute("""INSERT INTO employee_financial_transactions
+        (employee_id,branch_id,transaction_type,amount,payroll_year,payroll_month,
+         work_days,month_days,base_salary,notes,expense_id,created_by)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (e["id"],e["branch_id"],kind,amount,y,m,wd,md,float(e["monthly_salary"] or 0),
+         notes,exp_id,st.session_state.get("user_id")))
 
 def show_page():
-    st.header("👥 إدارة المستخدمين والصلاحيات")
-    st.info(
-        "💡 من هنا يمكنك إضافة الموظفين، تحديد رتبهم، "
-        "تعديل كلمات المرور، وربطهم بالفروع."
-    )
-
-    current_user_role = st.session_state.get("role", "")
-    current_username = st.session_state.get("username", "")
-
-    # ========================================================
-    # تحميل الفروع
-    # ========================================================
-
-    conn = None
-
+    st.header("👥 إدارة الموظفين والمستخدمين — HR مصغرة")
+    st.info("الراتب والسلفة يُحمّلان تلقائياً على مصروفات الفرع المسجل عليه الموظف.")
+    role=st.session_state.get("role","")
+    if role not in ("Admin","General_Supervisor"):
+        st.warning("🔒 هذه الشاشة متاحة للإدارة فقط."); return
+    if "hr_view" not in st.session_state: st.session_state.hr_view="list"
+    nav=[("list","👥 الموظفون"),("add","➕ إضافة موظف"),("edit","✏️ تعديل/إنهاء"),
+         ("salary","💵 الرواتب"),("advance","💳 السلف"),("settle","🔁 تسوية سلفة"),
+         ("history","📋 السجل"),("accounts","🔐 حسابات الدخول")]
+    cs=st.columns(4)
+    for i,(k,l) in enumerate(nav):
+        if cs[i%4].button(l,key="hr_"+k,use_container_width=True,
+                          type="primary" if st.session_state.hr_view==k else "secondary"):
+            st.session_state.hr_view=k; st.rerun()
+    st.markdown("---")
+    conn=None
     try:
-        conn = get_db_connection()
+        conn=get_db_connection()
+        bs=conn.execute("SELECT id,branch_name FROM branches ORDER BY id").fetchall()
+        bm={b["branch_name"]:b["id"] for b in bs}; v=st.session_state.hr_view
 
-        branches_list = conn.execute(
-            """
-            SELECT id, branch_name
-            FROM branches
-            ORDER BY id ASC
-            """
-        ).fetchall()
+        if v=="list":
+            rs=employees(conn)
+            if not rs: st.info("لا توجد ملفات موظفين."); return
+            df=pd.DataFrame([{"رقم":r["id"],"الاسم":r["full_name"],"الهاتف":r["phone"] or "",
+              "العنوان":r["address"] or "","الفرع":r["branch_name"],
+              "الراتب":float(r["monthly_salary"] or 0),"التعيين":r["hire_date"],
+              "إنهاء العمل":r["termination_date"] or "",
+              "الحالة":"على رأس العمل" if r["employment_status"]=="active" else "منتهي",
+              "حساب الدخول":r["username"] or "بدون حساب"} for r in rs])
+            st.dataframe(df,use_container_width=True,hide_index=True)
+            st.download_button("📥 تصدير CSV",df.to_csv(index=False).encode("utf-8-sig"),
+                               "employees.csv","text/csv",use_container_width=True)
 
-    except Exception as e:
-        st.error("❌ تعذر تحميل قائمة الفروع.")
-        st.code(str(e))
-        branches_list = []
+        elif v=="add":
+            us=conn.execute("""SELECT id,username FROM users WHERE id NOT IN
+                (SELECT user_id FROM employees WHERE user_id IS NOT NULL) ORDER BY username""").fetchall()
+            um={"بدون حساب دخول":None}; um.update({x["username"]:x["id"] for x in us})
+            with st.form("add_emp"):
+                c1,c2=st.columns(2)
+                name=c1.text_input("اسم الموظف الكامل *"); phone=c1.text_input("الهاتف")
+                addr=c1.text_input("العنوان"); sal=c1.number_input("الراتب الشهري",min_value=0.,step=50.)
+                hd=c1.date_input("تاريخ التعيين",date.today())
+                en=c2.text_input("اسم شخص مقرب"); ep=c2.text_input("هاتف الشخص المقرب")
+                er=c2.text_input("صلة القرابة"); bn=c2.selectbox("الفرع *",list(bm))
+                un=c2.selectbox("ربط بحساب دخول (اختياري)",list(um))
+                notes=st.text_area("ملاحظات"); ok=st.form_submit_button("💾 حفظ",type="primary")
+            if ok:
+                if not name.strip(): st.warning("أدخل اسم الموظف."); return
+                conn.execute("""INSERT INTO employees(user_id,full_name,phone,address,emergency_name,
+                    emergency_phone,emergency_relation,branch_id,monthly_salary,hire_date,notes)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(um[un],name.strip(),phone,addr,en,ep,er,bm[bn],sal,hd,notes))
+                conn.commit(); st.success("✅ تم إنشاء ملف الموظف."); st.rerun()
 
-    finally:
-        if conn:
-            conn.close()
+        elif v=="edit":
+            e=pick(employees(conn),"edit_emp")
+            if not e: st.info("لا توجد ملفات."); return
+            names=list(bm); bi=names.index(e["branch_name"])
+            with st.form("edit_emp_form"):
+                c1,c2=st.columns(2)
+                name=c1.text_input("الاسم",e["full_name"]); phone=c1.text_input("الهاتف",e["phone"] or "")
+                addr=c1.text_input("العنوان",e["address"] or "")
+                sal=c1.number_input("الراتب",min_value=0.,value=float(e["monthly_salary"] or 0),step=50.)
+                bn=c1.selectbox("الفرع",names,index=bi)
+                en=c2.text_input("اسم شخص مقرب",e["emergency_name"] or "")
+                ep=c2.text_input("هاتف الشخص المقرب",e["emergency_phone"] or "")
+                er=c2.text_input("صلة القرابة",e["emergency_relation"] or "")
+                hd=c2.date_input("تاريخ التعيين",e["hire_date"])
+                ended=c2.checkbox("إنهاء خدمة",value=e["employment_status"]!="active")
+                ed=c2.date_input("تاريخ إنهاء العمل",e["termination_date"] or date.today(),disabled=not ended)
+                notes=st.text_area("ملاحظات",e["notes"] or ""); ok=st.form_submit_button("💾 حفظ",type="primary")
+            if ok:
+                if ended and ed<hd: st.error("تاريخ الإنهاء يسبق التعيين."); return
+                conn.execute("""UPDATE employees SET full_name=?,phone=?,address=?,emergency_name=?,
+                    emergency_phone=?,emergency_relation=?,branch_id=?,monthly_salary=?,hire_date=?,
+                    termination_date=?,employment_status=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (name,phone,addr,en,ep,er,bm[bn],sal,hd,ed if ended else None,
+                     "terminated" if ended else "active",notes,e["id"]))
+                if e["user_id"]: conn.execute("UPDATE users SET branch_id=? WHERE id=?",(bm[bn],e["user_id"]))
+                conn.commit(); st.success("✅ تم التحديث."); st.rerun()
 
-    b_opts_dict = {
-        "🌐 كافة الفروع (الكل)": None
-    }
+        elif v=="salary":
+            e=pick(employees(conn),"salary_emp")
+            if not e: st.info("لا توجد ملفات."); return
+            now=date.today(); c1,c2=st.columns(2)
+            y=int(c1.number_input("السنة",2020,2100,now.year)); m=c2.selectbox("الشهر",range(1,13),index=now.month-1)
+            total,wd,md=due(e["monthly_salary"],e["hire_date"],e["termination_date"],y,m)
+            paid=float(conn.execute("""SELECT COALESCE(SUM(amount),0) FROM employee_financial_transactions
+                WHERE employee_id=? AND transaction_type='salary' AND payroll_year=? AND payroll_month=?""",
+                (e["id"],y,m)).fetchone()[0] or 0)
+            rem=max(0.,total-paid)
+            st.info(f"الراتب: {float(e['monthly_salary'] or 0):,.2f} | أيام العمل: {wd}/{md} | الاستحقاق: {total:,.2f} | المصروف: {paid:,.2f} | المتبقي: {rem:,.2f} د.ل")
+            with st.form("pay_salary"):
+                amt=st.number_input("المبلغ",min_value=0.,value=float(rem),step=50.)
+                notes=st.text_input("ملاحظات"); ok=st.form_submit_button("💵 اعتماد الصرف",type="primary")
+            if ok:
+                if amt<=0 or amt>rem+.001: st.error("راجع مبلغ الاستحقاق."); return
+                financial(conn,e,"salary",amt,notes,y,m,wd,md); conn.commit()
+                st.success(f"✅ تم الصرف وتحميله على فرع {e['branch_name']}."); st.rerun()
 
-    for b in branches_list:
-        b_opts_dict[b["branch_name"]] = b["id"]
+        elif v in ("advance","settle"):
+            e=pick(employees(conn,True) if v=="advance" else employees(conn),v+"_emp")
+            if not e: st.info("لا يوجد موظفون."); return
+            bal=float(conn.execute("""SELECT COALESCE(SUM(CASE WHEN transaction_type='advance' THEN amount
+                WHEN transaction_type='advance_repayment' THEN -amount ELSE 0 END),0)
+                FROM employee_financial_transactions WHERE employee_id=?""",(e["id"],)).fetchone()[0] or 0)
+            st.info(f"رصيد السلف: {bal:,.2f} د.ل")
+            with st.form(v+"_form"):
+                maxv=float(max(0,bal)) if v=="settle" else None
+                if v=="settle": amt=st.number_input("قيمة التسوية",min_value=0.,max_value=maxv,value=0.,step=50.)
+                else: amt=st.number_input("قيمة السلفة",min_value=0.,step=50.)
+                notes=st.text_input("ملاحظات"); ok=st.form_submit_button("✅ اعتماد",type="primary")
+            if ok:
+                financial(conn,e,"advance" if v=="advance" else "advance_repayment",amt,notes)
+                conn.commit(); st.success("✅ تم تسجيل الحركة."); st.rerun()
 
-    # ========================================================
-    # إضافة مستخدم
-    # ========================================================
-
-    st.markdown("### ➕ إضافة مستخدم جديد")
-
-    with st.form(
-        "new_user_form",
-        clear_on_submit=True
-    ):
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            uname = st.text_input(
-                "اسم المستخدم (للدخول):"
-            )
-
-            uphone = st.text_input(
-                "رقم الهاتف:"
-            )
-
-        with col2:
-            upass = st.text_input(
-                "كلمة المرور:",
-                type="password"
-            )
-
-            if current_user_role == "Admin":
-                available_roles = [
-                    "Admin",
-                    "General_Supervisor",
-                    "Branch_Supervisor",
-                    "Cashier",
-                    "Viewer"
-                ]
-            else:
-                available_roles = [
-                    "General_Supervisor",
-                    "Branch_Supervisor",
-                    "Cashier",
-                    "Viewer"
-                ]
-
-            urole = st.selectbox(
-                "الرتبة (الصلاحية):",
-                available_roles
-            )
-
-        sel_user_branch = st.selectbox(
-            "الفرع التابع له:",
-            list(b_opts_dict.keys())
-        )
-
-        save_new_user = st.form_submit_button(
-            "💾 حفظ المستخدم الجديد",
-            type="primary"
-        )
-
-    if save_new_user:
-
-        if not uname or not uname.strip() or not upass:
-            st.warning(
-                "⚠️ يرجى إدخال اسم المستخدم وكلمة المرور."
-            )
-
-        elif (
-            urole == "Admin"
-            and current_user_role != "Admin"
-        ):
-            st.error(
-                "❌ لا يمكن إضافة Admin "
-                "إلا بواسطة Admin آخر."
-            )
+        elif v=="history":
+            rs=conn.execute("""SELECT t.*,e.full_name,b.branch_name FROM employee_financial_transactions t
+                JOIN employees e ON e.id=t.employee_id JOIN branches b ON b.id=t.branch_id
+                ORDER BY t.id DESC LIMIT 1000""").fetchall()
+            labels={"salary":"راتب","advance":"سلفة","advance_repayment":"تسوية سلفة"}
+            df=pd.DataFrame([{"رقم":r["id"],"الموظف":r["full_name"],"الفرع":r["branch_name"],
+              "النوع":labels.get(r["transaction_type"],r["transaction_type"]),"المبلغ":float(r["amount"]),
+              "الشهر":f"{r['payroll_month']:02d}/{r['payroll_year']}" if r["payroll_month"] else "",
+              "أيام العمل":f"{r['work_days']}/{r['month_days']}" if r["work_days"] is not None else "",
+              "ملاحظات":r["notes"] or "","التاريخ":r["created_at"]} for r in rs])
+            st.dataframe(df,use_container_width=True,hide_index=True)
+            if not df.empty: st.download_button("📥 تصدير CSV",df.to_csv(index=False).encode("utf-8-sig"),
+                                                "hr_history.csv","text/csv",use_container_width=True)
 
         else:
-
-            conn = None
-
-            try:
-                conn = get_db_connection()
-
-                assigned_b_id = b_opts_dict[
-                    sel_user_branch
-                ]
-
-                conn.execute(
-                    """
-                    INSERT INTO users
-                    (
-                        username,
-                        phone,
-                        password,
-                        role,
-                        branch_id
-                    )
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        uname.strip(),
-                        uphone.strip(),
-                        upass,
-                        urole,
-                        assigned_b_id
-                    )
-                )
-
-                conn.commit()
-
-                st.success(
-                    f"✅ تم إضافة المستخدم "
-                    f"({uname.strip()}) بنجاح!"
-                )
-
-                st.rerun()
-
-            except Exception as e:
-
-                if conn:
-                    conn.rollback()
-
-                st.error(
-                    "❌ لم يتم حفظ المستخدم في قاعدة البيانات."
-                )
-
-                st.code(str(e))
-
-            finally:
-                if conn:
-                    conn.close()
-
-    # ========================================================
-    # تحميل المستخدمين
-    # ========================================================
-
-    st.markdown("---")
-    st.markdown("### 📋 قائمة المستخدمين الحاليين")
-
-    conn = None
-
-    try:
-        conn = get_db_connection()
-
-        rows = conn.execute(
-            """
-            SELECT
-                users.id,
-                users.username,
-                users.phone,
-                users.password,
-                users.role,
-                users.branch_id,
-                COALESCE(
-                    branches.branch_name,
-                    '🌐 كافة الفروع (الكل)'
-                ) AS branch_name
-            FROM users
-            LEFT JOIN branches
-                ON users.branch_id = branches.id
-            ORDER BY users.id ASC
-            """
-        ).fetchall()
-
-    except Exception as e:
-        st.error("❌ تعذر تحميل المستخدمين.")
-        st.code(str(e))
-        rows = []
-
+            st.subheader("🔐 حسابات الدخول والصلاحيات")
+            allbm={"🌐 كافة الفروع":None}; allbm.update(bm)
+            with st.form("new_user"):
+                c1,c2=st.columns(2); un=c1.text_input("اسم المستخدم"); pw=c2.text_input("كلمة المرور",type="password")
+                ph=c1.text_input("الهاتف"); roles=ROLES if role=="Admin" else ROLES[1:]
+                rr=c2.selectbox("الصلاحية",roles); bn=st.selectbox("الفرع",list(allbm))
+                ok=st.form_submit_button("➕ إنشاء حساب",type="primary")
+            if ok:
+                if not un.strip() or not pw: st.warning("الاسم وكلمة المرور مطلوبان."); return
+                conn.execute("INSERT INTO users(username,phone,password,role,branch_id) VALUES(?,?,?,?,?)",
+                             (un.strip(),ph,pw,rr,allbm[bn])); conn.commit(); st.success("✅ تم إنشاء الحساب."); st.rerun()
+            rs=conn.execute("""SELECT u.id,u.username,u.phone,u.role,COALESCE(b.branch_name,'كافة الفروع') branch_name
+                FROM users u LEFT JOIN branches b ON b.id=u.branch_id ORDER BY u.id""").fetchall()
+            st.dataframe(pd.DataFrame([{"رقم":r["id"],"المستخدم":r["username"],"الهاتف":r["phone"] or "",
+              "الصلاحية":r["role"],"الفرع":r["branch_name"]} for r in rs]),use_container_width=True,hide_index=True)
+    except Exception as ex:
+        if conn: conn.rollback()
+        st.error("❌ حدث خطأ في HR."); st.code(str(ex))
     finally:
-        if conn:
-            conn.close()
-
-    user_rows = []
-
-    for row in rows:
-        user_rows.append({
-            "المسلسل": row["id"],
-            "اسم المستخدم": row["username"],
-            "رقم الهاتف": row["phone"] or "",
-            "كلمة المرور": row["password"],
-            "الرتبة": row["role"],
-            "الفرع": row["branch_name"]
-        })
-
-    udf = pd.DataFrame(user_rows)
-
-    # ========================================================
-    # عرض المستخدمين
-    # ========================================================
-
-    if udf.empty:
-        st.info("لا توجد حسابات مستخدمين.")
-        return
-
-    if current_user_role == "Admin":
-        selectable_users_df = udf.copy()
-
-        # لا نعرض كلمات المرور في الجدول
-        udf_display = udf.drop(
-            columns=["كلمة المرور"]
-        )
-
-    else:
-        selectable_users_df = udf[
-            udf["الرتبة"] != "Admin"
-        ].copy()
-
-        udf_display = udf.drop(
-            columns=["كلمة المرور"]
-        )
-
-    st.dataframe(
-        udf_display,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    # ========================================================
-    # تعديل المستخدم - Admin فقط
-    # ========================================================
-
-    if current_user_role == "Admin":
-
-        st.markdown("---")
-        st.markdown(
-            "### ✏️ تعديل بيانات المستخدم"
-        )
-
-        user_ids = udf["المسلسل"].tolist()
-
-        edit_u_id = st.selectbox(
-            "اختر المستخدم للتعديل:",
-            user_ids,
-            format_func=lambda x: (
-                f"رقم {x} - "
-                f"{udf.loc[
-                    udf['المسلسل'] == x,
-                    'اسم المستخدم'
-                ].iloc[0]}"
-            )
-        )
-
-        conn = None
-
-        try:
-            conn = get_db_connection()
-
-            target_user_data = conn.execute(
-                """
-                SELECT *
-                FROM users
-                WHERE id = ?
-                """,
-                (edit_u_id,)
-            ).fetchone()
-
-        except Exception as e:
-            st.error(
-                "❌ تعذر تحميل بيانات المستخدم."
-            )
-            st.code(str(e))
-            target_user_data = None
-
-        finally:
-            if conn:
-                conn.close()
-
-        if target_user_data:
-
-            roles_list = [
-                "Admin",
-                "General_Supervisor",
-                "Branch_Supervisor",
-                "Cashier",
-                "Viewer"
-            ]
-
-            current_role_idx = (
-                roles_list.index(
-                    target_user_data["role"]
-                )
-                if target_user_data["role"]
-                in roles_list
-                else 0
-            )
-
-            branch_keys = list(
-                b_opts_dict.keys()
-            )
-
-            curr_b_name = (
-                "🌐 كافة الفروع (الكل)"
-            )
-
-            for b_name, b_id in b_opts_dict.items():
-
-                if (
-                    b_id
-                    == target_user_data["branch_id"]
-                ):
-                    curr_b_name = b_name
-                    break
-
-            curr_b_idx = (
-                branch_keys.index(curr_b_name)
-                if curr_b_name in branch_keys
-                else 0
-            )
-
-            with st.form("edit_user_form"):
-
-                e_col1, e_col2 = st.columns(2)
-
-                with e_col1:
-
-                    new_uname = st.text_input(
-                        "تعديل اسم المستخدم:",
-                        value=target_user_data[
-                            "username"
-                        ]
-                    )
-
-                    new_pass = st.text_input(
-                        "كلمة مرور جديدة "
-                        "(اتركها فارغة إذا لم ترغب بتغييرها):",
-                        type="password"
-                    )
-
-                with e_col2:
-
-                    new_role = st.selectbox(
-                        "تعديل الرتبة:",
-                        roles_list,
-                        index=current_role_idx
-                    )
-
-                    new_branch_sel = st.selectbox(
-                        "تعديل الفرع:",
-                        branch_keys,
-                        index=curr_b_idx
-                    )
-
-                update_clicked = (
-                    st.form_submit_button(
-                        "💾 تحديث وحفظ التعديلات",
-                        type="primary"
-                    )
-                )
-
-            if update_clicked:
-
-                if not new_uname.strip():
-
-                    st.warning(
-                        "⚠️ اسم المستخدم لا يمكن "
-                        "أن يكون فارغاً."
-                    )
-
-                else:
-
-                    conn = None
-
-                    try:
-                        conn = get_db_connection()
-
-                        new_b_id = b_opts_dict[
-                            new_branch_sel
-                        ]
-
-                        if new_pass.strip():
-
-                            conn.execute(
-                                """
-                                UPDATE users
-                                SET
-                                    username = ?,
-                                    password = ?,
-                                    role = ?,
-                                    branch_id = ?
-                                WHERE id = ?
-                                """,
-                                (
-                                    new_uname.strip(),
-                                    new_pass,
-                                    new_role,
-                                    new_b_id,
-                                    edit_u_id
-                                )
-                            )
-
-                        else:
-
-                            conn.execute(
-                                """
-                                UPDATE users
-                                SET
-                                    username = ?,
-                                    role = ?,
-                                    branch_id = ?
-                                WHERE id = ?
-                                """,
-                                (
-                                    new_uname.strip(),
-                                    new_role,
-                                    new_b_id,
-                                    edit_u_id
-                                )
-                            )
-
-                        conn.commit()
-
-                        st.success(
-                            "✅ تم تحديث بيانات "
-                            "المستخدم بنجاح!"
-                        )
-
-                        st.rerun()
-
-                    except Exception as e:
-
-                        if conn:
-                            conn.rollback()
-
-                        st.error(
-                            "❌ لم يتم حفظ التعديلات."
-                        )
-
-                        st.code(str(e))
-
-                    finally:
-                        if conn:
-                            conn.close()
-
-    # ========================================================
-    # حذف المستخدم
-    # ========================================================
-
-    st.markdown("---")
-    st.markdown("### 🗑️ حذف مستخدم")
-
-    if selectable_users_df.empty:
-
-        st.info(
-            "لا توجد حسابات أخرى متاحة للحذف."
-        )
-
-        return
-
-    del_u = st.selectbox(
-        "اختر المستخدم للحذف:",
-        selectable_users_df[
-            "المسلسل"
-        ].tolist(),
-        format_func=lambda x: (
-            f"رقم {x} - "
-            f"{udf.loc[
-                udf['المسلسل'] == x,
-                'اسم المستخدم'
-            ].iloc[0]} "
-            f"({udf.loc[
-                udf['المسلسل'] == x,
-                'الرتبة'
-            ].iloc[0]})"
-        ),
-        key="del_select_box"
-    )
-
-    conn = None
-
-    try:
-        conn = get_db_connection()
-
-        selected_row_user = conn.execute(
-            """
-            SELECT username, role
-            FROM users
-            WHERE id = ?
-            """,
-            (del_u,)
-        ).fetchone()
-
-        admin_count = conn.execute(
-            """
-            SELECT COUNT(*)
-            FROM users
-            WHERE role = 'Admin'
-            """
-        ).fetchone()[0]
-
-    except Exception as e:
-
-        st.error(
-            "❌ تعذر التحقق من المستخدم."
-        )
-
-        st.code(str(e))
-
-        selected_row_user = None
-        admin_count = 0
-
-    finally:
-        if conn:
-            conn.close()
-
-    if not selected_row_user:
-        return
-
-    selected_username = (
-        selected_row_user["username"]
-        .strip()
-        .lower()
-    )
-
-    selected_role = selected_row_user["role"]
-
-    is_admin_target = (
-        selected_role == "Admin"
-        or selected_username == "admin"
-    )
-
-    is_self_target = (
-        selected_username
-        == current_username.strip().lower()
-    )
-
-    can_delete = True
-    delete_error_msg = ""
-
-    if is_self_target:
-
-        can_delete = False
-
-        delete_error_msg = (
-            "⚠️ لا يمكنك حذف حسابك الشخصي "
-            "أثناء تسجيل الدخول به!"
-        )
-
-    elif is_admin_target:
-
-        if current_user_role != "Admin":
-
-            can_delete = False
-
-            delete_error_msg = (
-                "❌ لا تملك صلاحية حذف "
-                "حسابات Admin."
-            )
-
-        elif admin_count <= 1:
-
-            can_delete = False
-
-            delete_error_msg = (
-                "❌ لا يمكن حذف الأدمن الوحيد "
-                "المتبقي في النظام!"
-            )
-
-    if not can_delete:
-
-        st.warning(delete_error_msg)
-
-    if st.button(
-        "🗑️ حذف المستخدم المختار",
-        type="primary",
-        disabled=not can_delete
-    ):
-
-        conn = None
-
-        try:
-            conn = get_db_connection()
-
-            conn.execute(
-                """
-                DELETE FROM users
-                WHERE id = ?
-                """,
-                (del_u,)
-            )
-
-            conn.commit()
-
-            st.success(
-                "✅ تم حذف المستخدم بنجاح!"
-            )
-
-            st.rerun()
-
-        except Exception as e:
-
-            if conn:
-                conn.rollback()
-
-            st.error(
-                "❌ لم يتم حذف المستخدم."
-            )
-
-            st.code(str(e))
-
-        finally:
-            if conn:
-                conn.close()
+        if conn: conn.close()
