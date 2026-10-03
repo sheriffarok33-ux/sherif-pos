@@ -136,7 +136,7 @@ def get_branches():
     conn = get_db_connection()
     try:
         return conn.execute(
-            "SELECT id, name FROM branches ORDER BY name"
+            "SELECT id, branch_name FROM branches ORDER BY branch_name"
         ).fetchall()
     finally:
         conn.close()
@@ -151,7 +151,7 @@ def show_page():
         st.warning("لا توجد فروع مسجلة.")
         return
 
-    branch_map = {row["name"]: row["id"] for row in branches}
+    branch_map = {row["branch_name"]: row["id"] for row in branches}
     branch_name = st.selectbox("اختر الفرع", list(branch_map.keys()))
     branch_id = branch_map[branch_name]
 
@@ -271,11 +271,11 @@ def show_page():
                     raise ValueError("تاريخ الصلاحية منتهي.")
 
                 existing = conn.execute("""
-                    SELECT id, code, name, quantity, buy_price, avg_cost,
+                    SELECT id, item_code, item_name, quantity, buy_price, avg_cost,
                            sale_price, COALESCE(unit_type, 'piece') AS unit_type
                     FROM items
                     WHERE branch_id = ?
-                      AND (code = ? OR name = ?)
+                      AND (item_code = ? OR item_name = ?)
                     ORDER BY id
                     LIMIT 1
                     FOR UPDATE
@@ -296,8 +296,8 @@ def show_page():
                     if mode == "price":
                         conn.execute("""
                             UPDATE items
-                            SET code = ?,
-                                name = ?,
+                            SET item_code = ?,
+                                item_name = ?,
                                 buy_price = ?,
                                 sale_price = ?,
                                 unit_type = ?,
@@ -311,8 +311,8 @@ def show_page():
                     elif mode == "replace":
                         conn.execute("""
                             UPDATE items
-                            SET code = ?,
-                                name = ?,
+                            SET item_code = ?,
+                                item_name = ?,
                                 quantity = ?,
                                 buy_price = ?,
                                 avg_cost = ?,
@@ -346,8 +346,8 @@ def show_page():
 
                         conn.execute("""
                             UPDATE items
-                            SET code = ?,
-                                name = ?,
+                            SET item_code = ?,
+                                item_name = ?,
                                 quantity = ?,
                                 buy_price = ?,
                                 avg_cost = ?,
@@ -372,7 +372,7 @@ def show_page():
 
                     row_new = conn.execute("""
                         INSERT INTO items (
-                            branch_id, code, name, quantity,
+                            branch_id, item_code, item_name, quantity,
                             buy_price, avg_cost, sale_price,
                             unit_type, pieces_per_carton
                         )
