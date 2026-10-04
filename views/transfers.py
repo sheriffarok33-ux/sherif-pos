@@ -701,22 +701,13 @@ def execute_transfer(
 
         conn.commit()
 
+        # بعد نجاح الحفظ نعرض نافذة نجاح إلزامية أولاً.
+        # السلة وبيانات العملية تُنظف فقط بعد ضغط "موافق".
         st.session_state.pop("pending_duplicate_transfer", None)
-        st.session_state[
-            "transfer_cart"
-        ] = []
-
-        st.session_state.pop(
-            "transfer_target_branch",
-            None
+        st.session_state["transfer_success_pending"] = True
+        st.session_state["transfer_success_message"] = (
+            f"تم ترحيل فاتورة التزويد إلى ({target_branch_name}) بنجاح."
         )
-
-        st.success(
-            f"✅ تم ترحيل فاتورة التزويد "
-            f"إلى ({target_branch_name}) "
-            "بنجاح."
-        )
-
         st.rerun()
 
     except ValueError as e:
@@ -890,7 +881,37 @@ def load_transfer_archive(
 # الصفحة
 # ============================================================
 
+@st.dialog("✅ تمت العملية بنجاح")
+def _transfer_success_dialog():
+    st.success(
+        st.session_state.get(
+            "transfer_success_message",
+            "تم ترحيل فاتورة التزويد بنجاح."
+        )
+    )
+    st.info("تم حفظ العملية. اضغط موافق لبدء عملية جديدة.")
+    if st.button(
+        "موافق",
+        type="primary",
+        use_container_width=True,
+        key="transfer_success_ok"
+    ):
+        # لا يتم تنظيف العملية إلا بعد تأكيد المستخدم.
+        st.session_state["transfer_cart"] = []
+        for key in [
+            "transfer_target_branch",
+            "pending_duplicate_transfer",
+        ]:
+            st.session_state.pop(key, None)
+        st.session_state.pop("transfer_success_pending", None)
+        st.session_state.pop("transfer_success_message", None)
+        st.rerun()
+
+
 def show_page():
+    if st.session_state.get("transfer_success_pending"):
+        _transfer_success_dialog()
+
 
     st.markdown(
         """
