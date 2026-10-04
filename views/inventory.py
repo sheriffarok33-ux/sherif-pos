@@ -9,18 +9,15 @@ def ensure_inventory_columns():
     conn = None
     try:
         conn = get_db_connection()
-        conn.execute(
-            """
-            ALTER TABLE items
-            ADD COLUMN IF NOT EXISTS unit_type TEXT DEFAULT 'piece'
-            """
-        )
-        conn.execute(
-            """
-            ALTER TABLE items
-            ADD COLUMN IF NOT EXISTS pieces_per_carton INTEGER DEFAULT 1
-            """
-        )
+        # SQLite does not support PostgreSQL's ADD COLUMN IF NOT EXISTS syntax.
+        # Check the existing columns first, then add only the missing ones.
+        existing_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(items)").fetchall()
+        }
+        if "unit_type" not in existing_columns:
+            conn.execute("ALTER TABLE items ADD COLUMN unit_type TEXT DEFAULT 'piece'")
+        if "pieces_per_carton" not in existing_columns:
+            conn.execute("ALTER TABLE items ADD COLUMN pieces_per_carton INTEGER DEFAULT 1")
         conn.execute(
             """
             UPDATE items
