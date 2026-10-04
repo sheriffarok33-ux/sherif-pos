@@ -2443,6 +2443,13 @@ def show_page():
                     "Branch_Supervisor"
                 ]
 
+                # سعر التكلفة يظهر فقط للإدارة/المشرفين، ولا يظهر للكاشير.
+                can_view_cost = role in [
+                    "Admin",
+                    "General_Supervisor",
+                    "Branch_Supervisor"
+                ]
+
                 if hide_stock_quantity:
                     item_names_dict = {
                         (
@@ -2450,6 +2457,20 @@ def show_page():
                             f"(الكود: {it['item_code']} "
                             f"- السعر: "
                             f"{float(it['sale_price'] or 0):,.2f} د.ل)"
+                        ): it
+                        for it in all_items_db
+                    }
+                elif can_view_cost:
+                    item_names_dict = {
+                        (
+                            f"{it['item_name']} "
+                            f"(الكود: {it['item_code']} "
+                            f"- سعر البيع: "
+                            f"{float(it['sale_price'] or 0):,.2f} د.ل "
+                            f"- التكلفة: "
+                            f"{float(it['avg_cost'] or it['buy_price'] or 0):,.2f} د.ل "
+                            f"- المتاح: "
+                            f"{float(it['quantity'] or 0):,.2f})"
                         ): it
                         for it in all_items_db
                     }
@@ -2480,6 +2501,23 @@ def show_page():
                         selected_manual_item_str
                     ]
                 )
+
+                if can_view_cost:
+                    selected_cost = float(
+                        selected_item_obj["avg_cost"]
+                        or selected_item_obj["buy_price"]
+                        or 0
+                    )
+                    selected_sale = float(
+                        selected_item_obj["sale_price"] or 0
+                    )
+                    cc1, cc2, cc3 = st.columns(3)
+                    cc1.metric("سعر التكلفة", f"{selected_cost:,.2f} د.ل")
+                    cc2.metric("سعر البيع", f"{selected_sale:,.2f} د.ل")
+                    cc3.metric(
+                        "الفرق للوحدة",
+                        f"{(selected_sale - selected_cost):,.2f} د.ل"
+                    )
 
                 manual_qty = st.number_input(
                     "الكمية المطلوبة:",
