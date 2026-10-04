@@ -2,6 +2,7 @@ import json
 import sqlite3
 import threading
 import uuid
+import socket
 from pathlib import Path
 from datetime import datetime
 
@@ -9,15 +10,61 @@ LOCAL_DB = Path(__file__).with_name('abu_zaid_local.db')
 _LOCK = threading.RLock()
 
 class LocalConnection:
-    def __init__(self, conn):
+    """SQLite connection that records each committed local transaction as one sync unit."""
+    def __init__(self, conn, queue_writes=False):
         self._conn = conn
+        self._queue_writes = queue_writes
+        self._tx_uuid = str(uuid.uuid4())
+        self._tx_seq = 0
+        try:
+            row = self._conn.execute("SELECT value FROM local_meta WHERE key='device_id'").fetchone()
+            if row and row[0]:
+                self._device_id = str(row[0])
+            else:
+                self._device_id = str(uuid.uuid4())
+                self._conn.execute("INSERT OR REPLACE INTO local_meta(key,value) VALUES('device_id',?)", (self._device_id,))
+                self._conn.execute("INSERT OR REPLACE INTO local_meta(key,value) VALUES('device_name',?)", (socket.gethostname(),))
+                self._conn.commit()
+        except Exception:
+            self._device_id = str(uuid.uuid4())
+
+    def _record(self, sql, params):
+        low = sql.lower(); head = sql.lstrip().upper()
+        if not self._queue_writes or not head.startswith(("INSERT ", "UPDATE ", "DELETE ", "REPLACE ")):
+            return
+        # POS invoices use the dedicated invoice synchronizer. Internal sync metadata never leaves the device.
+        if any(x in low for x in ("sync_queue", "local_meta", "offline_sync_receipts", "into invoices", "update invoices", "delete from invoices")):
+            return
+        self._tx_seq += 1
+        self._conn.execute(
+            "INSERT INTO sync_queue(operation_uuid,transaction_uuid,device_id,sequence_no,sql_text,params_json) VALUES(?,?,?,?,?,?)",
+            (str(uuid.uuid4()), self._tx_uuid, self._device_id, self._tx_seq, sql, json.dumps(list(params or ()), ensure_ascii=False, default=str))
+        )
+
     def execute(self, sql, params=()):
-        sql = sql.replace('FOR UPDATE', '')
-        return self._conn.execute(sql, params or ())
+        clean = sql.replace("FOR UPDATE", "")
+        cur = self._conn.execute(clean, params or ())
+        self._record(clean, params)
+        return cur
+
     def executemany(self, sql, seq):
-        return self._conn.executemany(sql.replace('FOR UPDATE', ''), seq)
-    def commit(self): return self._conn.commit()
-    def rollback(self): return self._conn.rollback()
+        clean = sql.replace("FOR UPDATE", "")
+        rows = list(seq)
+        cur = self._conn.executemany(clean, rows)
+        for params in rows:
+            self._record(clean, params)
+        return cur
+
+    def commit(self):
+        result = self._conn.commit()
+        self._tx_uuid = str(uuid.uuid4()); self._tx_seq = 0
+        return result
+
+    def rollback(self):
+        result = self._conn.rollback()
+        self._tx_uuid = str(uuid.uuid4()); self._tx_seq = 0
+        return result
+
     def close(self): return self._conn.close()
     def __getattr__(self, name): return getattr(self._conn, name)
 
@@ -60,18 +107,71 @@ def ensure_local_schema():
         CREATE TABLE IF NOT EXISTS transfer_logs(
           id INTEGER PRIMARY KEY, from_branch_id INTEGER, to_branch_id INTEGER, items_details TEXT,
           transfer_date TEXT, status TEXT, created_by TEXT, received_by TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS suppliers(id INTEGER PRIMARY KEY, supplier_name TEXT, phone TEXT, balance REAL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS purchases(id INTEGER PRIMARY KEY, branch_id INTEGER, supplier_id INTEGER, supplier_name TEXT, invoice_number TEXT, total_cost REAL DEFAULT 0, payment_type TEXT, items_details TEXT, invoice_date TEXT);
+        CREATE TABLE IF NOT EXISTS expenses(id INTEGER PRIMARY KEY, branch_id INTEGER, amount REAL DEFAULT 0, description TEXT, is_general_store INTEGER DEFAULT 0, expense_date TEXT);
+        CREATE TABLE IF NOT EXISTS revenues(id INTEGER PRIMARY KEY, branch_id INTEGER, revenue_source TEXT, amount REAL DEFAULT 0, notes TEXT, description TEXT, revenue_date TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS stock_adjustments(id INTEGER PRIMARY KEY, branch_id INTEGER, item_id INTEGER, item_name TEXT, quantity REAL, adjustment_type TEXT, loss_or_gain_value REAL DEFAULT 0, notes TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS negative_sales_logs(id INTEGER PRIMARY KEY, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TEXT);
+        CREATE TABLE IF NOT EXISTS production_logs(id INTEGER PRIMARY KEY, branch_id INTEGER, operation_type TEXT, source_details TEXT, target_item_id INTEGER, target_item_name TEXT, input_weight REAL DEFAULT 0, output_weight REAL DEFAULT 0, loss_weight REAL DEFAULT 0, total_cost REAL DEFAULT 0, unit_cost REAL DEFAULT 0, notes TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS employees(id INTEGER PRIMARY KEY, employee_name TEXT, phone TEXT, branch_id INTEGER, salary REAL DEFAULT 0, is_active INTEGER DEFAULT 1, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS employee_financial_transactions(id INTEGER PRIMARY KEY, employee_id INTEGER, branch_id INTEGER, transaction_type TEXT, amount REAL DEFAULT 0, notes TEXT, transaction_date TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS role_permissions(id INTEGER PRIMARY KEY, role_name TEXT, page_name TEXT, can_access INTEGER DEFAULT 1);
+        CREATE TABLE IF NOT EXISTS custom_labels(id INTEGER PRIMARY KEY, label_key TEXT, label_value TEXT);
+        CREATE TABLE IF NOT EXISTS activity_logs(id INTEGER PRIMARY KEY, user_id INTEGER, branch_id INTEGER, action_type TEXT, details TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS app_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT);
         CREATE TABLE IF NOT EXISTS local_meta(key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS sync_queue(id INTEGER PRIMARY KEY AUTOINCREMENT, operation_uuid TEXT NOT NULL UNIQUE, transaction_uuid TEXT, device_id TEXT, sequence_no INTEGER DEFAULT 0, sql_text TEXT NOT NULL, params_json TEXT NOT NULL DEFAULT '[]', created_at TEXT DEFAULT CURRENT_TIMESTAMP, sync_status TEXT NOT NULL DEFAULT 'pending', sync_error TEXT);
+        CREATE INDEX IF NOT EXISTS ix_sync_queue_status ON sync_queue(sync_status,id);
         ''')
+        # Lightweight migrations for the full desktop/local application.
+        migrations = [
+          ('branches','location','TEXT'), ('users','phone','TEXT'), ('users','allowed_branches',"TEXT DEFAULT 'ALL'"), ('users','custom_permissions',"TEXT DEFAULT ''"),
+          ('items','unit_type',"TEXT DEFAULT 'piece'"), ('items','no_expiry','INTEGER DEFAULT 0'), ('items','favorite_rank','INTEGER DEFAULT 0')
+        ]
+        for table, col, typ in migrations:
+            try: c.execute(f'ALTER TABLE {table} ADD COLUMN {col} {typ}')
+            except Exception: pass
+        for col, typ in [('transaction_uuid','TEXT'), ('device_id','TEXT'), ('sequence_no','INTEGER DEFAULT 0')]:
+            try: c.execute(f'ALTER TABLE sync_queue ADD COLUMN {col} {typ}')
+            except Exception: pass
+        # Old queued rows become one-operation transactions.
+        try:
+            rows=c.execute("SELECT id,operation_uuid FROM sync_queue WHERE transaction_uuid IS NULL OR transaction_uuid='' ").fetchall()
+            for r in rows: c.execute("UPDATE sync_queue SET transaction_uuid=?,sequence_no=COALESCE(sequence_no,0) WHERE id=?",(r['operation_uuid'],r['id']))
+        except Exception: pass
+        try:
+            row=c.execute("SELECT value FROM local_meta WHERE key='device_id'").fetchone()
+            did=str(row[0]) if row and row[0] else str(uuid.uuid4())
+            c.execute("INSERT OR REPLACE INTO local_meta(key,value) VALUES('device_id',?)",(did,))
+            c.execute("UPDATE sync_queue SET device_id=? WHERE device_id IS NULL OR device_id=''",(did,))
+        except Exception: pass
         c.commit(); c.close()
 
-def get_local_connection():
+def get_device_id():
+    """Return a stable UUID for this Windows/device installation."""
     ensure_local_schema()
-    return LocalConnection(_raw_local())
+    c = _raw_local()
+    try:
+        row = c.execute("SELECT value FROM local_meta WHERE key='device_id'").fetchone()
+        if row and row[0]:
+            return str(row[0])
+        device_id = str(uuid.uuid4())
+        c.execute("INSERT OR REPLACE INTO local_meta(key,value) VALUES('device_id',?)", (device_id,))
+        c.execute("INSERT OR REPLACE INTO local_meta(key,value) VALUES('device_name',?)", (socket.gethostname(),))
+        c.commit()
+        return device_id
+    finally:
+        c.close()
+
+def get_local_connection(queue_writes=False):
+    ensure_local_schema()
+    return LocalConnection(_raw_local(), queue_writes=queue_writes)
 
 def server_available():
     try:
-        from database import get_db_connection
-        c = get_db_connection(); c.execute('SELECT 1').fetchone(); c.close(); return True
+        from database import get_remote_connection
+        c = get_remote_connection(); c.execute('SELECT 1').fetchone(); c.close(); return True
     except Exception:
         return False
 
@@ -94,8 +194,8 @@ def _replace_table(local, table, rows, allowed):
 def sync_reference_data(remote=None):
     own = False
     if remote is None:
-        from database import get_db_connection
-        remote = get_db_connection(); own = True
+        from database import get_remote_connection
+        remote = get_remote_connection(); own = True
     local = get_local_connection()
     try:
         branches = remote.execute('SELECT * FROM branches').fetchall()
@@ -103,11 +203,37 @@ def sync_reference_data(remote=None):
         items = remote.execute('SELECT * FROM items').fetchall()
         customers = remote.execute('SELECT * FROM customers').fetchall()
         batches = remote.execute('SELECT * FROM inventory_batches').fetchall()
+        try:
+            settings = remote.execute('SELECT setting_key, setting_value, updated_at FROM app_settings').fetchall()
+        except Exception:
+            settings = []
         _replace_table(local,'branches',branches,{'id','branch_name','branch_type','location','is_active'})
         _replace_table(local,'users',users,{'id','username','password','role','branch_id','is_active'})
         _replace_table(local,'items',items,{'id','item_code','item_name','unit','quantity','buy_price','sale_price','avg_cost','branch_id','expiry_date','pieces_per_carton','image_path'})
         _replace_table(local,'customers',customers,{'id','customer_name','phone','total_purchases','balance','marketing_consent'})
         _replace_table(local,'inventory_batches',batches,{'id','item_id','branch_id','quantity','remaining_quantity','received_date','expiry_date','unit_cost','source_type','created_at'})
+        _replace_table(local,'app_settings',settings,{'setting_key','setting_value','updated_at'})
+        # Download the rest of the ERP reference/history tables once at login.
+        extra_tables = {
+          'suppliers': {'id','supplier_name','phone','balance'},
+          'purchases': {'id','branch_id','supplier_id','supplier_name','invoice_number','total_cost','payment_type','items_details','invoice_date'},
+          'expenses': {'id','branch_id','amount','description','is_general_store','expense_date'},
+          'revenues': {'id','branch_id','revenue_source','amount','notes','description','revenue_date','created_at'},
+          'stock_adjustments': {'id','branch_id','item_id','item_name','quantity','adjustment_type','loss_or_gain_value','notes','created_at'},
+          'negative_sales_logs': {'id','branch_id','user_id','item_name','sale_qty','log_time'},
+          'production_logs': {'id','branch_id','operation_type','source_details','target_item_id','target_item_name','input_weight','output_weight','loss_weight','total_cost','unit_cost','notes','created_at'},
+          'employees': {'id','employee_name','phone','branch_id','salary','is_active','created_at'},
+          'employee_financial_transactions': {'id','employee_id','branch_id','transaction_type','amount','notes','transaction_date','created_at'},
+          'role_permissions': {'id','role_name','page_name','can_access'},
+          'custom_labels': {'id','label_key','label_value'},
+          'activity_logs': {'id','user_id','branch_id','action_type','details','created_at'},
+        }
+        for table, allowed in extra_tables.items():
+            try:
+                rows = remote.execute(f'SELECT * FROM {table}').fetchall()
+                _replace_table(local, table, rows, allowed)
+            except Exception:
+                pass
         local.execute("INSERT OR REPLACE INTO local_meta(key,value) VALUES('last_download',?)",(datetime.now().isoformat(timespec='seconds'),))
         local.commit()
         return True, None
@@ -145,8 +271,8 @@ def _remote_deduct_fefo(remote, item_id, branch_id, qty):
 def sync_pending_sales(remote=None):
     own=False
     if remote is None:
-        from database import get_db_connection
-        remote=get_db_connection(); own=True
+        from database import get_remote_connection
+        remote=get_remote_connection(); own=True
     local=get_local_connection(); synced=0; failed=0
     try:
         _ensure_remote_sync_schema(remote)
@@ -192,13 +318,67 @@ def sync_pending_sales(remote=None):
             try: remote.close()
             except Exception: pass
 
+def _ensure_remote_operation_receipts(remote):
+    remote.execute("CREATE TABLE IF NOT EXISTS offline_operation_receipts(transaction_uuid TEXT PRIMARY KEY, device_id TEXT, device_synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    try:
+        remote.execute("ALTER TABLE offline_operation_receipts ADD COLUMN IF NOT EXISTS device_id TEXT")
+    except Exception:
+        pass
+    remote.commit()
+
+def sync_pending_operations(remote=None):
+    """Replay each local COMMIT as one atomic PostgreSQL transaction.
+    A failed statement rolls back the whole group, preventing half-synced purchases/transfers/production operations.
+    """
+    own=False
+    if remote is None:
+        from database import get_remote_connection
+        remote=get_remote_connection(); own=True
+    local=get_local_connection(queue_writes=False); synced=failed=0
+    try:
+        _ensure_remote_operation_receipts(remote)
+        txs=local.execute("SELECT transaction_uuid, MIN(id) first_id FROM sync_queue WHERE sync_status='pending' GROUP BY transaction_uuid ORDER BY first_id").fetchall()
+        for tx in txs:
+            txid=tx['transaction_uuid']
+            rows=local.execute("SELECT * FROM sync_queue WHERE sync_status='pending' AND transaction_uuid=? ORDER BY sequence_no,id",(txid,)).fetchall()
+            try:
+                seen=remote.execute("SELECT transaction_uuid FROM offline_operation_receipts WHERE transaction_uuid=?",(txid,)).fetchone()
+                if not seen:
+                    for row in rows:
+                        remote.execute(row['sql_text'],tuple(json.loads(row['params_json'] or '[]')))
+                    device_id = rows[0]['device_id'] if rows and 'device_id' in rows[0].keys() else None
+                    remote.execute("INSERT INTO offline_operation_receipts(transaction_uuid,device_id) VALUES(?,?)",(txid,device_id))
+                    remote.commit()
+                ids=[r['id'] for r in rows]
+                for rid in ids:
+                    local.execute("UPDATE sync_queue SET sync_status='synced',sync_error=NULL WHERE id=?",(rid,))
+                local.commit(); synced += len(rows)
+            except Exception as e:
+                try: remote.rollback()
+                except Exception: pass
+                for row in rows:
+                    local.execute("UPDATE sync_queue SET sync_error=? WHERE id=?",(str(e),row['id']))
+                local.commit(); failed += len(rows)
+        return synced,failed
+    finally:
+        local.close()
+        if own:
+            try: remote.close()
+            except Exception: pass
+
+def pending_operations_count():
+    c=get_local_connection(queue_writes=False)
+    try: return int(c.execute("SELECT COUNT(*) FROM sync_queue WHERE sync_status='pending'").fetchone()[0])
+    finally: c.close()
+
 def sync_now():
-    from database import get_db_connection
-    remote=get_db_connection()
+    from database import get_remote_connection
+    remote=get_remote_connection()
     try:
         synced,failed=sync_pending_sales(remote)
+        ops_synced,ops_failed=sync_pending_operations(remote)
         ok,err=sync_reference_data(remote)
-        return {'synced':synced,'failed':failed,'download_ok':ok,'error':err}
+        return {'synced':synced,'failed':failed,'ops_synced':ops_synced,'ops_failed':ops_failed,'download_ok':ok,'error':err}
     finally: remote.close()
 
 def get_pos_connection():

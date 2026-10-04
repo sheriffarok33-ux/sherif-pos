@@ -609,7 +609,7 @@ class PostgreSQLConnection:
 # الحصول على اتصال
 # ============================================================
 
-def get_db_connection():
+def get_remote_connection():
 
     try:
 
@@ -661,7 +661,7 @@ def ensure_pos_extensions_schema():
     conn = None
     cursor = None
     try:
-        conn = get_db_connection()
+        conn = get_remote_connection()
         cursor = conn.cursor()
 
         cursor.execute(
@@ -721,7 +721,7 @@ def ensure_hr_schema():
     cursor = None
 
     try:
-        conn = get_db_connection()
+        conn = get_remote_connection()
         cursor = conn.cursor()
 
         cursor.execute(
@@ -828,7 +828,7 @@ def initialize_database():
 
     try:
 
-        conn = get_db_connection()
+        conn = get_remote_connection()
 
         cursor = conn.cursor()
 
@@ -1859,3 +1859,14 @@ if __name__ == "__main__":
     print(
         "✅ PostgreSQL / Supabase جاهز."
     )
+
+
+# ============================================================
+# Local-first application connection
+# ============================================================
+def get_db_connection():
+    """Connection used by application screens: always local SQLite.
+    Central PostgreSQL is reached only through get_remote_connection().
+    """
+    from offline_store import get_local_connection
+    return get_local_connection(queue_writes=True)

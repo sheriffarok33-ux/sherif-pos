@@ -1,8 +1,9 @@
 import os
 import re
 import streamlit as st
-from database import initialize_database, get_db_connection
-from offline_store import ensure_local_schema, offline_login, sync_reference_data, sync_pending_sales, pending_count
+from database import initialize_database, get_db_connection, get_remote_connection
+from offline_store import ensure_local_schema, offline_login, sync_reference_data, sync_pending_sales, sync_pending_operations, pending_count, get_local_connection
+from backup_manager import daily_backup
 
 # إعدادات الصفحة الأساسية
 # يجب أن تكون أول أمر Streamlit في الملف.
@@ -24,40 +25,23 @@ def initialize_app_database():
 
 
 ensure_local_schema()
-try:
-    initialize_app_database()
-except Exception:
-    # عند انقطاع الإنترنت لا نوقف البرنامج؛ يسمح بالدخول من النسخة المحلية.
-    pass
+# Local-first: do not contact the central server during application startup.
+# Remote initialization/synchronization is performed only after a login attempt.
 
 
+@st.cache_data(ttl=300)
 def load_appearance_settings():
+    """Load appearance locally; central settings are refreshed only during login sync."""
     defaults = {
-        "app_bg_color": "#f8fafc",
-        "sidebar_bg_color": "#0f172a",
-        "sidebar_button_color": "#1e293b",
-        "button_color": "#0284c7",
-        "button_hover_color": "#0369a1",
-        "text_color": "#000000",
-        "font_size": "17",
-        "font_weight": "900",
-        "logo_data": "",
-        "login_bg_data": "",
+        "app_bg_color": "#f8fafc", "sidebar_bg_color": "#0f172a",
+        "sidebar_button_color": "#1e293b", "button_color": "#0284c7",
+        "button_hover_color": "#0369a1", "text_color": "#000000",
+        "font_size": "17", "font_weight": "900", "logo_data": "", "login_bg_data": "",
     }
     conn = None
     try:
-        conn = get_db_connection()
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS app_settings (
-                setting_key TEXT PRIMARY KEY,
-                setting_value TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
-        rows = conn.execute(
-            "SELECT setting_key, setting_value FROM app_settings"
-        ).fetchall()
+        conn = get_local_connection()
+        rows = conn.execute("SELECT setting_key, setting_value FROM app_settings").fetchall()
         for row in rows:
             defaults[row["setting_key"]] = row["setting_value"] or ""
     except Exception:
@@ -73,9 +57,8 @@ appearance = load_appearance_settings()
 # إضافة ستايل CSS ومؤشر الاتصال (Online/Offline) في رأس الصفحة
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
     html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table, th, td { 
-        font-family: 'Tajawal', sans-serif !important; 
+        font-family: Arial, Tahoma, sans-serif !important; 
         color: #000000 !important; 
         font-weight: 900 !important;
         font-size: 17px !important;
@@ -302,7 +285,7 @@ if not st.session_state["logged_in"]:
         if submit:
             conn = None
             try:
-                conn = get_db_connection()
+                conn = get_remote_connection()
                 user = conn.execute(
                     """
                     SELECT *
@@ -315,8 +298,14 @@ if not st.session_state["logged_in"]:
                 ).fetchone()
 
                 if user:
+                    # أولاً نحفظ لقطة يومية من القاعدة المحلية قبل تنزيل أي بيانات جديدة.
+                    try:
+                        daily_backup(user["branch_id"])
+                    except Exception:
+                        pass
                     try:
                         sync_pending_sales(conn)
+                        sync_pending_operations(conn)
                         sync_reference_data(conn)
                     except Exception:
                         pass
@@ -334,6 +323,10 @@ if not st.session_state["logged_in"]:
             except Exception:
                 user = offline_login(u_name, u_pass)
                 if user:
+                    try:
+                        daily_backup(user["branch_id"])
+                    except Exception:
+                        pass
                     st.session_state["logged_in"] = True
                     st.session_state["username"] = user["username"]
                     st.session_state["role"] = user["role"]
@@ -482,7 +475,7 @@ if choice == "🏠 الرئيسية واللوحة":
         }
         .dashboard-banner * {
             color: #000000 !important;
-            font-family: 'Tajawal', sans-serif !important;
+            font-family: Arial, Tahoma, sans-serif !important;
             font-weight: 900 !important;
         }
         </style>
@@ -498,7 +491,8 @@ if choice == "🏠 الرئيسية واللوحة":
     """, unsafe_allow_html=True)
 
     if role in ["Admin", "General_Supervisor"]:
-        conn = get_db_connection()
+        # Dashboard is local-first; central data is refreshed at login only.
+        conn = get_local_connection()
         total_sales_res = conn.execute("SELECT SUM(total_amount) FROM invoices").fetchone()
         total_sales = total_sales_res[0] if total_sales_res and total_sales_res[0] else 0.0
 
