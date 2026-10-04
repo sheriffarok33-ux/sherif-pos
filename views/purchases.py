@@ -648,28 +648,13 @@ def post_purchase_invoice(
 
         conn.commit()
 
-        st.session_state[
-            "purch_cart"
-        ] = []
-
-        # مسح هوية السلة
-        st.session_state.pop(
-            "purch_cart_branch_id",
-            None
+        # بعد نجاح الحفظ لا نمسح الفاتورة فوراً.
+        # تظهر نافذة تأكيد، والتنظيف يتم عند ضغط "موافق".
+        st.session_state["purchase_success_pending"] = True
+        st.session_state["purchase_success_message"] = (
+            f"تم ترحيل فاتورة المشتريات بنجاح. "
+            f"إجمالي الفاتورة: {grand_total:,.2f} د.ل"
         )
-
-        st.session_state.pop(
-            "purch_cart_supplier_id",
-            None
-        )
-
-        st.success(
-            f"✅ تم ترحيل فاتورة المشتريات "
-            f"بنجاح.\n\n"
-            f"إجمالي الفاتورة: "
-            f"{grand_total:,.2f} د.ل"
-        )
-
         st.rerun()
 
     except ValueError as e:
@@ -800,7 +785,38 @@ def show_purchase_reports(branches, suppliers_data):
 # الصفحة
 # ============================================================
 
+@st.dialog("✅ تمت العملية بنجاح")
+def _purchase_success_dialog():
+    st.success(
+        st.session_state.get(
+            "purchase_success_message",
+            "تم ترحيل فاتورة المشتريات بنجاح."
+        )
+    )
+    st.info("تم حفظ الفاتورة وتحديث المخزون. اضغط موافق لبدء فاتورة جديدة.")
+    if st.button(
+        "موافق",
+        type="primary",
+        use_container_width=True,
+        key="purchase_success_ok"
+    ):
+        # تنظيف بيانات الفاتورة لا يتم إلا بعد تأكيد المستخدم.
+        st.session_state["purch_cart"] = []
+        for key in [
+            "purch_cart_branch_id",
+            "purch_cart_supplier_id",
+            "purchase_expiry_date",
+        ]:
+            st.session_state.pop(key, None)
+        st.session_state.pop("purchase_success_pending", None)
+        st.session_state.pop("purchase_success_message", None)
+        st.rerun()
+
+
 def show_page():
+    if st.session_state.get("purchase_success_pending"):
+        _purchase_success_dialog()
+
 
     # ========================================================
     # CSS
