@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime
-from database import get_db_connection, ensure_pos_extensions_schema
+from database import get_db_connection
 
 
 def _excel_bytes(df, sheet_name):
@@ -22,14 +22,12 @@ def _current_shift_number():
     return 1 if 6 <= hour < 16 else 2
 
 
-def show_page():
-    try:
-        ensure_pos_extensions_schema()
-    except Exception as e:
-        st.error("❌ تعذر تجهيز سجل دفعات الموردين.")
-        st.code(str(e))
-        return
+def _table_columns(conn, table_name):
+    """Return SQLite column names without changing the local database schema."""
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
 
+
+def show_page():
     st.header("👥 الموردون والعملاء والحسابات")
     st.info("الإضافة، التعديل، الحذف، السداد والتحصيل والتصدير من شاشة واحدة.")
 
@@ -154,8 +152,12 @@ def show_page():
                             st.error(str(e))
 
         elif mode == "customers":
+            customer_columns = _table_columns(conn, "customers")
+            total_expr = "total_purchases" if "total_purchases" in customer_columns else "0.0 AS total_purchases"
+            balance_expr = "balance" if "balance" in customer_columns else "0.0 AS balance"
+            created_expr = "created_at" if "created_at" in customer_columns else "NULL AS created_at"
             rows = conn.execute(
-                "SELECT id, customer_name, phone, total_purchases, balance, created_at "
+                f"SELECT id, customer_name, phone, {total_expr}, {balance_expr}, {created_expr} "
                 "FROM customers ORDER BY customer_name"
             ).fetchall()
             if not rows:
