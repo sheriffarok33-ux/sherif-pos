@@ -436,7 +436,6 @@ def add_missing_item_dialog(scanned_code, b_id):
 # شاشة الدفع والخصم
 # ============================================================
 
-@st.dialog("💳 إتمام الدفع وإصدار الفاتورة")
 @st.dialog("✅ تمت العملية بنجاح")
 def _pos_success_dialog():
     st.success(
@@ -469,6 +468,7 @@ def _pos_success_dialog():
         st.rerun()
 
 
+@st.dialog("💳 إتمام الدفع وإصدار الفاتورة")
 def checkout_payment_dialog(
     b_id,
     gross_total,
@@ -1646,6 +1646,7 @@ def show_page():
     # حتى يضغط المستخدم "موافق".
     if st.session_state.get("pos_success_pending"):
         _pos_success_dialog()
+        st.stop()
 
 
     ensure_cart()
