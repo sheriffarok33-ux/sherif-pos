@@ -910,10 +910,34 @@ def _transfer_success_dialog():
         st.rerun()
 
 
+
+@st.dialog("⚠️ مراجعة العملية قبل التنفيذ")
+def _transfer_confirm_confirm_dialog():
+    pending = st.session_state.get("transfer_confirm_pending_action")
+    if not pending:
+        return
+    st.warning("راجع البيانات جيدًا. لن يتم تنفيذ أي تغيير قبل التأكيد.")
+    for label, value in pending.get("summary", []):
+        st.write(f"**{label}:** {value}")
+    c1, c2 = st.columns(2)
+    if c1.button("✅ تأكيد التنفيذ", type="primary", use_container_width=True, key="transfer_confirm_confirm_yes"):
+        callback = pending.get("callback")
+        args = pending.get("args", [])
+        kwargs = pending.get("kwargs", {})
+        st.session_state.pop("transfer_confirm_pending_action", None)
+        callback(*args, **kwargs)
+    if c2.button("❌ إلغاء", use_container_width=True, key="transfer_confirm_confirm_no"):
+        st.session_state.pop("transfer_confirm_pending_action", None)
+        st.rerun()
+
+
 def show_page():
     back_button(key="back_transfers")
-
     item_alerts(st.session_state.get("branch_id"), key="alerts_transfers")
+
+    if st.session_state.get("transfer_confirm_pending_action"):
+        _transfer_confirm_confirm_dialog()
+        st.stop()
 
     if st.session_state.get("transfer_success_pending"):
         _transfer_success_dialog()
@@ -1445,24 +1469,25 @@ def show_page():
 
             if confirm_transfer:
 
-                execute_transfer(
-                    warehouse_id=warehouse_id,
-                    target_branch_id=(
-                        target_branch_id
-                    ),
-                    target_branch_name=(
-                        target_branch_name
-                    ),
-                    transfer_cart=(
-                        st.session_state[
-                            "transfer_cart"
-                        ]
-                    ),
-                    transfer_notes=(
-                        transfer_notes
-                    ),
-                    username=username
-                )
+                st.session_state["transfer_confirm_pending_action"] = {
+                    "callback": execute_transfer,
+                    "kwargs": {
+                        "warehouse_id": warehouse_id,
+                        "target_branch_id": target_branch_id,
+                        "target_branch_name": target_branch_name,
+                        "transfer_cart": list(st.session_state["transfer_cart"]),
+                        "transfer_notes": transfer_notes,
+                        "username": username,
+                    },
+                    "summary": [
+                        ("العملية", "تزويد / تحويل مخزني"),
+                        ("الجهة المستلمة", target_branch_name),
+                        ("عدد الأصناف", str(len(st.session_state["transfer_cart"]))),
+                        ("إجمالي الوحدات", f"{float(total_units):,.2f}"),
+                        ("ملاحظات", transfer_notes or "-"),
+                    ],
+                }
+                st.rerun()
 
         else:
 

@@ -148,10 +148,15 @@ def _ensure_treasury_schema(conn):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    conn.execute("INSERT OR IGNORE INTO treasuries(treasury_name,treasury_type,branch_id) VALUES('خزينة الشركة','company',NULL)")
+    exists = conn.execute("SELECT id FROM treasuries WHERE treasury_name='خزينة الشركة' LIMIT 1").fetchone()
+    if not exists:
+        conn.execute("INSERT INTO treasuries(treasury_name,treasury_type,branch_id) VALUES('خزينة الشركة','company',NULL)")
     branches=conn.execute("SELECT id, branch_name FROM branches ORDER BY branch_name").fetchall()
     for b in branches:
-        conn.execute("INSERT OR IGNORE INTO treasuries(treasury_name,treasury_type,branch_id) VALUES(?, 'branch', ?)", (f"خزينة فرع {b['branch_name']}", b["id"]))
+        treasury_name = f"خزينة فرع {b['branch_name']}"
+        exists = conn.execute("SELECT id FROM treasuries WHERE treasury_name=? LIMIT 1", (treasury_name,)).fetchone()
+        if not exists:
+            conn.execute("INSERT INTO treasuries(treasury_name,treasury_type,branch_id) VALUES(?, 'branch', ?)", (treasury_name, b["id"]))
     conn.commit()
 
 def _voucher_html(voucher_no, voucher_type, party_type, party_name, amount, notes, treasury_name, created_at=None):
