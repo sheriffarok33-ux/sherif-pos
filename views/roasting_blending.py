@@ -813,6 +813,20 @@ def execute_roasting(
 
         conn.commit()
 
+        # تجهيز شاشة التحميص لعملية جديدة بعد نجاح الحفظ.
+        # نحذف قيم الحقول فقط بعد نجاح المعاملة، لذلك لا تضيع المدخلات عند الخطأ.
+        for _key in (
+            "roast_raw_weight",
+            "roast_finished_weight",
+            "roast_raw_item",
+            "roast_target_item",
+        ):
+            st.session_state.pop(_key, None)
+        # سعر البيع مفتاحه ديناميكي حسب الصنف الناتج.
+        for _key in list(st.session_state.keys()):
+            if str(_key).startswith("roast_sale_"):
+                st.session_state.pop(_key, None)
+
         profit_per_kg = (
             sale_price
             - roasted_unit_cost
@@ -1000,15 +1014,133 @@ def show_page():
         st.rerun()
 
     if st.session_state["production_screen_mode"] == "log":
+        st.markdown("### 📋 سجل وتقارير عمليات التحميص والخلط")
+
         conn_log = get_db_connection()
         try:
+            type_filter, date_from_col, date_to_col = st.columns(3)
+            selected_type = type_filter.selectbox(
+                "نوع العملية:",
+                ["الكل", "خلط", "تحميص"],
+                key="production_log_type"
+            )
+            today = date.today()
+            from_date = date_from_col.date_input(
+                "من تاريخ:",
+                value=today - timedelta(days=30),
+                key="production_log_from"
+            )
+            to_date = date_to_col.date_input(
+                "إلى تاريخ:",
+                value=today,
+                key="production_log_to"
+            )
+
+            if from_date > to_date:
+                st.error("⚠️ تاريخ البداية يجب أن يكون قبل أو مساوياً لتاريخ النهاية.")
+                return
+
+            where = ["DATE(created_at) BETWEEN ? AND ?"]
+            params = [from_date.isoformat(), to_date.isoformat()]
+            if selected_type != "الكل":
+                where.append("production_type = ?")
+                params.append(selected_type)
+
             rows_log = conn_log.execute(
-                "SELECT * FROM production_logs ORDER BY id DESC LIMIT 500"
+                f"""
+                SELECT
+                    id,
+                    production_type,
+                    source_item_name,
+                    target_item_name,
+                    COALESCE(input_quantity, 0) AS input_quantity,
+                    COALESCE(output_quantity, 0) AS output_quantity,
+                    COALESCE(loss_quantity, 0) AS loss_quantity,
+                    COALESCE(total_cost, 0) AS total_cost,
+                    COALESCE(unit_cost, 0) AS unit_cost,
+                    COALESCE(sale_price, 0) AS sale_price,
+                    notes,
+                    created_at
+                FROM production_logs
+                WHERE {' AND '.join(where)}
+                ORDER BY datetime(created_at) DESC, id DESC
+                LIMIT 2000
+                """,
+                tuple(params)
             ).fetchall()
+
             if rows_log:
-                df_log = pd.DataFrame([dict(r) for r in rows_log])
-                st.markdown("### 📋 سجل عمليات التحميص والخلط")
-                st.dataframe(df_log, use_container_width=True, hide_index=True)
+                report_rows = []
+                for r in rows_log:
+                    report_rows.append({
+                        "رقم العملية": r["id"],
+                        "نوع العملية": r["production_type"],
+                        "الخامة / المصدر": r["source_item_name"],
+                        "الصنف الناتج": r["target_item_name"],
+                        "كمية الإدخال": float(r["input_quantity"] or 0),
+                        "كمية الناتج": float(r["output_quantity"] or 0),
+                        "الفقد": float(r["loss_quantity"] or 0),
+                        "إجمالي التكلفة": float(r["total_cost"] or 0),
+                        "تكلفة الوحدة": float(r["unit_cost"] or 0),
+                        "سعر البيع": float(r["sale_price"] or 0),
+                        "التاريخ والوقت": r["created_at"],
+                        "التفاصيل": r["notes"] or "",
+                    })
+
+                df_log = pd.DataFrame(report_rows)
+
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("عدد العمليات", f"{len(df_log):,}")
+                m2.metric("إجمالي الإدخال", f"{df_log['كمية الإدخال'].sum():,.2f}")
+                m3.metric("إجمالي الناتج", f"{df_log['كمية الناتج'].sum():,.2f}")
+                m4.metric("إجمالي الفقد", f"{df_log['الفقد'].sum():,.2f}")
+
+                st.dataframe(
+                    df_log.drop(columns=["التفاصيل"]),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "كمية الإدخال": st.column_config.NumberColumn("كمية الإدخال", format="%.2f"),
+                        "كمية الناتج": st.column_config.NumberColumn("كمية الناتج", format="%.2f"),
+                        "الفقد": st.column_config.NumberColumn("الفقد", format="%.2f"),
+                        "إجمالي التكلفة": st.column_config.NumberColumn("إجمالي التكلفة", format="%.2f د.ل"),
+                        "تكلفة الوحدة": st.column_config.NumberColumn("تكلفة الوحدة", format="%.2f د.ل"),
+                        "سعر البيع": st.column_config.NumberColumn("سعر البيع", format="%.2f د.ل"),
+                    }
+                )
+
+                st.markdown("#### 🔎 استخراج عملية واحدة")
+                operation_options = {}
+                for _, row in df_log.iterrows():
+                    label = (
+                        f"#{int(row['رقم العملية'])} | {row['نوع العملية']} | "
+                        f"{row['الصنف الناتج']} | {row['التاريخ والوقت']}"
+                    )
+                    operation_options[label] = row
+
+                selected_operation = st.selectbox(
+                    "اختر العملية:",
+                    ["-- اختر عملية --"] + list(operation_options.keys()),
+                    key="production_single_operation"
+                )
+                if selected_operation != "-- اختر عملية --":
+                    op = operation_options[selected_operation]
+                    d1, d2, d3 = st.columns(3)
+                    d1.metric("كمية الإدخال", f"{op['كمية الإدخال']:,.2f}")
+                    d2.metric("كمية الناتج", f"{op['كمية الناتج']:,.2f}")
+                    d3.metric("الفقد", f"{op['الفقد']:,.2f}")
+                    st.write(f"**رقم العملية:** {int(op['رقم العملية'])}")
+                    st.write(f"**النوع:** {op['نوع العملية']}")
+                    st.write(f"**التاريخ والوقت:** {op['التاريخ والوقت']}")
+                    st.write(f"**الخامة / المصدر:** {op['الخامة / المصدر']}")
+                    st.write(f"**الصنف الناتج:** {op['الصنف الناتج']}")
+                    st.text_area(
+                        "تفاصيل العملية:",
+                        value=str(op["التفاصيل"] or ""),
+                        height=180,
+                        disabled=True,
+                        key=f"production_details_{int(op['رقم العملية'])}"
+                    )
 
                 import io
                 output = io.BytesIO()
@@ -1016,14 +1148,17 @@ def show_page():
                     df_log.to_excel(writer, index=False, sheet_name="Production_Log")
 
                 st.download_button(
-                    "📥 تصدير سجل الإنتاج Excel",
+                    "📥 تصدير التقرير المحدد إلى Excel",
                     output.getvalue(),
-                    "production_log.xlsx",
+                    f"production_log_{from_date}_to_{to_date}.xlsx",
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
             else:
-                st.info("لا توجد عمليات إنتاج مسجلة حتى الآن.")
+                st.info("لا توجد عمليات إنتاج مطابقة للفترة ونوع العملية المحددين.")
+        except Exception as e:
+            st.error("❌ تعذر تحميل سجل الإنتاج.")
+            st.code(str(e))
         finally:
             conn_log.close()
         return
