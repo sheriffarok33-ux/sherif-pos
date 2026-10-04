@@ -891,7 +891,32 @@ def _production_done(message):
     st.rerun()
 
 
+
+@st.dialog("⚠️ مراجعة العملية قبل التنفيذ")
+def _production_confirm_dialog():
+    pending = st.session_state.get("production_pending_action")
+    if not pending:
+        return
+    st.warning("راجع البيانات جيدًا. لن يتم تنفيذ أي تغيير قبل التأكيد.")
+    for label, value in pending.get("summary", []):
+        st.write(f"**{label}:** {value}")
+    c1, c2 = st.columns(2)
+    if c1.button("✅ تأكيد التنفيذ", type="primary", use_container_width=True, key="production_confirm_yes"):
+        callback = pending.get("callback")
+        args = pending.get("args", [])
+        kwargs = pending.get("kwargs", {})
+        st.session_state.pop("production_pending_action", None)
+        callback(*args, **kwargs)
+    if c2.button("❌ إلغاء", use_container_width=True, key="production_confirm_no"):
+        st.session_state.pop("production_pending_action", None)
+        st.rerun()
+
+
 def show_page():
+    if st.session_state.get("production_pending_action"):
+        _production_confirm_dialog()
+        st.stop()
+
     if st.session_state.get("production_success_pending"):
         _production_success_dialog()
 
@@ -1598,19 +1623,24 @@ def show_page():
                 use_container_width=True
             ):
 
-                execute_mix(
-                    store_id=main_store_id,
-                    mix_list=st.session_state[
-                        "mix_list_state"
+                st.session_state["production_pending_action"] = {
+                    "callback": execute_mix,
+                    "kwargs": {
+                        "store_id": main_store_id,
+                        "mix_list": list(st.session_state["mix_list_state"]),
+                        "target_item_id": target_item["id"],
+                        "new_sale_price": mix_sale_price,
+                        "username": username,
+                    },
+                    "summary": [
+                        ("العملية", "خلط"),
+                        ("عدد الخامات", str(len(st.session_state["mix_list_state"]))),
+                        ("إجمالي الوزن", f"{total_mix_weight:,.2f} كجم"),
+                        ("الصنف الناتج", target_item["item_name"]),
+                        ("سعر البيع", f"{float(mix_sale_price):,.2f} د.ل"),
                     ],
-                    target_item_id=target_item[
-                        "id"
-                    ],
-                    new_sale_price=(
-                        mix_sale_price
-                    ),
-                    username=username
-                )
+                }
+                st.rerun()
 
             if c_clear.button(
                 "🗑️ تفريغ الخلطة",
@@ -1854,18 +1884,25 @@ def show_page():
             use_container_width=True
         ):
 
-            execute_roasting(
-                store_id=main_store_id,
-                raw_item_id=raw_item["id"],
-                target_item_id=target_item[
-                    "id"
+            st.session_state["production_pending_action"] = {
+                "callback": execute_roasting,
+                "kwargs": {
+                    "store_id": main_store_id,
+                    "raw_item_id": raw_item["id"],
+                    "target_item_id": target_item["id"],
+                    "raw_weight": raw_weight,
+                    "roasted_weight": roasted_weight,
+                    "sale_price": roast_sale_price,
+                    "username": username,
+                },
+                "summary": [
+                    ("العملية", "تحميص"),
+                    ("الخامة", raw_item["item_name"]),
+                    ("الوزن الخام", f"{float(raw_weight):,.2f} كجم"),
+                    ("الناتج", target_item["item_name"]),
+                    ("الوزن بعد التحميص", f"{float(roasted_weight):,.2f} كجم"),
+                    ("الفاقد", f"{max(float(raw_weight)-float(roasted_weight),0):,.2f} كجم"),
+                    ("سعر البيع", f"{float(roast_sale_price):,.2f} د.ل"),
                 ],
-                raw_weight=raw_weight,
-                roasted_weight=(
-                    roasted_weight
-                ),
-                sale_price=(
-                    roast_sale_price
-                ),
-                username=username
-            )
+            }
+            st.rerun()

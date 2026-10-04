@@ -599,7 +599,32 @@ def _inventory_done(message):
     st.rerun()
 
 
+
+@st.dialog("⚠️ مراجعة العملية قبل التنفيذ")
+def _inventory_confirm_confirm_dialog():
+    pending = st.session_state.get("inventory_confirm_pending_action")
+    if not pending:
+        return
+    st.warning("راجع البيانات جيدًا. لن يتم تنفيذ أي تغيير قبل التأكيد.")
+    for label, value in pending.get("summary", []):
+        st.write(f"**{label}:** {value}")
+    c1, c2 = st.columns(2)
+    if c1.button("✅ تأكيد التنفيذ", type="primary", use_container_width=True, key="inventory_confirm_confirm_yes"):
+        callback = pending.get("callback")
+        args = pending.get("args", [])
+        kwargs = pending.get("kwargs", {})
+        st.session_state.pop("inventory_confirm_pending_action", None)
+        callback(*args, **kwargs)
+    if c2.button("❌ إلغاء", use_container_width=True, key="inventory_confirm_confirm_no"):
+        st.session_state.pop("inventory_confirm_pending_action", None)
+        st.rerun()
+
+
 def show_page():
+    if st.session_state.get("inventory_confirm_pending_action"):
+        _inventory_confirm_confirm_dialog()
+        st.stop()
+
     if st.session_state.get("inventory_success_pending"):
         _inventory_success_dialog()
 
@@ -854,10 +879,18 @@ def show_page():
             type="primary",
             use_container_width=True
         ):
-            add_stock_to_existing_item(
-                branch_id, selected["id"], added_qty,
-                unit_cost, unit_type, ppc, expiry_date
-            )
+            st.session_state["inventory_confirm_pending_action"] = {
+                "callback": add_stock_to_existing_item,
+                "args": [branch_id, selected["id"], added_qty, unit_cost, unit_type, ppc, expiry_date],
+                "summary": [
+                    ("العملية", "إضافة كمية إلى صنف"),
+                    ("الصنف", selected["item_name"]),
+                    ("الكمية المضافة", f"{float(added_qty):,.3f}"),
+                    ("سعر الشراء", f"{float(unit_cost):,.2f} د.ل"),
+                    ("الصلاحية", str(expiry_date) if expiry_date else "بدون تاريخ انتهاء"),
+                ],
+            }
+            st.rerun()
 
     # =========================================================
     # صنف جديد
@@ -933,11 +966,19 @@ def show_page():
             type="primary",
             use_container_width=True
         ):
-            create_new_inventory_item(
-                branch_id, item_code, item_name, qty,
-                cost, sale_price, unit_type, ppc,
-                expiry_date_new
-            )
+            st.session_state["inventory_confirm_pending_action"] = {
+                "callback": create_new_inventory_item,
+                "args": [branch_id, item_code, item_name, qty, cost, sale_price, unit_type, ppc, expiry_date_new],
+                "summary": [
+                    ("العملية", "إنشاء صنف جديد"),
+                    ("الكود", item_code),
+                    ("الصنف", item_name),
+                    ("الكمية الافتتاحية", f"{float(qty):,.3f}"),
+                    ("سعر الشراء", f"{float(cost):,.2f} د.ل"),
+                    ("سعر البيع", f"{float(sale_price):,.2f} د.ل"),
+                ],
+            }
+            st.rerun()
 
     # =========================================================
     # الصلاحيات
