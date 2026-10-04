@@ -1,3 +1,4 @@
+from ui_common import back_button
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -47,6 +48,8 @@ def _xlsx_bytes(df, sheet_name="Data"):
     return out.getvalue()
 
 def show_page():
+    back_button(key="back_users")
+
     try:
         ensure_hr_schema()
     except Exception as e:

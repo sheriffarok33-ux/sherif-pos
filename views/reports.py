@@ -1,3 +1,4 @@
+from ui_common import back_button
 import streamlit as st
 import pandas as pd
 import io
@@ -909,6 +910,8 @@ def _transfer_success_dialog():
 
 
 def show_page():
+    back_button(key="back_reports")
+
     if st.session_state.get("transfer_success_pending"):
         _transfer_success_dialog()
 

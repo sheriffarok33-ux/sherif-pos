@@ -1,3 +1,4 @@
+from ui_common import back_button
 import streamlit as st
 import pandas as pd
 import os
@@ -5,6 +6,8 @@ import time
 from database import get_db_connection
 
 def show_page():
+    back_button(key="back_favorites")
+
     role = st.session_state.get("role", "")
     if role not in ["Admin", "General_Supervisor"]:
         st.error("🔒 عذراً، هذه الشاشة مخصصة للمدير والمشرف العام فقط.")

@@ -1,3 +1,4 @@
+from ui_common import back_button
 import streamlit as st
 import pandas as pd
 import io
@@ -50,6 +51,11 @@ def _ensure_voucher_schema(conn):
         "CREATE INDEX IF NOT EXISTS idx_financial_vouchers_type_date "
         "ON financial_vouchers(voucher_type, created_at)"
     )
+    cols = _table_columns(conn, "financial_vouchers")
+    if "treasury_id" not in cols:
+        conn.execute("ALTER TABLE financial_vouchers ADD COLUMN treasury_id INTEGER")
+    if "treasury_name" not in cols:
+        conn.execute("ALTER TABLE financial_vouchers ADD COLUMN treasury_name TEXT")
     conn.commit()
 
 
@@ -77,7 +83,7 @@ def _next_voucher_no(conn, voucher_type):
 
 
 def _save_voucher(conn, voucher_type, party_type, party_id, party_name,
-                  branch_id, user_id, amount, notes):
+                  branch_id, user_id, amount, notes, treasury_id=None, treasury_name=None):
     # Retry protects against a rare duplicate number if two users save together.
     for _ in range(5):
         voucher_no = _next_voucher_no(conn, voucher_type)
@@ -86,12 +92,12 @@ def _save_voucher(conn, voucher_type, party_type, party_id, party_name,
                 """
                 INSERT INTO financial_vouchers
                 (voucher_no, voucher_type, party_type, party_id, party_name,
-                 branch_id, user_id, amount, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 branch_id, user_id, amount, notes, treasury_id, treasury_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     voucher_no, voucher_type, party_type, party_id, party_name,
-                    branch_id, user_id, float(amount), notes
+                    branch_id, user_id, float(amount), notes, treasury_id, treasury_name
                 )
             )
             return voucher_no
@@ -104,6 +110,8 @@ def _save_voucher(conn, voucher_type, party_type, party_id, party_name,
 @st.dialog("✅ تمت العملية بنجاح")
 def _parties_success_dialog():
     st.success(st.session_state.get("parties_success_message", "تمت العملية بنجاح."))
+    if st.session_state.get("last_voucher_html"):
+        st.download_button("🖨️ طباعة / حفظ السند", st.session_state["last_voucher_html"].encode("utf-8"), file_name=f"{st.session_state.get('last_voucher_no','voucher')}.html", mime="text/html", use_container_width=True)
     if st.button("موافق", type="primary", use_container_width=True, key="parties_success_ok"):
         st.session_state.pop("parties_success_pending", None)
         st.session_state.pop("parties_success_message", None)
@@ -116,7 +124,58 @@ def _parties_done(message):
     st.rerun()
 
 
+
+def _ensure_treasury_schema(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS treasuries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            treasury_name TEXT NOT NULL UNIQUE,
+            treasury_type TEXT NOT NULL DEFAULT 'branch',
+            branch_id INTEGER,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS treasury_movements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            treasury_id INTEGER NOT NULL,
+            movement_type TEXT NOT NULL,
+            amount REAL NOT NULL,
+            voucher_no TEXT,
+            description TEXT,
+            user_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("INSERT OR IGNORE INTO treasuries(treasury_name,treasury_type,branch_id) VALUES('خزينة الشركة','company',NULL)")
+    branches=conn.execute("SELECT id, branch_name FROM branches ORDER BY branch_name").fetchall()
+    for b in branches:
+        conn.execute("INSERT OR IGNORE INTO treasuries(treasury_name,treasury_type,branch_id) VALUES(?, 'branch', ?)", (f"خزينة فرع {b['branch_name']}", b["id"]))
+    conn.commit()
+
+def _voucher_html(voucher_no, voucher_type, party_type, party_name, amount, notes, treasury_name, created_at=None):
+    title = "سند دفع" if voucher_type == "دفع" else "سند قبض"
+    dt = created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return f"""<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>{title} {voucher_no}</title>
+<style>body{{font-family:Arial;direction:rtl;margin:35px}}.box{{border:2px solid #222;padding:25px}}h1{{text-align:center}}table{{width:100%;border-collapse:collapse}}td{{padding:10px;border-bottom:1px solid #aaa}}.sig{{margin-top:55px;display:flex;justify-content:space-between}}</style></head>
+<body><div class="box"><h1>{title}</h1><table>
+<tr><td><b>رقم السند</b></td><td>{voucher_no}</td><td><b>التاريخ والوقت</b></td><td>{dt}</td></tr>
+<tr><td><b>الخزينة</b></td><td>{treasury_name}</td><td><b>الجهة</b></td><td>{party_type}</td></tr>
+<tr><td><b>الاسم</b></td><td>{party_name}</td><td><b>المبلغ</b></td><td>{float(amount):,.2f} د.ل</td></tr>
+<tr><td><b>البيان</b></td><td colspan="3">{notes or '-'}</td></tr>
+</table><div class="sig"><span>توقيع المستلم: __________</span><span>المحاسب: __________</span><span>الاعتماد: __________</span></div></div>
+<script>window.onload=function(){{window.print();}}</script></body></html>"""
+
+def _treasury_options(conn):
+    _ensure_treasury_schema(conn)
+    rows=conn.execute("SELECT id,treasury_name,treasury_type,branch_id FROM treasuries WHERE is_active=1 ORDER BY CASE WHEN treasury_type='company' THEN 0 ELSE 1 END, treasury_name").fetchall()
+    return {r["treasury_name"]: r for r in rows}
+
+
 def show_page():
+    back_button(key="back_parties")
+
     if st.session_state.get("parties_success_pending"):
         _parties_success_dialog()
 
@@ -140,10 +199,13 @@ def show_page():
             _set_mode("customer_collection")
         if r1[5].button("🧾 أرشيف الإيصالات", use_container_width=True):
             _set_mode("vouchers")
+        if st.button("🏦 خزينة الشركة وخزائن الفروع", use_container_width=True, key="open_treasuries"):
+            _set_mode("treasuries")
     
     conn = get_db_connection()
     try:
         _ensure_voucher_schema(conn)
+        _ensure_treasury_schema(conn)
         mode = st.session_state["parties_mode"]
 
         if mode == "add":
@@ -290,91 +352,87 @@ def show_page():
                 )
 
         elif mode == "supplier_payment":
-            rows = conn.execute(
-                "SELECT id, supplier_name, balance FROM suppliers ORDER BY supplier_name"
-            ).fetchall()
+            rows = conn.execute("SELECT id, supplier_name, balance FROM suppliers ORDER BY supplier_name").fetchall()
             if not rows:
                 st.info("لا يوجد موردون.")
             else:
-                opts = {f"{r['supplier_name']} | الرصيد: {float(r['balance'] or 0):,.2f}": r for r in rows}
-                label = st.selectbox("اختر المورد:", list(opts))
-                supplier = opts[label]
-                amount = st.number_input("المبلغ المدفوع (د.ل):", min_value=0.0, step=10.0)
-                if st.button("✅ تسجيل الدفعة", type="primary", use_container_width=True):
-                    if amount <= 0:
-                        st.warning("أدخل مبلغًا أكبر من صفر.")
+                opts={f"{r['supplier_name']} | الرصيد: {float(r['balance'] or 0):,.2f}":r for r in rows}
+                supplier=opts[st.selectbox("اختر المورد:",list(opts))]
+                treasuries=_treasury_options(conn)
+                treasury=treasuries[st.selectbox("🏦 الخزينة التي سيتم الدفع منها:",list(treasuries),key="pay_treasury")]
+                amount=st.number_input("المبلغ المدفوع (د.ل):",min_value=0.0,step=10.0,key="supplier_pay_amount")
+                notes=st.text_input("البيان:",value="دفعة من حساب مورد",key="supplier_pay_notes")
+                if st.button("✅ تسجيل سند الدفع",type="primary",use_container_width=True):
+                    if amount<=0: st.warning("أدخل مبلغًا أكبر من صفر.")
                     else:
-                        branch_id = st.session_state.get("branch_id")
-                        user_id = st.session_state.get("user_id")
-                        if not branch_id:
-                            st.error("⚠️ المستخدم غير مرتبط بفرع؛ لا يمكن تسجيل الدفعة.")
-                            return
-
-                        conn.execute(
-                            "UPDATE suppliers SET balance = balance - ? WHERE id = ?",
-                            (amount, supplier["id"])
-                        )
-                        conn.execute(
-                            """
-                            INSERT INTO supplier_payments
-                            (supplier_id, branch_id, user_id, amount, shift_number, notes)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                supplier["id"],
-                                branch_id,
-                                user_id,
-                                float(amount),
-                                _current_shift_number(),
-                                "دفعة من حساب مورد"
-                            )
-                        )
-                        voucher_no = _save_voucher(
-                            conn, "دفع", "مورد", supplier["id"],
-                            supplier["supplier_name"], branch_id, user_id,
-                            amount, "دفعة من حساب مورد"
-                        )
+                        user_id=st.session_state.get("user_id")
+                        branch_id=treasury["branch_id"]
+                        conn.execute("UPDATE suppliers SET balance=balance-? WHERE id=?",(amount,supplier["id"]))
+                        if branch_id:
+                            conn.execute("""INSERT INTO supplier_payments(supplier_id,branch_id,user_id,amount,shift_number,notes) VALUES(?,?,?,?,?,?)""",(supplier["id"],branch_id,user_id,float(amount),_current_shift_number(),notes))
+                        voucher_no=_save_voucher(conn,"دفع","مورد",supplier["id"],supplier["supplier_name"],branch_id,user_id,amount,notes,treasury["id"],treasury["treasury_name"])
+                        conn.execute("""INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id) VALUES(?,?,?,?,?,?)""",(treasury["id"],"دفع",-float(amount),voucher_no,notes,user_id))
                         conn.commit()
-                        _parties_done(
-                            f"تم تسجيل الدفعة وتحديث رصيد المورد. رقم إيصال الدفع: {voucher_no}"
-                        )
+                        html=_voucher_html(voucher_no,"دفع","مورد",supplier["supplier_name"],amount,notes,treasury["treasury_name"])
+                        st.session_state["last_voucher_html"]=html
+                        st.session_state["last_voucher_no"]=voucher_no
+                        _parties_done(f"تم تسجيل سند الدفع {voucher_no} من {treasury['treasury_name']}.")
 
         elif mode == "customer_collection":
-            rows = conn.execute(
-                "SELECT id, customer_name, phone, balance FROM customers ORDER BY customer_name"
-            ).fetchall()
-            if not rows:
-                st.info("لا يوجد عملاء.")
+            rows=conn.execute("SELECT id,customer_name,phone,balance FROM customers ORDER BY customer_name").fetchall()
+            if not rows: st.info("لا يوجد عملاء.")
             else:
-                opts = {
-                    f"{r['customer_name']} ({r['phone'] or '-'}) | الرصيد: {float(r['balance'] or 0):,.2f}": r
-                    for r in rows
-                }
-                label = st.selectbox("اختر العميل:", list(opts))
-                customer = opts[label]
-                amount = st.number_input("المبلغ المحصل (د.ل):", min_value=0.0, step=10.0)
-                if st.button("✅ تسجيل التحصيل", type="primary", use_container_width=True):
-                    if amount <= 0:
-                        st.warning("أدخل مبلغًا أكبر من صفر.")
+                opts={f"{r['customer_name']} ({r['phone'] or '-'}) | الرصيد: {float(r['balance'] or 0):,.2f}":r for r in rows}
+                customer=opts[st.selectbox("اختر العميل:",list(opts))]
+                treasuries=_treasury_options(conn)
+                treasury=treasuries[st.selectbox("🏦 الخزينة التي سيتم القبض فيها:",list(treasuries),key="rec_treasury")]
+                amount=st.number_input("المبلغ المحصل (د.ل):",min_value=0.0,step=10.0,key="customer_rec_amount")
+                notes=st.text_input("البيان:",value="تحصيل من حساب عميل",key="customer_rec_notes")
+                if st.button("✅ تسجيل سند القبض",type="primary",use_container_width=True):
+                    if amount<=0: st.warning("أدخل مبلغًا أكبر من صفر.")
                     else:
-                        branch_id = st.session_state.get("branch_id")
-                        user_id = st.session_state.get("user_id")
-                        if not branch_id:
-                            st.error("⚠️ المستخدم غير مرتبط بفرع؛ لا يمكن تسجيل التحصيل.")
-                            return
-                        conn.execute(
-                            "UPDATE customers SET balance = balance - ? WHERE id = ?",
-                            (amount, customer["id"])
-                        )
-                        voucher_no = _save_voucher(
-                            conn, "قبض", "عميل", customer["id"],
-                            customer["customer_name"], branch_id, user_id,
-                            amount, "تحصيل من حساب عميل"
-                        )
+                        user_id=st.session_state.get("user_id"); branch_id=treasury["branch_id"]
+                        conn.execute("UPDATE customers SET balance=balance-? WHERE id=?",(amount,customer["id"]))
+                        voucher_no=_save_voucher(conn,"قبض","عميل",customer["id"],customer["customer_name"],branch_id,user_id,amount,notes,treasury["id"],treasury["treasury_name"])
+                        conn.execute("""INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id) VALUES(?,?,?,?,?,?)""",(treasury["id"],"قبض",float(amount),voucher_no,notes,user_id))
                         conn.commit()
-                        _parties_done(
-                            f"تم تسجيل التحصيل وتحديث رصيد العميل. رقم إيصال القبض: {voucher_no}"
-                        )
+                        html=_voucher_html(voucher_no,"قبض","عميل",customer["customer_name"],amount,notes,treasury["treasury_name"])
+                        st.session_state["last_voucher_html"]=html
+                        st.session_state["last_voucher_no"]=voucher_no
+                        _parties_done(f"تم تسجيل سند القبض {voucher_no} في {treasury['treasury_name']}.")
+
+        elif mode == "treasuries":
+            st.subheader("🏦 خزينة الشركة وخزائن الفروع")
+            treasuries=_treasury_options(conn)
+            # balances
+            data=[]
+            for name,t in treasuries.items():
+                bal=conn.execute("SELECT COALESCE(SUM(amount),0) AS balance FROM treasury_movements WHERE treasury_id=?",(t["id"],)).fetchone()["balance"]
+                data.append({"الخزينة":name,"الرصيد الحالي":float(bal or 0)})
+            st.dataframe(pd.DataFrame(data),hide_index=True,use_container_width=True)
+            st.markdown("#### 🔁 تحويل بين الخزائن")
+            names=list(treasuries)
+            c1,c2,c3=st.columns(3)
+            src_name=c1.selectbox("من خزينة:",names,key="treasury_from")
+            dst_names=[n for n in names if n!=src_name]
+            dst_name=c2.selectbox("إلى خزينة:",dst_names,key="treasury_to")
+            transfer_amount=c3.number_input("المبلغ:",min_value=0.0,step=10.0,key="treasury_transfer_amount")
+            transfer_notes=st.text_input("البيان:",value="تحويل بين الخزائن",key="treasury_transfer_notes")
+            if st.button("🔁 تنفيذ التحويل بين الخزائن",type="primary",use_container_width=True):
+                if transfer_amount<=0: st.warning("أدخل مبلغًا أكبر من صفر.")
+                else:
+                    src=treasuries[src_name]; dst=treasuries[dst_name]; user_id=st.session_state.get("user_id")
+                    ref=f"TR-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    conn.execute("INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id) VALUES(?,?,?,?,?,?)",(src["id"],"تحويل صادر",-float(transfer_amount),ref,transfer_notes,user_id))
+                    conn.execute("INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id) VALUES(?,?,?,?,?,?)",(dst["id"],"تحويل وارد",float(transfer_amount),ref,transfer_notes,user_id))
+                    conn.commit()
+                    _parties_done(f"تم تحويل {float(transfer_amount):,.2f} د.ل من {src_name} إلى {dst_name}. رقم الحركة: {ref}")
+            st.markdown("#### 📒 آخر حركات الخزائن")
+            mov=conn.execute("""SELECT tm.created_at,t.treasury_name,tm.movement_type,tm.amount,tm.voucher_no,tm.description FROM treasury_movements tm JOIN treasuries t ON t.id=tm.treasury_id ORDER BY datetime(tm.created_at) DESC,tm.id DESC LIMIT 200""").fetchall()
+            if mov:
+                st.dataframe(pd.DataFrame([{"التاريخ":r["created_at"],"الخزينة":r["treasury_name"],"الحركة":r["movement_type"],"المبلغ":float(r["amount"] or 0),"المرجع":r["voucher_no"] or "","البيان":r["description"] or ""} for r in mov]),hide_index=True,use_container_width=True)
+            else: st.info("لا توجد حركات خزينة حتى الآن.")
+
         elif mode == "vouchers":
             st.subheader("🧾 أرشيف إيصالات الدفع والقبض")
             voucher_filter = st.selectbox(
@@ -386,7 +444,7 @@ def show_page():
                 rows = conn.execute(
                     """
                     SELECT voucher_no, voucher_type, party_type, party_name,
-                           amount, notes, created_at
+                           amount, notes, created_at, COALESCE(treasury_name,'-') AS treasury_name
                     FROM financial_vouchers
                     ORDER BY datetime(created_at) DESC, id DESC
                     """
@@ -395,7 +453,7 @@ def show_page():
                 rows = conn.execute(
                     """
                     SELECT voucher_no, voucher_type, party_type, party_name,
-                           amount, notes, created_at
+                           amount, notes, created_at, COALESCE(treasury_name,'-') AS treasury_name
                     FROM financial_vouchers
                     WHERE voucher_type = ?
                     ORDER BY datetime(created_at) DESC, id DESC
@@ -412,6 +470,7 @@ def show_page():
                     "الجهة": r["party_type"],
                     "الاسم": r["party_name"],
                     "المبلغ": float(r["amount"] or 0),
+                    "الخزينة": r["treasury_name"],
                     "البيان": r["notes"] or "",
                     "التاريخ والوقت": r["created_at"],
                 } for r in rows])

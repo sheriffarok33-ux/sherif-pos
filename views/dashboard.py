@@ -1,3 +1,4 @@
+from ui_common import back_button
 import streamlit as st
 from database import get_db_connection
 
@@ -491,6 +492,8 @@ def _dashboard_extra_stats():
 
 
 def show_page():
+    back_button(key="back_dashboard")
+
     st.markdown(
         """
         <h2 style="color:#0f172a;text-align:right;">

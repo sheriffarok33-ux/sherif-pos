@@ -1,3 +1,4 @@
+from ui_common import back_button
 import json
 import streamlit as st
 from datetime import datetime
@@ -239,6 +240,8 @@ def archive_and_reset(financial_year, user_id, username):
 
 
 def show_page():
+    back_button(key="back_annual_reset")
+
     st.markdown("## ⚙️ إقفال وأرشفة السنة المالية")
 
     role = st.session_state.get("role", "")

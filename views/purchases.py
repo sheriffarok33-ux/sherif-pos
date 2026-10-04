@@ -1,3 +1,5 @@
+from ui_common import back_button
+from ui_common import item_alerts
 import streamlit as st
 from datetime import datetime, date
 from database import get_db_connection
@@ -813,31 +815,10 @@ def _purchase_success_dialog():
         st.rerun()
 
 
-
-@st.dialog("⚠️ مراجعة العملية قبل التنفيذ")
-def _purchase_confirm_confirm_dialog():
-    pending = st.session_state.get("purchase_confirm_pending_action")
-    if not pending:
-        return
-    st.warning("راجع البيانات جيدًا. لن يتم تنفيذ أي تغيير قبل التأكيد.")
-    for label, value in pending.get("summary", []):
-        st.write(f"**{label}:** {value}")
-    c1, c2 = st.columns(2)
-    if c1.button("✅ تأكيد التنفيذ", type="primary", use_container_width=True, key="purchase_confirm_confirm_yes"):
-        callback = pending.get("callback")
-        args = pending.get("args", [])
-        kwargs = pending.get("kwargs", {})
-        st.session_state.pop("purchase_confirm_pending_action", None)
-        callback(*args, **kwargs)
-    if c2.button("❌ إلغاء", use_container_width=True, key="purchase_confirm_confirm_no"):
-        st.session_state.pop("purchase_confirm_pending_action", None)
-        st.rerun()
-
-
 def show_page():
-    if st.session_state.get("purchase_confirm_pending_action"):
-        _purchase_confirm_confirm_dialog()
-        st.stop()
+    back_button(key="back_purchases")
+
+    item_alerts(st.session_state.get("branch_id"), key="alerts_purchases")
 
     if st.session_state.get("purchase_success_pending"):
         _purchase_success_dialog()
@@ -1643,23 +1624,13 @@ def show_page():
 
         if confirm_btn:
 
-            st.session_state["purchase_confirm_pending_action"] = {
-                "callback": post_purchase_invoice,
-                "kwargs": {
-                    "branch_id": selected_branch_id,
-                    "supplier_id": selected_supplier_id,
-                    "supplier_name": ps,
-                    "invoice_number": inv_num,
-                    "payment_type": payment_type,
-                    "purchase_cart": list(st.session_state["purch_cart"]),
-                },
-                "summary": [
-                    ("العملية", "اعتماد فاتورة مشتريات"),
-                    ("رقم الفاتورة", inv_num),
-                    ("المورد", ps),
-                    ("طريقة الدفع", payment_type),
-                    ("عدد الأصناف", str(len(st.session_state["purch_cart"]))),
-                    ("إجمالي الفاتورة", f"{float(grand_total):,.2f} د.ل"),
-                ],
-            }
-            st.rerun()
+            post_purchase_invoice(
+                branch_id=selected_branch_id,
+                supplier_id=selected_supplier_id,
+                supplier_name=ps,
+                invoice_number=inv_num,
+                payment_type=payment_type,
+                purchase_cart=st.session_state[
+                    "purch_cart"
+                ]
+            )

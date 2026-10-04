@@ -1,3 +1,5 @@
+from ui_common import back_button
+from ui_common import item_alerts
 import streamlit as st
 from database import get_db_connection
 
@@ -349,6 +351,10 @@ def _adjustments_done(message):
 
 
 def show_page():
+    back_button(key="back_adjustments")
+
+    item_alerts(st.session_state.get("branch_id"), key="alerts_adjustments")
+
     if st.session_state.get("adjustments_success_pending"):
         _adjustments_success_dialog()
 

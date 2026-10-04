@@ -1,3 +1,4 @@
+from ui_common import back_button
 import base64
 import streamlit as st
 from database import get_db_connection
@@ -73,6 +74,8 @@ def _file_to_data_uri(uploaded):
 
 
 def show_page():
+    back_button(key="back_appearance")
+
     if st.session_state.get("role") != "Admin":
         st.error("⛔ تخصيص المظهر متاح للمدير فقط.")
         return

@@ -1,3 +1,5 @@
+from ui_common import back_button
+from ui_common import item_alerts
 import streamlit as st
 import json
 from datetime import datetime
@@ -1642,6 +1644,10 @@ def build_historical_z_html(
 # ============================================================
 
 def show_page():
+    back_button(key="back_pos")
+
+    item_alerts(st.session_state.get("branch_id"), key="alerts_pos")
+
     # إذا اكتملت فاتورة في التشغيل السابق، تبقى نافذة النجاح ظاهرة
     # حتى يضغط المستخدم "موافق".
     if st.session_state.get("pos_success_pending"):

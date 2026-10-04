@@ -1,3 +1,4 @@
+from ui_common import back_button
 from datetime import date, datetime
 import io
 
@@ -143,6 +144,8 @@ def get_branches():
 
 
 def show_page():
+    back_button(key="back_items_import")
+
     st.title("📥 استيراد الأصناف من Excel")
     st.caption("النظام المعتمد: قطعة أو كجم فقط — بدون كراتين أو تحويلات.")
 

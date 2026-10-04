@@ -1,3 +1,5 @@
+from ui_common import back_button
+from ui_common import item_alerts
 import streamlit as st
 import pandas as pd
 import io
@@ -476,31 +478,10 @@ def _damages_done(message):
     st.rerun()
 
 
-
-@st.dialog("⚠️ مراجعة العملية قبل التنفيذ")
-def _stockmove_confirm_dialog():
-    pending = st.session_state.get("stockmove_pending_action")
-    if not pending:
-        return
-    st.warning("راجع البيانات جيدًا. لن يتم تنفيذ أي تغيير قبل التأكيد.")
-    for label, value in pending.get("summary", []):
-        st.write(f"**{label}:** {value}")
-    c1, c2 = st.columns(2)
-    if c1.button("✅ تأكيد التنفيذ", type="primary", use_container_width=True, key="stockmove_confirm_yes"):
-        callback = pending.get("callback")
-        args = pending.get("args", [])
-        kwargs = pending.get("kwargs", {})
-        st.session_state.pop("stockmove_pending_action", None)
-        callback(*args, **kwargs)
-    if c2.button("❌ إلغاء", use_container_width=True, key="stockmove_confirm_no"):
-        st.session_state.pop("stockmove_pending_action", None)
-        st.rerun()
-
-
 def show_page():
-    if st.session_state.get("stockmove_pending_action"):
-        _stockmove_confirm_dialog()
-        st.stop()
+    back_button(key="back_damages_returns")
+
+    item_alerts(st.session_state.get("branch_id"), key="alerts_damages_returns")
 
     if st.session_state.get("damages_success_pending"):
         _damages_success_dialog()
@@ -595,12 +576,7 @@ def show_page():
         st.info(f"نوع الحركة المحدد: **{adj_type}**")
 
         if st.button("💾 اعتماد الحركة وتحديث المخزون", type="primary", use_container_width=True):
-            st.session_state["stockmove_pending_action"] = {
-                "callback": execute_adjustment,
-                "args": [branch_id, selected["id"], qty, adj_type, notes],
-                "summary": [("العملية", adj_type), ("الفرع", branch_name), ("الصنف", selected["item_name"]), ("الكمية", f"{float(qty):,.2f}"), ("السبب", notes or "-")],
-            }
-            st.rerun()
+            execute_adjustment(branch_id, selected["id"], qty, adj_type, notes)
 
     # --------------------------------------------------------
     # المرتجعات - الأنواع نفسها أصبحت أزراراً
@@ -635,12 +611,10 @@ def show_page():
         notes = st.text_input("ملاحظات:", key="return_notes_btn")
         st.info(f"نوع المرتجع المحدد: **{st.session_state['return_kind']}**")
         if st.button("💾 اعتماد المرتجع", type="primary", use_container_width=True):
-            st.session_state["stockmove_pending_action"] = {
-                "callback": execute_adjustment,
-                "args": [branch_id, selected["id"], qty, st.session_state["return_kind"], notes],
-                "summary": [("العملية", st.session_state["return_kind"]), ("الفرع", branch_name), ("الصنف", selected["item_name"]), ("الكمية", f"{float(qty):,.2f}"), ("ملاحظات", notes or "-")],
-            }
-            st.rerun()
+            execute_adjustment(
+                branch_id, selected["id"], qty,
+                st.session_state["return_kind"], notes
+            )
 
     # --------------------------------------------------------
     # فائض
@@ -660,12 +634,7 @@ def show_page():
         qty = st.number_input("كمية الفائض:", min_value=0.01, value=1.0, step=0.5, key="surplus_qty_btn")
         notes = st.text_input("سبب الفائض:", value="جرد / فائض مخزني", key="surplus_notes_btn")
         if st.button("💾 اعتماد وإضافة الفائض", type="primary", use_container_width=True):
-            st.session_state["stockmove_pending_action"] = {
-                "callback": execute_surplus,
-                "args": [branch_id, selected["id"], qty, notes],
-                "summary": [("العملية", "إضافة فائض مخزني"), ("الفرع", branch_name), ("الصنف", selected["item_name"]), ("الكمية", f"{float(qty):,.2f}"), ("السبب", notes or "-")],
-            }
-            st.rerun()
+            execute_surplus(branch_id, selected["id"], qty, notes)
 
     # --------------------------------------------------------
     # السعر
@@ -703,12 +672,7 @@ def show_page():
         )
         st.info("سيتم تعميم السعر على الفروع والمخازن لنفس الصنف.")
         if st.button("💾 حفظ وتعميم السعر", type="primary", use_container_width=True):
-            st.session_state["stockmove_pending_action"] = {
-                "callback": execute_price_update,
-                "args": [selected["item_code"], selected["item_name"], new_price],
-                "summary": [("العملية", "تعديل وتعميم سعر البيع"), ("الصنف", selected["item_name"]), ("السعر الحالي", f"{float(selected['sale_price'] or 0):,.2f} د.ل"), ("السعر الجديد", f"{float(new_price):,.2f} د.ل")],
-            }
-            st.rerun()
+            execute_price_update(selected["item_code"], selected["item_name"], new_price)
 
     # --------------------------------------------------------
     # سجل الحركات / التصدير

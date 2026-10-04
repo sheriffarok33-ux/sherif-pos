@@ -1,3 +1,4 @@
+from ui_common import back_button
 import streamlit as st
 import pandas as pd
 
@@ -97,6 +98,8 @@ def confirm_delete_branch_dialog(branch_id, branch_name):
 # ============================================================
 
 def show_page():
+    back_button(key="back_branches")
+
 
     st.header("🏢 إدارة الفروع والمخازن المستقلة")
 

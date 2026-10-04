@@ -1,3 +1,4 @@
+from ui_common import back_button
 import streamlit as st
 import pandas as pd
 import io
@@ -649,6 +650,8 @@ def _finance_undo_dialog():
 # ============================================================
 
 def show_page():
+    back_button(key="back_expenses")
+
 
     if st.session_state.get("finance_success_info"):
         _finance_success_dialog()

@@ -1,3 +1,4 @@
+from ui_common import back_button
 import streamlit as st
 from database import get_db_connection
 
@@ -129,6 +130,8 @@ def reset_startup_data():
 
 
 def show_page():
+    back_button(key="back_initial_setup_reset")
+
     role = st.session_state.get("role", "")
 
     if role != "Admin":
