@@ -121,6 +121,45 @@ def ensure_local_schema():
         CREATE TABLE IF NOT EXISTS custom_labels(id INTEGER PRIMARY KEY, label_key TEXT, label_value TEXT);
         CREATE TABLE IF NOT EXISTS activity_logs(id INTEGER PRIMARY KEY, user_id INTEGER, branch_id INTEGER, action_type TEXT, details TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS app_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT, updated_at TEXT);
+
+        CREATE TABLE IF NOT EXISTS financial_vouchers(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            voucher_no TEXT UNIQUE NOT NULL,
+            voucher_type TEXT NOT NULL,
+            party_type TEXT NOT NULL,
+            party_id INTEGER,
+            party_name TEXT NOT NULL,
+            branch_id INTEGER,
+            user_id INTEGER,
+            amount REAL NOT NULL DEFAULT 0,
+            notes TEXT,
+            treasury_id INTEGER,
+            treasury_name TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS treasuries(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            treasury_name TEXT NOT NULL UNIQUE,
+            treasury_type TEXT NOT NULL DEFAULT 'branch',
+            branch_id INTEGER,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS treasury_movements(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            treasury_id INTEGER NOT NULL,
+            movement_type TEXT NOT NULL,
+            amount REAL NOT NULL,
+            voucher_no TEXT,
+            description TEXT,
+            user_id INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_financial_vouchers_type_date
+            ON financial_vouchers(voucher_type, created_at);
+        CREATE INDEX IF NOT EXISTS idx_treasury_movements_treasury_date
+            ON treasury_movements(treasury_id, created_at);
+
         CREATE TABLE IF NOT EXISTS local_meta(key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS sync_queue(id INTEGER PRIMARY KEY AUTOINCREMENT, operation_uuid TEXT NOT NULL UNIQUE, transaction_uuid TEXT, device_id TEXT, sequence_no INTEGER DEFAULT 0, sql_text TEXT NOT NULL, params_json TEXT NOT NULL DEFAULT '[]', created_at TEXT DEFAULT CURRENT_TIMESTAMP, sync_status TEXT NOT NULL DEFAULT 'pending', sync_error TEXT);
         CREATE INDEX IF NOT EXISTS ix_sync_queue_status ON sync_queue(sync_status,id);
@@ -147,6 +186,15 @@ def ensure_local_schema():
             c.execute("INSERT OR REPLACE INTO local_meta(key,value) VALUES('device_id',?)",(did,))
             c.execute("UPDATE sync_queue SET device_id=? WHERE device_id IS NULL OR device_id=''",(did,))
         except Exception: pass
+        try:
+            c.execute("INSERT OR IGNORE INTO treasuries(treasury_name,treasury_type,branch_id) VALUES('خزينة الشركة','company',NULL)")
+            for b in c.execute("SELECT id, branch_name FROM branches").fetchall():
+                c.execute("INSERT OR IGNORE INTO treasuries(treasury_name,treasury_type,branch_id) VALUES(?, 'branch', ?)", (f"خزينة فرع {b['branch_name']}", b['id']))
+        except Exception:
+            pass
+        for col, typ in [('treasury_id','INTEGER'), ('treasury_name','TEXT')]:
+            try: c.execute(f'ALTER TABLE financial_vouchers ADD COLUMN {col} {typ}')
+            except Exception: pass
         c.commit(); c.close()
 
 def get_device_id():
@@ -379,6 +427,50 @@ def sync_pending_sales(remote=None):
             try: remote.close()
             except Exception: pass
 
+
+def _ensure_remote_finance_schema(remote):
+    """Create central finance tables needed by locally queued voucher/treasury operations."""
+    remote.execute("""
+        CREATE TABLE IF NOT EXISTS treasuries(
+            id BIGSERIAL PRIMARY KEY,
+            treasury_name TEXT NOT NULL UNIQUE,
+            treasury_type TEXT NOT NULL DEFAULT 'branch',
+            branch_id BIGINT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    remote.execute("""
+        CREATE TABLE IF NOT EXISTS financial_vouchers(
+            id BIGSERIAL PRIMARY KEY,
+            voucher_no TEXT NOT NULL UNIQUE,
+            voucher_type TEXT NOT NULL,
+            party_type TEXT NOT NULL,
+            party_id BIGINT,
+            party_name TEXT NOT NULL,
+            branch_id BIGINT,
+            user_id BIGINT,
+            amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            notes TEXT,
+            treasury_id BIGINT,
+            treasury_name TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    remote.execute("""
+        CREATE TABLE IF NOT EXISTS treasury_movements(
+            id BIGSERIAL PRIMARY KEY,
+            treasury_id BIGINT NOT NULL,
+            movement_type TEXT NOT NULL,
+            amount DOUBLE PRECISION NOT NULL,
+            voucher_no TEXT,
+            description TEXT,
+            user_id BIGINT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    remote.commit()
+
 def _ensure_remote_operation_receipts(remote):
     remote.execute("CREATE TABLE IF NOT EXISTS offline_operation_receipts(transaction_uuid TEXT PRIMARY KEY, device_id TEXT, device_synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
     try:
@@ -398,6 +490,7 @@ def sync_pending_operations(remote=None):
     local=get_local_connection(queue_writes=False); synced=failed=0
     try:
         _ensure_remote_operation_receipts(remote)
+        _ensure_remote_finance_schema(remote)
         txs=local.execute("SELECT transaction_uuid, MIN(id) first_id FROM sync_queue WHERE sync_status='pending' GROUP BY transaction_uuid ORDER BY first_id").fetchall()
         for tx in txs:
             txid=tx['transaction_uuid']

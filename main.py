@@ -251,7 +251,14 @@ if "cart" not in st.session_state: st.session_state["cart"] = []
 if "page" not in st.session_state: st.session_state["page"] = "🏠 الرئيسية واللوحة"
 if "success_alert_msg" not in st.session_state: st.session_state["success_alert_msg"] = ""
 
-def set_page(page_name): 
+def set_page(page_name, remember=True):
+    current = st.session_state.get("page", "🏠 الرئيسية واللوحة")
+    if remember and current != page_name:
+        history = st.session_state.setdefault("_nav_history", [])
+        # Keep a short, useful back-stack and avoid duplicate consecutive entries.
+        if not history or history[-1] != current:
+            history.append(current)
+        st.session_state["_nav_history"] = history[-30:]
     st.session_state["page"] = page_name
     st.rerun()
 
@@ -390,11 +397,13 @@ MENU_GROUPS = {
         ("👥 جهات التعامل", "4- أرشيف إيصالات القبض والدفع", {"parties_mode": "vouchers"}),
     ],
     "💰 الإدارة المالية": [
-        ("💰 المصروفات", "1- تسجيل مصروف", {"finance_screen_mode": "expense"}),
-        ("💰 المصروفات", "2- تسجيل إيراد آخر", {"finance_screen_mode": "revenue"}),
-        ("💰 المصروفات", "3- أرشيف المصروفات والإيرادات", {"finance_screen_mode": "archive"}),
-        ("👥 جهات التعامل", "4- إيصال دفع لمورد", {"parties_mode": "supplier_payment"}),
-        ("👥 جهات التعامل", "5- إيصال قبض من عميل", {"parties_mode": "customer_collection"}),
+        ("🏦 خزينة الشركة", "1- خزينة الشركة وخزائن الفروع", {"parties_mode": "treasuries"}),
+        ("👥 جهات التعامل", "2- سند دفع", {"parties_mode": "supplier_payment"}),
+        ("👥 جهات التعامل", "3- سند قبض", {"parties_mode": "customer_collection"}),
+        ("👥 جهات التعامل", "4- أرشيف سندات القبض والدفع", {"parties_mode": "vouchers"}),
+        ("💰 المصروفات", "5- تسجيل مصروف", {"finance_screen_mode": "expense"}),
+        ("💰 المصروفات", "6- تسجيل إيراد آخر", {"finance_screen_mode": "revenue"}),
+        ("💰 المصروفات", "7- أرشيف المصروفات والإيرادات", {"finance_screen_mode": "archive"}),
     ],
     "🔄 التحويلات وتزويد الفروع": [
         ("🔄 تزويد الفروع والأرشيف", "1- إنشاء فاتورة تزويد فرع", {"transfers_mode": "new"}),
@@ -427,8 +436,7 @@ for group_name in MENU_GROUPS:
             if group_name == "🏠 لوحة التحكم":
                 set_page("🏠 الرئيسية واللوحة")
             else:
-                st.session_state["page"] = f"__GROUP__::{group_name}"
-                st.rerun()
+                set_page(f"__GROUP__::{group_name}")
 
 st.sidebar.markdown("---")
 if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
@@ -593,12 +601,15 @@ elif choice == "💰 المصروفات":
         expenses.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
-elif choice == "👥 جهات التعامل":
+elif choice in ["👥 جهات التعامل", "🏦 خزينة الشركة"]:
     try:
         from views import parties
+        if choice == "🏦 خزينة الشركة":
+            st.session_state["parties_mode"] = "treasuries"
+            st.session_state["parties_entry_lock"] = True
         parties.show_page()
     except ImportError:
-        st.warning("⚠️ ملف شاشة جهات التعامل غير موجود.")
+        st.warning("⚠️ ملف شاشة جهات التعامل والخزائن غير موجود.")
 elif choice == "📥 المشتريات":
     try:
         from views import purchases
