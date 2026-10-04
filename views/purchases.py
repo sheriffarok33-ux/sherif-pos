@@ -1,5 +1,5 @@
-from ui_common import back_button
-from ui_common import item_alerts
+from views.ui_common import back_button
+from views.ui_common import item_alerts
 import streamlit as st
 from datetime import datetime, date
 from database import get_db_connection

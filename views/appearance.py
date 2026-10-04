@@ -1,4 +1,4 @@
-from ui_common import back_button
+from views.ui_common import back_button
 import base64
 import streamlit as st
 from database import get_db_connection

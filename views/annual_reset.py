@@ -1,4 +1,4 @@
-from ui_common import back_button
+from views.ui_common import back_button
 import json
 import streamlit as st
 from datetime import datetime

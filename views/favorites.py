@@ -1,4 +1,4 @@
-from ui_common import back_button
+from views.ui_common import back_button
 import streamlit as st
 import pandas as pd
 import os
