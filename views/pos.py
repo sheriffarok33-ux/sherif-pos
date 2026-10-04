@@ -437,6 +437,38 @@ def add_missing_item_dialog(scanned_code, b_id):
 # ============================================================
 
 @st.dialog("💳 إتمام الدفع وإصدار الفاتورة")
+@st.dialog("✅ تمت العملية بنجاح")
+def _pos_success_dialog():
+    st.success(
+        st.session_state.get(
+            "pos_success_message",
+            "تم إصدار الفاتورة بنجاح."
+        )
+    )
+    st.info("تم حفظ الفاتورة، ويمكن الآن بدء فاتورة جديدة.")
+    if st.button(
+        "موافق",
+        type="primary",
+        use_container_width=True,
+        key="pos_success_ok"
+    ):
+        # تنظيف بيانات العملية السابقة فقط بعد تأكيد المستخدم.
+        st.session_state["cart"] = []
+        for key in [
+            "pos_customer_name",
+            "pos_customer_phone",
+            "pos_marketing_consent",
+            "pos_customer_name_input",
+            "pos_customer_phone_input",
+            "pos_marketing_consent_input",
+            "pos_show_customer_data",
+        ]:
+            st.session_state.pop(key, None)
+        st.session_state.pop("pos_success_pending", None)
+        st.session_state.pop("pos_success_message", None)
+        st.rerun()
+
+
 def checkout_payment_dialog(
     b_id,
     gross_total,
@@ -1036,12 +1068,12 @@ def checkout_payment_dialog(
                 pay_method
         }
 
-        st.session_state["cart"] = []
-
-        st.success(
-            "✅ تم إصدار الفاتورة بنجاح."
+        # لا نمسح بيانات العملية فوراً؛ نعرض نافذة نجاح إلزامية أولاً.
+        # التنظيف يتم فقط عند ضغط المستخدم على "موافق".
+        st.session_state["pos_success_pending"] = True
+        st.session_state["pos_success_message"] = (
+            f"تم إصدار الفاتورة رقم #{inv_id} بنجاح."
         )
-
         st.rerun()
 
     except ValueError as e:
@@ -1610,6 +1642,11 @@ def build_historical_z_html(
 # ============================================================
 
 def show_page():
+    # إذا اكتملت فاتورة في التشغيل السابق، تبقى نافذة النجاح ظاهرة
+    # حتى يضغط المستخدم "موافق".
+    if st.session_state.get("pos_success_pending"):
+        _pos_success_dialog()
+
 
     ensure_cart()
 
