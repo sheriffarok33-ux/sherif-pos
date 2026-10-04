@@ -80,6 +80,66 @@ def get_expired_tracked_quantity(conn, item_id, branch_id):
     return float(row["expired_qty"] or 0) if row else 0.0
 
 
+def get_low_stock_after_sale_alerts(conn, branch_id, cart, threshold=5.0):
+    """حساب الأصناف التي سيصبح رصيدها المتاح 5 أو أقل بعد الفاتورة."""
+    alerts = []
+
+    try:
+        item_cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(items)").fetchall()
+        }
+    except Exception:
+        item_cols = set()
+
+    has_unit_type = "unit_type" in item_cols
+
+    for cart_item in cart:
+        if cart_item.get("id") == 99999:
+            continue
+
+        select_unit = ", unit_type" if has_unit_type else ""
+        row = conn.execute(
+            f"""
+            SELECT id, item_name, quantity {select_unit}
+            FROM items
+            WHERE id = ? AND branch_id = ?
+            """,
+            (cart_item["id"], branch_id)
+        ).fetchone()
+
+        if not row:
+            continue
+
+        total_qty = float(row["quantity"] or 0)
+        expired_qty = get_expired_tracked_quantity(
+            conn, cart_item["id"], branch_id
+        )
+        available_before = max(0.0, total_qty - expired_qty)
+        requested_qty = float(cart_item.get("qty", 0) or 0)
+        remaining_after = available_before - requested_qty
+
+        # لا نكرر هنا رسالة "الكمية غير كافية"؛ لها تحقق مستقل عند التأكيد.
+        if 0 <= remaining_after <= float(threshold):
+            unit_type = (
+                str(row["unit_type"] or "").strip().lower()
+                if has_unit_type else ""
+            )
+            kg_units = {
+                "kg", "kilo", "kilogram", "weight",
+                "وزن", "كيلو", "كجم"
+            }
+            unit_label = "كجم" if unit_type in kg_units else "قطعة"
+
+            alerts.append({
+                "name": cart_item.get("name") or row["item_name"],
+                "remaining": remaining_after,
+                "unit": unit_label,
+            })
+
+    return alerts
+
+
 def deduct_batches_fefo(conn, item_id, branch_id, requested_qty):
     """
     يخصم من الدفعات غير المنتهية ذات تاريخ الصلاحية الأقرب أولاً.
@@ -528,6 +588,33 @@ def checkout_payment_dialog(
                     f"العجز: "
                     f"**{abs(change_due):,.2f} د.ل**"
                 )
+
+        # ====================================================
+        # تنبيه لحظي بانخفاض الرصيد بعد إتمام هذه الفاتورة
+        # ====================================================
+
+        try:
+            low_stock_alerts = get_low_stock_after_sale_alerts(
+                conn,
+                b_id,
+                st.session_state.get("cart", []),
+                threshold=5.0
+            )
+        except Exception:
+            low_stock_alerts = []
+
+        if low_stock_alerts:
+            warning_lines = []
+            for alert in low_stock_alerts:
+                warning_lines.append(
+                    f"• {alert['name']}: سيصبح المتبقي "
+                    f"{alert['remaining']:,.3f} {alert['unit']}"
+                )
+
+            st.warning(
+                "⚠️ تنبيه انخفاض المخزون بعد إتمام الفاتورة:\n\n"
+                + "\n\n".join(warning_lines)
+            )
 
         # ====================================================
         # تأكيد الفاتورة
