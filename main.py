@@ -582,7 +582,7 @@ elif choice == "📦 إدارة المخزن والفروع":
         inventory.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة إدارة المخزن والفروع غير موجود.")
-elif choice == "⚙️ الجرد والتصفير السنوي":
+elif choice == "⚙️ الجرد والتصفير السنوي":ش
     try:
         from views import annual_reset
         annual_reset.show_page()
