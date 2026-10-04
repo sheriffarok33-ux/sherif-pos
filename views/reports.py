@@ -1,15 +1,178 @@
 import streamlit as st
 import pandas as pd
 import io
-from datetime import date, timedelta
+import json
+import hashlib
+from datetime import datetime, date, timedelta
 from database import get_db_connection
 
 
+
 # ============================================================
-# تحويل DataFrame إلى Excel
+# أمان العمليات الإدارية: كشف التكرار + التراجع
 # ============================================================
 
-def dataframe_to_excel(df, sheet_name="Report"):
+def _base_sqlite(conn):
+    """الوصول لاتصال SQLite الخام حتى لا تدخل بيانات الأمان المحلية في طابور المزامنة العام."""
+    return getattr(conn, "_conn", conn)
+
+
+def ensure_transfer_safety_schema():
+    conn = get_db_connection()
+    try:
+        raw = _base_sqlite(conn)
+        raw.execute(
+            """
+            CREATE TABLE IF NOT EXISTS transfer_safety_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transfer_log_id INTEGER,
+                signature TEXT NOT NULL,
+                from_branch_id INTEGER NOT NULL,
+                to_branch_id INTEGER NOT NULL,
+                username TEXT,
+                payload_json TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                is_undone INTEGER DEFAULT 0,
+                undone_at TEXT,
+                undone_by TEXT
+            )
+            """
+        )
+        raw.execute(
+            "CREATE INDEX IF NOT EXISTS ix_transfer_safety_sig ON transfer_safety_log(signature, is_undone, created_at)"
+        )
+        raw.commit()
+    finally:
+        conn.close()
+
+
+def _transfer_signature(warehouse_id, target_branch_id, transfer_cart):
+    merged = {}
+    for item in transfer_cart:
+        key = str(item.get("code") or item.get("id") or item.get("name"))
+        merged[key] = round(merged.get(key, 0.0) + float(item.get("qty") or 0), 6)
+    canonical = {
+        "from": int(warehouse_id),
+        "to": int(target_branch_id),
+        "items": sorted(merged.items()),
+    }
+    text = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def find_recent_duplicate(warehouse_id, target_branch_id, transfer_cart, hours=24):
+    ensure_transfer_safety_schema()
+    signature = _transfer_signature(warehouse_id, target_branch_id, transfer_cart)
+    conn = get_db_connection()
+    try:
+        raw = _base_sqlite(conn)
+        return raw.execute(
+            """
+            SELECT id, transfer_log_id, username, created_at
+            FROM transfer_safety_log
+            WHERE signature = ? AND is_undone = 0
+              AND datetime(created_at) >= datetime('now', ?)
+            ORDER BY id DESC LIMIT 1
+            """,
+            (signature, f"-{int(hours)} hours")
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def get_last_reversible_transfer(username):
+    ensure_transfer_safety_schema()
+    conn = get_db_connection()
+    try:
+        raw = _base_sqlite(conn)
+        return raw.execute(
+            """
+            SELECT id, transfer_log_id, from_branch_id, to_branch_id, username,
+                   payload_json, created_at
+            FROM transfer_safety_log
+            WHERE is_undone = 0 AND username = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (username,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def undo_last_transfer(username):
+    row = get_last_reversible_transfer(username)
+    if not row:
+        return False, "لا توجد عملية تزويد سابقة متاحة للتراجع لهذا المستخدم."
+
+    conn = get_db_connection()
+    try:
+        raw = _base_sqlite(conn)
+        # حماية: لا نسمح بعكس عملية أقدم بينما توجد عملية تزويد أحدث غير متراجع عنها.
+        newer = raw.execute(
+            "SELECT id FROM transfer_safety_log WHERE is_undone=0 AND id>? ORDER BY id DESC LIMIT 1",
+            (row["id"],)
+        ).fetchone()
+        if newer:
+            return False, "لا يمكن التراجع لأن هناك عملية تزويد أحدث منها. التراجع مسموح لآخر عملية فقط."
+
+        payload = json.loads(row["payload_json"] or "{}")
+        items = payload.get("items", [])
+        if not items:
+            return False, "تعذر قراءة تفاصيل العملية الأصلية؛ لم يتم تغيير أي رصيد."
+
+        # افحص أولاً قبل أي تعديل.
+        for item in items:
+            target = raw.execute("SELECT id, quantity FROM items WHERE id=?", (item["target_item_id"],)).fetchone()
+            if not target:
+                return False, f"تعذر التراجع: الصنف ({item['name']}) غير موجود في الفرع المستهدف."
+            if float(target["quantity"] or 0) + 1e-9 < float(item["qty"]):
+                return False, f"تعذر التراجع: رصيد ({item['name']}) في الفرع أصبح أقل من الكمية التي تم تزويدها."
+
+        raw.execute("BEGIN IMMEDIATE")
+        for item in items:
+            qty = float(item["qty"] or 0)
+            # إعادة الكمية للمخزن.
+            conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (qty, item["source_item_id"]))
+
+            target = raw.execute("SELECT quantity FROM items WHERE id=?", (item["target_item_id"],)).fetchone()
+            remaining = float(target["quantity"] or 0) - qty
+            if item.get("target_created_by_transfer") and abs(remaining) < 1e-9:
+                conn.execute("DELETE FROM items WHERE id=?", (item["target_item_id"],))
+            else:
+                conn.execute(
+                    """UPDATE items SET quantity=?, avg_cost=?, buy_price=?, sale_price=? WHERE id=?""",
+                    (remaining, item.get("target_avg_cost_before"), item.get("target_buy_price_before"),
+                     item.get("target_sale_price_before"), item["target_item_id"])
+                )
+
+        raw.execute(
+            "UPDATE transfer_safety_log SET is_undone=1, undone_at=CURRENT_TIMESTAMP, undone_by=? WHERE id=?",
+            (username, row["id"])
+        )
+        # نحتفظ بالفاتورة في الأرشيف ولا نحذف التاريخ.
+        try:
+            conn.execute(
+                "UPDATE transfer_logs SET status=? WHERE id=?",
+                (f"تم التراجع بواسطة {username}", row["transfer_log_id"])
+            )
+        except Exception:
+            pass
+        raw.commit()
+        return True, f"تم التراجع عن فاتورة التزويد رقم #{row['transfer_log_id']} وإعادة الأرصدة بنجاح."
+    except Exception as e:
+        try:
+            _base_sqlite(conn).rollback()
+        except Exception:
+            pass
+        return False, str(e)
+    finally:
+        conn.close()
+
+# ============================================================
+# Excel
+# ============================================================
+
+def to_excel(df):
 
     output = io.BytesIO()
 
@@ -21,62 +184,17 @@ def dataframe_to_excel(df, sheet_name="Report"):
         df.to_excel(
             writer,
             index=False,
-            sheet_name=sheet_name[:31]
+            sheet_name="Transfers_Archive"
         )
 
     return output.getvalue()
 
 
 # ============================================================
-# زر Excel
+# تحميل الفروع والمخزن الرئيسي
 # ============================================================
 
-def excel_button(
-    df,
-    label,
-    filename,
-    sheet_name,
-    key
-):
-
-    if df.empty:
-        return
-
-    try:
-
-        excel_data = dataframe_to_excel(
-            df,
-            sheet_name
-        )
-
-        st.download_button(
-            label=label,
-            data=excel_data,
-            file_name=filename,
-            mime=(
-                "application/vnd.openxmlformats-"
-                "officedocument.spreadsheetml.sheet"
-            ),
-            key=key
-        )
-
-    except Exception as e:
-
-        st.error(
-            "تعذر إنشاء ملف Excel."
-        )
-
-        st.code(str(e))
-
-
-# ============================================================
-# تنفيذ SELECT وتحويله إلى DataFrame
-# ============================================================
-
-def query_dataframe(
-    query,
-    params=None
-):
+def get_branches_and_warehouse():
 
     conn = None
 
@@ -84,28 +202,30 @@ def query_dataframe(
 
         conn = get_db_connection()
 
-        cursor = conn.execute(
-            query,
-            params or ()
-        )
+        branches = conn.execute(
+            """
+            SELECT
+                id,
+                branch_name,
+                branch_type
+            FROM branches
+            ORDER BY id ASC
+            """
+        ).fetchall()
 
-        rows = cursor.fetchall()
+        warehouse = conn.execute(
+            """
+            SELECT
+                id,
+                branch_name
+            FROM branches
+            WHERE branch_type = 'مخزن'
+            ORDER BY id ASC
+            LIMIT 1
+            """
+        ).fetchone()
 
-        if not rows:
-            return pd.DataFrame()
-
-        columns = [
-            desc[0]
-            for desc in cursor.description
-        ]
-
-        return pd.DataFrame(
-            [
-                [row[col] for col in columns]
-                for row in rows
-            ],
-            columns=columns
-        )
+        return branches, warehouse
 
     finally:
 
@@ -114,10 +234,10 @@ def query_dataframe(
 
 
 # ============================================================
-# تحميل الفروع
+# أصناف المخزن
 # ============================================================
 
-def get_branches():
+def get_warehouse_items(warehouse_id):
 
     conn = None
 
@@ -129,11 +249,18 @@ def get_branches():
             """
             SELECT
                 id,
-                branch_name,
-                branch_type
-            FROM branches
-            ORDER BY id ASC
-            """
+                item_code,
+                item_name,
+                quantity,
+                sale_price,
+                buy_price,
+                avg_cost
+            FROM items
+            WHERE branch_id = ?
+              AND quantity > 0
+            ORDER BY item_name ASC
+            """,
+            (warehouse_id,)
         ).fetchall()
 
     finally:
@@ -143,1657 +270,661 @@ def get_branches():
 
 
 # ============================================================
-# فلتر الفرع
+# تنفيذ فاتورة التزويد
 # ============================================================
 
-def get_branch_filter(
-    branches,
-    label,
-    key,
-    include_all=True
+def execute_transfer(
+    warehouse_id,
+    target_branch_id,
+    target_branch_name,
+    transfer_cart,
+    transfer_notes,
+    username,
+    allow_duplicate=False
 ):
 
-    branch_dict = {
-        b["branch_name"]: b["id"]
-        for b in branches
-    }
+    conn = None
 
-    options = list(
-        branch_dict.keys()
-    )
+    try:
 
-    if include_all:
-        options = [
-            "🌐 كل الفروع"
-        ] + options
+        if not transfer_cart:
+            raise ValueError(
+                "فاتورة التزويد فارغة."
+            )
 
-    selected = st.selectbox(
-        label,
-        options,
-        key=key
-    )
+        if warehouse_id == target_branch_id:
+            raise ValueError(
+                "لا يمكن التزويد من المخزن "
+                "إلى نفس المخزن."
+            )
 
-    if selected == "🌐 كل الفروع":
-        return None, selected
+        ensure_transfer_safety_schema()
 
-    return (
-        branch_dict[selected],
-        selected
-    )
+        if not allow_duplicate:
+            duplicate = find_recent_duplicate(warehouse_id, target_branch_id, transfer_cart)
+            if duplicate:
+                st.session_state["pending_duplicate_transfer"] = {
+                    "warehouse_id": warehouse_id,
+                    "target_branch_id": target_branch_id,
+                    "target_branch_name": target_branch_name,
+                    "transfer_cart": [dict(x) for x in transfer_cart],
+                    "transfer_notes": transfer_notes,
+                    "username": username,
+                    "previous_id": duplicate["transfer_log_id"],
+                    "previous_at": duplicate["created_at"],
+                }
+                st.rerun()
 
+        conn = get_db_connection()
 
-# ============================================================
-# فلتر التاريخ
-# ============================================================
+        # ====================================================
+        # التأكد من الفرع المستهدف
+        # ====================================================
 
-def date_filter(
-    prefix,
-    default_days=30
-):
+        target_branch = conn.execute(
+            """
+            SELECT
+                id,
+                branch_name
+            FROM branches
+            WHERE id = ?
+            """,
+            (target_branch_id,)
+        ).fetchone()
 
-    today = date.today()
+        if not target_branch:
 
-    default_from = (
-        today
-        - timedelta(
-            days=default_days
+            raise ValueError(
+                "الفرع المستهدف غير موجود."
+            )
+
+        # ====================================================
+        # دمج أي صنف مكرر في السلة
+        # ====================================================
+
+        merged_cart = {}
+
+        for cart_item in transfer_cart:
+
+            item_id = int(
+                cart_item["id"]
+            )
+
+            qty = float(
+                cart_item["qty"]
+            )
+
+            if qty <= 0:
+
+                raise ValueError(
+                    f"كمية الصنف "
+                    f"({cart_item['name']}) "
+                    "غير صحيحة."
+                )
+
+            if item_id not in merged_cart:
+
+                merged_cart[item_id] = {
+                    "id": item_id,
+                    "code": cart_item["code"],
+                    "name": cart_item["name"],
+                    "qty": 0.0
+                }
+
+            merged_cart[
+                item_id
+            ]["qty"] += qty
+
+        items_summary = []
+        undo_items = []
+
+        # ====================================================
+        # قفل وفحص كل أصناف المخزن أولاً
+        # ====================================================
+
+        for cart_item in merged_cart.values():
+
+            warehouse_item = conn.execute(
+                """
+                SELECT
+                    id,
+                    branch_id,
+                    item_code,
+                    item_name,
+                    quantity,
+                    buy_price,
+                    sale_price,
+                    avg_cost
+                FROM items
+                WHERE id = ?
+                  AND branch_id = ?
+                FOR UPDATE
+                """,
+                (
+                    cart_item["id"],
+                    warehouse_id
+                )
+            ).fetchone()
+
+            if not warehouse_item:
+
+                raise ValueError(
+                    f"الصنف "
+                    f"({cart_item['name']}) "
+                    "غير موجود بالمخزن الرئيسي."
+                )
+
+            available_qty = float(
+                warehouse_item[
+                    "quantity"
+                ] or 0
+            )
+
+            required_qty = float(
+                cart_item["qty"]
+            )
+
+            if required_qty > available_qty:
+
+                raise ValueError(
+                    f"الكمية غير كافية من "
+                    f"({warehouse_item['item_name']}). "
+                    f"المتاح "
+                    f"{available_qty:,.2f} "
+                    f"والمطلوب "
+                    f"{required_qty:,.2f}."
+                )
+
+            cart_item[
+                "warehouse_data"
+            ] = warehouse_item
+
+        # ====================================================
+        # تنفيذ النقل
+        # ====================================================
+
+        for cart_item in merged_cart.values():
+
+            source = cart_item[
+                "warehouse_data"
+            ]
+
+            qty = float(
+                cart_item["qty"]
+            )
+
+            # -----------------------------------------------
+            # خصم المخزن
+            # -----------------------------------------------
+
+            conn.execute(
+                """
+                UPDATE items
+                SET quantity = quantity - ?
+                WHERE id = ?
+                  AND branch_id = ?
+                """,
+                (
+                    qty,
+                    source["id"],
+                    warehouse_id
+                )
+            )
+
+            # -----------------------------------------------
+            # البحث في الفرع بالكود أولاً
+            # -----------------------------------------------
+
+            target_item = None
+
+            if source["item_code"]:
+
+                target_item = conn.execute(
+                    """
+                    SELECT
+                        id,
+                        quantity
+                    FROM items
+                    WHERE branch_id = ?
+                      AND item_code = ?
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                    (
+                        target_branch_id,
+                        source["item_code"]
+                    )
+                ).fetchone()
+
+            # -----------------------------------------------
+            # fallback بالاسم للأصناف القديمة
+            # -----------------------------------------------
+
+            if not target_item:
+
+                target_item = conn.execute(
+                    """
+                    SELECT
+                        id,
+                        quantity
+                    FROM items
+                    WHERE branch_id = ?
+                      AND item_name = ?
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                    (
+                        target_branch_id,
+                        source["item_name"]
+                    )
+                ).fetchone()
+
+            # -----------------------------------------------
+            # الصنف موجود في الفرع
+            # -----------------------------------------------
+
+            if target_item:
+
+                target_before = conn.execute(
+                    "SELECT id, quantity, avg_cost, buy_price, sale_price FROM items WHERE id = ?",
+                    (target_item["id"],)
+                ).fetchone()
+
+                conn.execute(
+                    """
+                    UPDATE items
+                    SET
+                        avg_cost =
+                            CASE
+                                WHEN (quantity + ?) > 0
+                                THEN (
+                                    (quantity * COALESCE(avg_cost, buy_price, 0))
+                                    + (? * ?)
+                                ) / (quantity + ?)
+                                ELSE ?
+                            END,
+                        quantity = quantity + ?,
+                        buy_price = ?,
+                        sale_price = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        qty,
+                        qty,
+                        float(source["avg_cost"] or source["buy_price"] or 0),
+                        qty,
+                        float(source["avg_cost"] or source["buy_price"] or 0),
+                        qty,
+                        float(source["buy_price"] or 0),
+                        float(source["sale_price"] or 0),
+                        target_item["id"]
+                    )
+                )
+
+                undo_items.append({
+                    "name": source["item_name"],
+                    "qty": qty,
+                    "source_item_id": source["id"],
+                    "target_item_id": target_item["id"],
+                    "target_created_by_transfer": False,
+                    "target_avg_cost_before": target_before["avg_cost"],
+                    "target_buy_price_before": target_before["buy_price"],
+                    "target_sale_price_before": target_before["sale_price"],
+                })
+
+            # -----------------------------------------------
+            # الصنف غير موجود في الفرع
+            # -----------------------------------------------
+
+            else:
+
+                new_target_cursor = conn.execute(
+                    """
+                    INSERT INTO items
+                    (
+                        branch_id,
+                        item_code,
+                        item_name,
+                        quantity,
+                        buy_price,
+                        sale_price,
+                        avg_cost
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        target_branch_id,
+                        source["item_code"],
+                        source["item_name"],
+                        qty,
+                        float(
+                            source[
+                                "buy_price"
+                            ] or 0
+                        ),
+                        float(
+                            source[
+                                "sale_price"
+                            ] or 0
+                        ),
+                        float(
+                            source[
+                                "avg_cost"
+                            ] or
+                            source[
+                                "buy_price"
+                            ] or 0
+                        )
+                    )
+                )
+
+                undo_items.append({
+                    "name": source["item_name"],
+                    "qty": qty,
+                    "source_item_id": source["id"],
+                    "target_item_id": new_target_cursor.lastrowid,
+                    "target_created_by_transfer": True,
+                    "target_avg_cost_before": None,
+                    "target_buy_price_before": None,
+                    "target_sale_price_before": None,
+                })
+
+            items_summary.append(
+                (
+                    f"▪ {source['item_name']} "
+                    f"[{source['item_code']}] "
+                    f"(الكمية: {qty:,.2f})"
+                )
+            )
+
+        # ====================================================
+        # تفاصيل الفاتورة
+        # ====================================================
+
+        items_details = "\n".join(
+            items_summary
         )
-    )
 
-    c1, c2 = st.columns(2)
+        if transfer_notes.strip():
 
-    from_date = c1.date_input(
-        "📅 من تاريخ:",
-        value=default_from,
-        key=f"{prefix}_from"
-    )
+            items_details += (
+                "\nملاحظات: "
+                + transfer_notes.strip()
+            )
 
-    to_date = c2.date_input(
-        "📅 إلى تاريخ:",
-        value=today,
-        key=f"{prefix}_to"
-    )
+        if username:
 
-    if from_date > to_date:
+            items_details += (
+                f"\nبواسطة: {username}"
+            )
+
+        # ====================================================
+        # تسجيل فاتورة التزويد
+        # ====================================================
+
+        transfer_cursor = conn.execute(
+            """
+            INSERT INTO transfer_logs
+            (
+                from_branch_id,
+                to_branch_id,
+                items_details,
+                status,
+                created_by,
+                transfer_date,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                warehouse_id,
+                target_branch_id,
+                items_details,
+                "بانتظار تأكيد الكاشير",
+                username,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            )
+        )
+
+        # سجل أمان محلي للتكرار والتراجع. لا نحذف الفاتورة الأصلية عند التراجع.
+        raw = _base_sqlite(conn)
+        signature = _transfer_signature(warehouse_id, target_branch_id, transfer_cart)
+        payload = {"items": undo_items, "target_branch_name": target_branch_name, "notes": transfer_notes}
+        raw.execute(
+            """INSERT INTO transfer_safety_log
+               (transfer_log_id, signature, from_branch_id, to_branch_id, username, payload_json)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (transfer_cursor.lastrowid, signature, warehouse_id, target_branch_id, username,
+             json.dumps(payload, ensure_ascii=False, default=str))
+        )
+
+        conn.commit()
+
+        # بعد نجاح الحفظ نعرض نافذة نجاح إلزامية أولاً.
+        # السلة وبيانات العملية تُنظف فقط بعد ضغط "موافق".
+        st.session_state.pop("pending_duplicate_transfer", None)
+        st.session_state["transfer_success_pending"] = True
+        st.session_state["transfer_success_message"] = (
+            f"تم ترحيل فاتورة التزويد إلى ({target_branch_name}) بنجاح."
+        )
+        st.rerun()
+
+    except ValueError as e:
+
+        if conn:
+            conn.rollback()
+
+        st.warning(
+            f"⚠️ {e}"
+        )
+
+    except Exception as e:
+
+        if conn:
+            conn.rollback()
 
         st.error(
-            "⚠️ تاريخ البداية يجب أن "
-            "يكون قبل تاريخ النهاية."
+            "❌ حدث خطأ أثناء ترحيل "
+            "فاتورة التزويد."
         )
 
-        return None, None
+        st.code(str(e))
 
-    return from_date, to_date
-
-
-# ============================================================
-# تبويب الملخص المالي
-# ============================================================
-
-def show_financial_summary(
-    branches,
-    is_admin_or_supervisor
-):
-
-    st.markdown(
-        "### 💰 الملخص المالي"
-    )
-
-    if not is_admin_or_supervisor:
-
-        st.warning(
-            "🔒 هذا التقرير مخصص "
-            "للإدارة والمشرف العام."
-        )
-
-        return
-
-    branch_id, branch_name = (
-        get_branch_filter(
-            branches,
-            "اختر الفرع:",
-            "financial_branch"
-        )
-    )
-
-    from_date, to_date = date_filter(
-        "financial",
-        30
-    )
-
-    if not from_date:
-        return
-
-    # ========================================================
-    # تجهيز شرط الفرع
-    # ========================================================
-
-    invoice_params = [
-        from_date,
-        to_date
-    ]
-
-    invoice_branch_sql = ""
-
-    if branch_id:
-
-        invoice_branch_sql = (
-            " AND branch_id = ? "
-        )
-
-        invoice_params.append(
-            branch_id
-        )
-
-    # ========================================================
-    # المبيعات
-    # ========================================================
-
-    sales_df = query_dataframe(
-        f"""
-        SELECT
-            COALESCE(
-                SUM(total_amount),
-                0
-            ) AS total_sales
-        FROM invoices
-        WHERE DATE(created_at)
-              BETWEEN ? AND ?
-        {invoice_branch_sql}
-        """,
-        tuple(invoice_params)
-    )
-
-    total_sales = (
-        float(
-            sales_df.iloc[0][
-                "total_sales"
-            ] or 0
-        )
-        if not sales_df.empty
-        else 0.0
-    )
-
-    # ========================================================
-    # المصروفات
-    # ========================================================
-
-    expense_params = [
-        from_date,
-        to_date
-    ]
-
-    expense_branch_sql = ""
-
-    if branch_id:
-
-        expense_branch_sql = (
-            " AND branch_id = ? "
-        )
-
-        expense_params.append(
-            branch_id
-        )
-
-    expenses_df = query_dataframe(
-        f"""
-        SELECT
-            COALESCE(
-                SUM(amount),
-                0
-            ) AS total_expenses
-        FROM expenses
-        WHERE DATE(expense_date)
-              BETWEEN ? AND ?
-        {expense_branch_sql}
-        """,
-        tuple(expense_params)
-    )
-
-    total_expenses = (
-        float(
-            expenses_df.iloc[0][
-                "total_expenses"
-            ] or 0
-        )
-        if not expenses_df.empty
-        else 0.0
-    )
-
-    # ========================================================
-    # التوالف والخسائر
-    # ========================================================
-
-    adjustment_params = [
-        from_date,
-        to_date
-    ]
-
-    adjustment_branch_sql = ""
-
-    if branch_id:
-
-        adjustment_branch_sql = (
-            " AND branch_id = ? "
-        )
-
-        adjustment_params.append(
-            branch_id
-        )
-
-    damages_df = query_dataframe(
-        f"""
-        SELECT
-            COALESCE(
-                SUM(
-                    CASE
-                        WHEN
-                            adjustment_type
-                                LIKE '%تالف%'
-                            OR adjustment_type
-                                LIKE '%هالك%'
-                            OR adjustment_type
-                                LIKE '%منتهي%'
-                        THEN
-                            MAX(
-                                COALESCE(
-                                    loss_or_gain_value,
-                                    0
-                                ),
-                                0
-                            )
-                        ELSE 0
-                    END
-                ),
-                0
-            ) AS total_damages
-        FROM stock_adjustments
-        WHERE DATE(created_at)
-              BETWEEN ? AND ?
-        {adjustment_branch_sql}
-        """,
-        tuple(adjustment_params)
-    )
-
-    total_damages = (
-        float(
-            damages_df.iloc[0][
-                "total_damages"
-            ] or 0
-        )
-        if not damages_df.empty
-        else 0.0
-    )
-
-    # ========================================================
-    # الإيرادات الأخرى
-    # ========================================================
-
-    revenue_params = [
-        from_date,
-        to_date
-    ]
-
-    revenue_branch_sql = ""
-
-    if branch_id:
-        revenue_branch_sql = (
-            " AND branch_id = ? "
-        )
-        revenue_params.append(branch_id)
-
-    revenues_df = query_dataframe(
-        f"""
-        SELECT
-            COALESCE(SUM(amount), 0)
-                AS total_revenues
-        FROM revenues
-        WHERE DATE(created_at)
-              BETWEEN ? AND ?
-        {revenue_branch_sql}
-        """,
-        tuple(revenue_params)
-    )
-
-    total_revenues = (
-        float(
-            revenues_df.iloc[0]["total_revenues"] or 0
-        )
-        if not revenues_df.empty
-        else 0.0
-    )
-
-    # ========================================================
-    # الناتج التشغيلي
-    # ========================================================
-
-    operating_result = (
-        total_sales
-        + total_revenues
-        - total_expenses
-        - total_damages
-    )
-
-    c1, c2, c3, c4, c5 = (
-        st.columns(5)
-    )
-
-    c1.metric(
-        "💰 المبيعات",
-        f"{total_sales:,.2f} د.ل"
-    )
-
-    c2.metric(
-        "💵 الإيرادات الأخرى",
-        f"{total_revenues:,.2f} د.ل"
-    )
-
-    c3.metric(
-        "💸 المصروفات",
-        f"{total_expenses:,.2f} د.ل"
-    )
-
-    c4.metric(
-        "🗑️ التوالف",
-        f"{total_damages:,.2f} د.ل"
-    )
-
-    c5.metric(
-        "📊 الناتج التشغيلي",
-        f"{operating_result:,.2f} د.ل"
-    )
-
-    st.info(
-        "ℹ️ الناتج التشغيلي هنا = "
-        "المبيعات + الإيرادات الأخرى "
-        "- المصروفات - التوالف. "
-        "ولا نسميه صافي الربح النهائي "
-        "لأن تكلفة البضاعة المباعة "
-        "تحتاج حساباً مستقلاً."
-    )
-
-    summary_df = pd.DataFrame(
-        [
-            {
-                "الفترة من":
-                    from_date,
-
-                "الفترة إلى":
-                    to_date,
-
-                "الفرع":
-                    branch_name,
-
-                "إجمالي المبيعات":
-                    total_sales,
-
-                "إجمالي الإيرادات الأخرى":
-                    total_revenues,
-
-                "إجمالي المصروفات":
-                    total_expenses,
-
-                "إجمالي التوالف":
-                    total_damages,
-
-                "الناتج التشغيلي":
-                    operating_result
-            }
-        ]
-    )
-
-    excel_button(
-        summary_df,
-        "📥 تحميل الملخص المالي Excel",
-        (
-            f"Financial_Summary_"
-            f"{from_date}_to_{to_date}.xlsx"
-        ),
-        "Financial_Summary",
-        "financial_excel"
-    )
-
-
-# ============================================================
-# تقرير المبيعات
-# ============================================================
-
-def show_sales_report(
-    branches,
-    is_admin_or_supervisor
-):
-
-    st.markdown(
-        "### 🧾 تقرير المبيعات والفواتير"
-    )
-
-    branch_id, branch_name = (
-        get_branch_filter(
-            branches,
-            "اختر الفرع:",
-            "sales_branch"
-        )
-    )
-
-    from_date, to_date = date_filter(
-        "sales",
-        30
-    )
-
-    if not from_date:
-        return
-
-    params = [
-        from_date,
-        to_date
-    ]
-
-    branch_sql = ""
-
-    if branch_id:
-
-        branch_sql = (
-            " AND i.branch_id = ? "
-        )
-
-        params.append(
-            branch_id
-        )
-
-    df = query_dataframe(
-        f"""
-        SELECT
-            i.id AS "رقم الفاتورة",
-            DATE(i.created_at) AS "التاريخ",
-            i.created_at AS "التاريخ والوقت",
-            b.branch_name AS "الفرع",
-            COALESCE(
-                u.username,
-                'غير محدد'
-            ) AS "الكاشير",
-            i.customer_name AS "الزبون",
-            i.customer_phone AS "الهاتف",
-            i.payment_method AS "طريقة الدفع",
-            i.total_amount AS "صافي الفاتورة",
-            i.shift_status AS "الوردية"
-        FROM invoices i
-
-        LEFT JOIN branches b
-            ON b.id = i.branch_id
-
-        LEFT JOIN users u
-            ON u.id = i.user_id
-
-        WHERE DATE(i.created_at)
-              BETWEEN ? AND ?
-
-        {branch_sql}
-
-        ORDER BY i.created_at DESC
-        """,
-        tuple(params)
-    )
-
-    if df.empty:
-
-        st.info(
-            "لا توجد مبيعات في الفترة "
-            "المحددة."
-        )
-
-        return
-
-    total_sales = pd.to_numeric(
-        df["صافي الفاتورة"],
-        errors="coerce"
-    ).fillna(0).sum()
-
-    st.metric(
-        "إجمالي المبيعات في الفترة",
-        f"{total_sales:,.2f} د.ل"
-    )
-
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    excel_button(
-        df,
-        "📥 تحميل تقرير المبيعات Excel",
-        (
-            f"Sales_"
-            f"{from_date}_to_{to_date}.xlsx"
-        ),
-        "Sales",
-        "sales_excel"
-    )
-
-
-# ============================================================
-# تقرير المشتريات
-# ============================================================
-
-def show_purchases_report(
-    branches,
-    is_admin_or_supervisor
-):
-
-    st.markdown(
-        "### 📥 تقرير المشتريات"
-    )
-
-    if not is_admin_or_supervisor:
-
-        st.warning(
-            "🔒 تقرير المشتريات التفصيلي "
-            "مخصص للإدارة."
-        )
-
-        return
-
-    branch_id, branch_name = (
-        get_branch_filter(
-            branches,
-            "اختر الفرع / المخزن:",
-            "purchase_branch"
-        )
-    )
-
-    from_date, to_date = date_filter(
-        "purchases",
-        30
-    )
-
-    if not from_date:
-        return
-
-    params = [
-        from_date,
-        to_date
-    ]
-
-    branch_sql = ""
-
-    if branch_id:
-
-        branch_sql = (
-            " AND p.branch_id = ? "
-        )
-
-        params.append(
-            branch_id
-        )
-
-    df = query_dataframe(
-        f"""
-        SELECT
-            p.id AS "رقم الحركة",
-            p.invoice_date AS "التاريخ",
-            b.branch_name AS "الفرع / المخزن",
-            p.supplier_name AS "المورد",
-            p.invoice_number AS "رقم فاتورة المورد",
-            p.payment_type AS "طريقة الدفع",
-            p.total_cost AS "إجمالي التكلفة",
-            p.items_details AS "تفاصيل الأصناف"
-        FROM purchases p
-
-        LEFT JOIN branches b
-            ON b.id = p.branch_id
-
-        WHERE DATE(p.invoice_date)
-              BETWEEN ? AND ?
-
-        {branch_sql}
-
-        ORDER BY
-            p.invoice_date DESC,
-            p.id DESC
-        """,
-        tuple(params)
-    )
-
-    if df.empty:
-
-        st.info(
-            "لا توجد مشتريات في الفترة "
-            "المحددة."
-        )
-
-        return
-
-    total_purchases = pd.to_numeric(
-        df["إجمالي التكلفة"],
-        errors="coerce"
-    ).fillna(0).sum()
-
-    st.metric(
-        "إجمالي المشتريات",
-        f"{total_purchases:,.2f} د.ل"
-    )
-
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    excel_button(
-        df,
-        "📥 تحميل تقرير المشتريات Excel",
-        (
-            f"Purchases_"
-            f"{from_date}_to_{to_date}.xlsx"
-        ),
-        "Purchases",
-        "purchases_excel"
-    )
-
-
-# ============================================================
-# تقرير المصروفات
-# ============================================================
-
-def show_expenses_report(
-    branches,
-    is_admin_or_supervisor
-):
-
-    st.markdown(
-        "### 💸 تقرير المصروفات"
-    )
-
-    if not is_admin_or_supervisor:
-
-        st.warning(
-            "🔒 تقرير المصروفات "
-            "مخصص للإدارة."
-        )
-
-        return
-
-    branch_id, branch_name = (
-        get_branch_filter(
-            branches,
-            "اختر الفرع:",
-            "expenses_branch"
-        )
-    )
-
-    from_date, to_date = date_filter(
-        "expenses",
-        30
-    )
-
-    if not from_date:
-        return
-
-    params = [
-        from_date,
-        to_date
-    ]
-
-    branch_sql = ""
-
-    if branch_id:
-
-        branch_sql = (
-            " AND e.branch_id = ? "
-        )
-
-        params.append(
-            branch_id
-        )
-
-    df = query_dataframe(
-        f"""
-        SELECT
-            e.id AS "رقم المصروف",
-            e.expense_date AS "التاريخ",
-            b.branch_name AS "الفرع",
-            e.amount AS "المبلغ",
-            e.description AS "البيان",
-            CASE
-                WHEN e.is_general_store = 1
-                THEN 'مصروف عام موزع'
-                ELSE 'مصروف مباشر'
-            END AS "نوع المصروف"
-        FROM expenses e
-
-        LEFT JOIN branches b
-            ON b.id = e.branch_id
-
-        WHERE DATE(e.expense_date)
-              BETWEEN ? AND ?
-
-        {branch_sql}
-
-        ORDER BY
-            e.expense_date DESC,
-            e.id DESC
-        """,
-        tuple(params)
-    )
-
-    if df.empty:
-
-        st.info(
-            "لا توجد مصروفات في الفترة "
-            "المحددة."
-        )
-
-        return
-
-    total_expenses = pd.to_numeric(
-        df["المبلغ"],
-        errors="coerce"
-    ).fillna(0).sum()
-
-    st.metric(
-        "إجمالي المصروفات",
-        f"{total_expenses:,.2f} د.ل"
-    )
-
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    excel_button(
-        df,
-        "📥 تحميل تقرير المصروفات Excel",
-        (
-            f"Expenses_"
-            f"{from_date}_to_{to_date}.xlsx"
-        ),
-        "Expenses",
-        "expenses_excel"
-    )
-
-
-# ============================================================
-# تقرير حركات المخزون اليدوية
-# ============================================================
-
-def show_adjustments_report(
-    branches,
-    is_admin_or_supervisor
-):
-
-    st.markdown(
-        "### ✍️ تقرير الحركات اليدوية "
-        "والتوالف والفائض"
-    )
-
-    branch_id, branch_name = (
-        get_branch_filter(
-            branches,
-            "اختر الفرع:",
-            "adjustment_branch"
-        )
-    )
-
-    from_date, to_date = date_filter(
-        "adjustments",
-        30
-    )
-
-    if not from_date:
-        return
-
-    params = [
-        from_date,
-        to_date
-    ]
-
-    branch_sql = ""
-
-    if branch_id:
-
-        branch_sql = (
-            " AND a.branch_id = ? "
-        )
-
-        params.append(
-            branch_id
-        )
-
-    df = query_dataframe(
-        f"""
-        SELECT
-            a.id AS "رقم الحركة",
-            a.created_at AS "التاريخ والوقت",
-            b.branch_name AS "الفرع",
-            a.item_name AS "الصنف",
-            a.quantity AS "الكمية",
-            a.adjustment_type AS "نوع الحركة",
-            a.loss_or_gain_value
-                AS "قيمة الخسارة / الزيادة",
-            a.notes AS "ملاحظات"
-        FROM stock_adjustments a
-
-        LEFT JOIN branches b
-            ON b.id = a.branch_id
-
-        WHERE DATE(a.created_at)
-              BETWEEN ? AND ?
-
-        {branch_sql}
-
-        ORDER BY a.created_at DESC
-        """,
-        tuple(params)
-    )
-
-    if df.empty:
-
-        st.info(
-            "لا توجد حركات مخزون يدوية "
-            "في الفترة المحددة."
-        )
-
-        return
-
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    excel_button(
-        df,
-        "📥 تحميل تقرير الحركات اليدوية Excel",
-        (
-            f"Adjustments_"
-            f"{from_date}_to_{to_date}.xlsx"
-        ),
-        "Adjustments",
-        "adjustments_excel"
-    )
-
-
-
-# ============================================================
-# تقرير الإيرادات
-# ============================================================
-
-def show_revenues_report(branches, is_admin_or_supervisor):
-
-    st.markdown("### 💵 تقرير الإيرادات")
-
-    if not is_admin_or_supervisor:
-        st.warning("🔒 تقرير الإيرادات مخصص للإدارة.")
-        return
-
-    branch_id, branch_name = get_branch_filter(
-        branches,
-        "اختر الفرع:",
-        "revenues_branch"
-    )
-
-    from_date, to_date = date_filter("revenues", 30)
-
-    if not from_date:
-        return
-
-    params = [from_date, to_date]
-    branch_sql = ""
-
-    if branch_id:
-        branch_sql = " AND r.branch_id = ? "
-        params.append(branch_id)
-
-    df = query_dataframe(
-        f"""
-        SELECT
-            r.id AS "رقم الإيراد",
-            DATE(r.created_at) AS "التاريخ",
-            b.branch_name AS "الفرع",
-            r.amount AS "المبلغ",
-            COALESCE(
-                NULLIF(r.notes, ''),
-                NULLIF(r.revenue_source, ''),
-                'إيراد'
-            ) AS "البيان"
-        FROM revenues r
-        LEFT JOIN branches b
-            ON b.id = r.branch_id
-        WHERE DATE(r.created_at)
-              BETWEEN ? AND ?
-        {branch_sql}
-        ORDER BY r.created_at DESC, r.id DESC
-        """,
-        tuple(params)
-    )
-
-    if df.empty:
-        st.info("لا توجد إيرادات في الفترة المحددة.")
-        return
-
-    total_revenues = pd.to_numeric(
-        df["المبلغ"],
-        errors="coerce"
-    ).fillna(0).sum()
-
-    st.metric(
-        "إجمالي الإيرادات",
-        f"{total_revenues:,.2f} د.ل"
-    )
-
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    excel_button(
-        df,
-        "📥 تحميل تقرير الإيرادات Excel",
-        f"Revenues_{from_date}_to_{to_date}.xlsx",
-        "Revenues",
-        "revenues_excel"
-    )
-
-
-# ============================================================
-# تقرير التحويلات / التزويد
-# ============================================================
-
-def show_transfers_report(branches, is_admin_or_supervisor):
-
-    st.markdown("### 🔄 تقرير تحويلات وتزويد الفروع")
-
-    branch_id, branch_name = get_branch_filter(
-        branches,
-        "اختر الفرع المستلم:",
-        "reports_transfers_branch"
-    )
-
-    from_date, to_date = date_filter(
-        "reports_transfers",
-        30
-    )
-
-    if not from_date:
-        return
-
-    params = [from_date, to_date]
-    branch_sql = ""
-
-    if branch_id:
-        branch_sql = " AND t.to_branch_id = ? "
-        params.append(branch_id)
-
-    df = query_dataframe(
-        f"""
-        SELECT
-            t.id AS "رقم التحويل",
-            t.transfer_date AS "التاريخ والوقت",
-            b1.branch_name AS "من",
-            b2.branch_name AS "إلى",
-            t.transfer_type AS "نوع التحويل",
-            t.items_details AS "تفاصيل الأصناف",
-            t.status AS "الحالة"
-        FROM transfer_logs t
-        LEFT JOIN branches b1
-            ON b1.id = t.from_branch_id
-        LEFT JOIN branches b2
-            ON b2.id = t.to_branch_id
-        WHERE DATE(t.transfer_date)
-              BETWEEN ? AND ?
-        {branch_sql}
-        ORDER BY t.transfer_date DESC, t.id DESC
-        """,
-        tuple(params)
-    )
-
-    if df.empty:
-        st.info("لا توجد تحويلات في الفترة المحددة.")
-        return
-
-    st.metric("عدد التحويلات", f"{len(df):,}")
-
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    excel_button(
-        df,
-        "📥 تحميل تقرير التحويلات Excel",
-        f"Transfers_{from_date}_to_{to_date}.xlsx",
-        "Transfers",
-        "reports_transfers_excel"
-    )
-
-
-# ============================================================
-# تقرير الإنتاج: الخلط والتحميص
-# ============================================================
-
-def show_production_report(branches, is_admin_or_supervisor):
-
-    st.markdown("### 🔥🥜 تقرير الخلط والتحميص")
-
-    if not is_admin_or_supervisor:
-        st.warning("🔒 تقرير تكلفة الإنتاج مخصص للإدارة.")
-        return
-
-    branch_id, branch_name = get_branch_filter(
-        branches,
-        "اختر المخزن / الفرع:",
-        "production_branch"
-    )
-
-    from_date, to_date = date_filter(
-        "production",
-        30
-    )
-
-    if not from_date:
-        return
-
-    params = [from_date, to_date]
-    branch_sql = ""
-
-    if branch_id:
-        branch_sql = " AND p.branch_id = ? "
-        params.append(branch_id)
-
-    df = query_dataframe(
-        f"""
-        SELECT
-            p.id AS "رقم العملية",
-            p.created_at AS "التاريخ والوقت",
-            b.branch_name AS "المخزن / الفرع",
-            p.operation_type AS "نوع العملية",
-            p.source_details AS "الخامة / المصدر",
-            p.target_item_name AS "الصنف الناتج",
-            p.input_weight AS "الكمية الداخلة",
-            p.output_weight AS "الكمية الناتجة",
-            p.loss_weight AS "الفقد",
-            p.total_cost AS "إجمالي التكلفة",
-            p.unit_cost AS "تكلفة الوحدة",
-            0.0 AS "سعر البيع",
-            p.notes AS "التفاصيل"
-        FROM production_logs p
-        LEFT JOIN branches b
-            ON b.id = p.branch_id
-        WHERE DATE(p.created_at)
-              BETWEEN ? AND ?
-        {branch_sql}
-        ORDER BY p.created_at DESC, p.id DESC
-        """,
-        tuple(params)
-    )
-
-    if df.empty:
-        st.info("لا توجد عمليات خلط أو تحميص في الفترة المحددة.")
-        return
-
-    total_input = pd.to_numeric(
-        df["الكمية الداخلة"], errors="coerce"
-    ).fillna(0).sum()
-
-    total_output = pd.to_numeric(
-        df["الكمية الناتجة"], errors="coerce"
-    ).fillna(0).sum()
-
-    total_loss = pd.to_numeric(
-        df["الفقد"], errors="coerce"
-    ).fillna(0).sum()
-
-    total_cost = pd.to_numeric(
-        df["إجمالي التكلفة"], errors="coerce"
-    ).fillna(0).sum()
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("الكمية الداخلة", f"{total_input:,.2f}")
-    c2.metric("الكمية الناتجة", f"{total_output:,.2f}")
-    c3.metric("إجمالي الفقد", f"{total_loss:,.2f}")
-    c4.metric("تكلفة العمليات", f"{total_cost:,.2f} د.ل")
-
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    excel_button(
-        df,
-        "📥 تحميل تقرير الإنتاج Excel",
-        f"Production_{from_date}_to_{to_date}.xlsx",
-        "Production",
-        "production_excel"
-    )
-
-
-
-# ============================================================
-# تقرير حركة الأصناف الشامل
-# ============================================================
-
-def _movement_parse_purchase_details(details):
-    import re
-    result = []
-    for part in str(details or "").split(" | "):
-        code_m = re.search(r"\[([^\]]+)\]", part)
-        qty_m = re.search(r"-\s*كمية:\s*([\d.,]+)", part)
-        price_m = re.search(r"-\s*سعر:\s*([\d.,]+)", part)
-        if not code_m or not qty_m:
-            continue
-        try:
-            qty = float(qty_m.group(1).replace(",", ""))
-            price = float(price_m.group(1).replace(",", "")) if price_m else 0.0
-        except Exception:
-            continue
-        result.append((code_m.group(1).strip(), qty, price))
-    return result
-
-
-def _movement_parse_transfer_details(details):
-    import re
-    result = []
-    for line in str(details or "").splitlines():
-        code_m = re.search(r"\[([^\]]+)\]", line)
-        qty_m = re.search(r"الكمية:\s*([\d.,]+)", line)
-        if not code_m or not qty_m:
-            continue
-        try:
-            qty = float(qty_m.group(1).replace(",", ""))
-        except Exception:
-            continue
-        result.append((code_m.group(1).strip(), qty))
-    return result
-
-
-def _movement_parse_invoice_notes(notes):
-    import json
-    try:
-        data = json.loads(notes or "")
-    except Exception:
-        return []
-    if isinstance(data, dict):
-        return data.get("items", []) or []
-    if isinstance(data, list):
-        return data
-    return []
-
-
-def show_item_movement_report(branches, is_admin_or_supervisor):
-    st.markdown("### 📈 حركة الأصناف خلال فترة")
-
-    conn = get_db_connection()
-    try:
-        branch_rows = conn.execute(
-            "SELECT id, branch_name FROM branches ORDER BY branch_name"
-        ).fetchall()
-        item_rows = conn.execute(
-            """
-            SELECT DISTINCT item_code, item_name
-            FROM items
-            WHERE COALESCE(item_code, '') <> ''
-            ORDER BY item_name
-            """
-        ).fetchall()
-
-        branch_options = {"🌐 كل الفروع والمخازن": None}
-        branch_options.update({r["branch_name"]: r["id"] for r in branch_rows})
-
-        item_options = {"📦 كل الأصناف": None}
-        for r in item_rows:
-            item_options[f"{r['item_name']} [{r['item_code']}]"] = r["item_code"]
-
-        f1, f2 = st.columns(2)
-        branch_label = f1.selectbox(
-            "الفرع / المخزن:",
-            list(branch_options.keys()),
-            key="movement_branch"
-        )
-        item_label = f2.selectbox(
-            "الصنف:",
-            list(item_options.keys()),
-            key="movement_item"
-        )
-
-        from_date, to_date = date_filter("item_movement", 30)
-        if not from_date:
-            return
-
-        branch_id = branch_options[branch_label]
-        selected_code = item_options[item_label]
-        movements = []
-
-        def add_move(dt, bid, bname, code, name, kind, incoming, outgoing, unit_cost, ref, notes=""):
-            if selected_code and str(code) != str(selected_code):
-                return
-            if branch_id and int(bid or 0) != int(branch_id):
-                return
-            movements.append({
-                "التاريخ والوقت": dt,
-                "الفرع / المخزن": bname or "",
-                "كود الصنف": code or "",
-                "الصنف": name or "",
-                "نوع الحركة": kind,
-                "وارد": float(incoming or 0),
-                "صادر": float(outgoing or 0),
-                "متوسط / تكلفة الوحدة": float(unit_cost or 0),
-                "قيمة الحركة": float((incoming or outgoing or 0) * (unit_cost or 0)),
-                "المرجع": ref,
-                "ملاحظات": notes or ""
-            })
-
-        # خريطة الأصناف والتكلفة الحالية، لاستخدامها عند السجلات القديمة
-        items = conn.execute(
-            """
-            SELECT id, branch_id, item_code, item_name,
-                   COALESCE(avg_cost, buy_price, 0) AS unit_cost
-            FROM items
-            """
-        ).fetchall()
-        by_id = {(r["branch_id"], r["id"]): r for r in items}
-        by_code_branch = {(r["branch_id"], str(r["item_code"])): r for r in items}
-        by_name_branch = {(r["branch_id"], str(r["item_name"])): r for r in items}
-        branch_names = {r["id"]: r["branch_name"] for r in branch_rows}
-
-        # المبيعات: تفاصيل الأصناف محفوظة JSON داخل invoices.notes
-        inv_params = [from_date, to_date]
-        inv_branch = ""
-        if branch_id:
-            inv_branch = " AND v.branch_id=? "
-            inv_params.append(branch_id)
-        invoices = conn.execute(
-            f"""
-            SELECT v.id, v.branch_id, v.created_at, v.notes
-            FROM invoices v
-            WHERE DATE(v.created_at) BETWEEN ? AND ?
-            {inv_branch}
-            ORDER BY v.created_at
-            """,
-            tuple(inv_params)
-        ).fetchall()
-        for inv in invoices:
-            for ci in _movement_parse_invoice_notes(inv["notes"]):
-                if ci.get("id") == 99999:
-                    continue
-                code = ci.get("code") or ci.get("item_code")
-                item = None
-                if code:
-                    item = by_code_branch.get((inv["branch_id"], str(code)))
-                if item is None and ci.get("id") is not None:
-                    item = by_id.get((inv["branch_id"], ci.get("id")))
-                if item is None:
-                    item = by_name_branch.get((inv["branch_id"], str(ci.get("name") or "")))
-                code = code or (item["item_code"] if item else "")
-                name = ci.get("name") or (item["item_name"] if item else "")
-                qty = float(ci.get("qty", 0) or 0)
-                cost = float(item["unit_cost"] or 0) if item else 0.0
-                add_move(
-                    inv["created_at"], inv["branch_id"], branch_names.get(inv["branch_id"]),
-                    code, name, "بيع", 0, qty, cost, f"فاتورة بيع #{inv['id']}"
-                )
-
-        # المشتريات
-        pur_params = [from_date, to_date]
-        pur_branch = ""
-        if branch_id:
-            pur_branch = " AND p.branch_id=? "
-            pur_params.append(branch_id)
-        purchases = conn.execute(
-            f"""
-            SELECT p.id, p.branch_id, p.invoice_date, p.invoice_number, p.items_details
-            FROM purchases p
-            WHERE DATE(p.invoice_date) BETWEEN ? AND ?
-            {pur_branch}
-            ORDER BY p.invoice_date
-            """,
-            tuple(pur_params)
-        ).fetchall()
-        for p in purchases:
-            for code, qty, price in _movement_parse_purchase_details(p["items_details"]):
-                item = by_code_branch.get((p["branch_id"], str(code)))
-                add_move(
-                    p["invoice_date"], p["branch_id"], branch_names.get(p["branch_id"]),
-                    code, item["item_name"] if item else code, "شراء",
-                    qty, 0, price, f"مشتريات #{p['id']} / {p['invoice_number'] or '-'}"
-                )
-
-        # التحويلات: حركة صادرة من المرسل وواردة للمستلم
-        transfers = conn.execute(
-            """
-            SELECT id, from_branch_id, to_branch_id, transfer_date, items_details, status
-            FROM transfer_logs
-            WHERE DATE(transfer_date) BETWEEN ? AND ?
-            ORDER BY transfer_date
-            """,
-            (from_date, to_date)
-        ).fetchall()
-        for t in transfers:
-            for code, qty in _movement_parse_transfer_details(t["items_details"]):
-                src_item = by_code_branch.get((t["from_branch_id"], str(code)))
-                dst_item = by_code_branch.get((t["to_branch_id"], str(code)))
-                cost = float(src_item["unit_cost"] or 0) if src_item else 0.0
-                name = (src_item or dst_item)["item_name"] if (src_item or dst_item) else code
-                add_move(
-                    t["transfer_date"], t["from_branch_id"], branch_names.get(t["from_branch_id"]),
-                    code, name, "تحويل صادر", 0, qty, cost, f"تحويل #{t['id']}", t["status"]
-                )
-                add_move(
-                    t["transfer_date"], t["to_branch_id"], branch_names.get(t["to_branch_id"]),
-                    code, name, "تحويل وارد", qty, 0, cost, f"تحويل #{t['id']}", t["status"]
-                )
-
-        # التعديلات اليدوية / التوالف / الفائض
-        adj_params = [from_date, to_date]
-        adj_branch = ""
-        if branch_id:
-            adj_branch = " AND a.branch_id=? "
-            adj_params.append(branch_id)
-        adjustments = conn.execute(
-            f"""
-            SELECT a.id, a.branch_id, a.created_at, a.item_name, a.quantity,
-                   a.adjustment_type, a.loss_or_gain_value, a.notes
-            FROM stock_adjustments a
-            WHERE DATE(a.created_at) BETWEEN ? AND ?
-            {adj_branch}
-            ORDER BY a.created_at
-            """,
-            tuple(adj_params)
-        ).fetchall()
-        for a in adjustments:
-            item = by_name_branch.get((a["branch_id"], str(a["item_name"])))
-            qty = abs(float(a["quantity"] or 0))
-            typ = str(a["adjustment_type"] or "")
-            is_out = any(k in typ for k in ["تالف", "هالك", "منتهي", "نقص", "خصم", "سحب"])
-            if not is_out and float(a["quantity"] or 0) < 0:
-                is_out = True
-            cost = float(item["unit_cost"] or 0) if item else 0.0
-            add_move(
-                a["created_at"], a["branch_id"], branch_names.get(a["branch_id"]),
-                item["item_code"] if item else "", a["item_name"],
-                f"تعديل مخزون - {typ}", 0 if is_out else qty, qty if is_out else 0,
-                cost, f"تعديل #{a['id']}", a["notes"]
-            )
-
-        # الإنتاج: الناتج يدخل للمخزون. بيانات المصدر القديمة نصية وقد لا تحمل كوداً ثابتاً،
-        # لذلك نعرض الناتج المؤكد فقط بدلاً من اختلاق حركة خامة غير قابلة للإسناد.
-        prod_params = [from_date, to_date]
-        prod_branch = ""
-        if branch_id:
-            prod_branch = " AND p.branch_id=? "
-            prod_params.append(branch_id)
-        production = conn.execute(
-            f"""
-            SELECT p.id, p.branch_id, p.created_at, p.operation_type,
-                   p.target_item_name, p.output_weight, p.unit_cost, p.notes
-            FROM production_logs p
-            WHERE DATE(p.created_at) BETWEEN ? AND ?
-            {prod_branch}
-            ORDER BY p.created_at
-            """,
-            tuple(prod_params)
-        ).fetchall()
-        for p in production:
-            item = by_name_branch.get((p["branch_id"], str(p["target_item_name"])))
-            add_move(
-                p["created_at"], p["branch_id"], branch_names.get(p["branch_id"]),
-                item["item_code"] if item else "", p["target_item_name"],
-                f"إنتاج - {p['operation_type']}", float(p["output_weight"] or 0), 0,
-                float(p["unit_cost"] or 0), f"إنتاج #{p['id']}", p["notes"]
-            )
-
-        if not movements:
-            st.info("لا توجد حركات مطابقة للفترة والفرع والصنف المحدد.")
-            return
-
-        df = pd.DataFrame(movements)
-        df["التاريخ والوقت"] = pd.to_datetime(df["التاريخ والوقت"], errors="coerce")
-        df = df.sort_values(["التاريخ والوقت", "الفرع / المخزن", "الصنف"])
-
-        total_in = df["وارد"].sum()
-        total_out = df["صادر"].sum()
-        net = total_in - total_out
-        total_value = df["قيمة الحركة"].sum()
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("إجمالي الوارد", f"{total_in:,.2f}")
-        c2.metric("إجمالي الصادر", f"{total_out:,.2f}")
-        c3.metric("صافي الحركة", f"{net:,.2f}")
-        c4.metric("قيمة الحركات", f"{total_value:,.2f} د.ل")
-
-        if not is_admin_or_supervisor:
-            df = df.drop(
-                columns=["متوسط / تكلفة الوحدة", "قيمة الحركة"],
-                errors="ignore"
-            )
-
-        st.dataframe(
-            df.sort_values("التاريخ والوقت", ascending=False),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "وارد": st.column_config.NumberColumn("وارد", format="%.2f"),
-                "صادر": st.column_config.NumberColumn("صادر", format="%.2f"),
-                "متوسط / تكلفة الوحدة": st.column_config.NumberColumn(
-                    "متوسط / تكلفة الوحدة", format="%.2f د.ل"
-                ),
-                "قيمة الحركة": st.column_config.NumberColumn(
-                    "قيمة الحركة", format="%.2f د.ل"
-                ),
-            }
-        )
-
-        excel_button(
-            df,
-            "📥 تحميل حركة الأصناف Excel",
-            f"Item_Movement_{from_date}_to_{to_date}.xlsx",
-            "Item_Movement",
-            "item_movement_excel"
-        )
     finally:
-        conn.close()
+
+        if conn:
+            conn.close()
+
+
+def _parse_transfer_line(line):
+    line = str(line or "").strip().replace("▪", "").strip()
+    if not line or line.startswith("ملاحظات:") or line.startswith("بواسطة:"):
+        return None, 0.0
+    code = None
+    if "[" in line and "]" in line:
+        code = line.split("[", 1)[1].split("]", 1)[0].strip()
+    qty = 0.0
+    if "الكمية:" in line:
+        raw_qty = line.split("الكمية:", 1)[1].replace(")", "").replace("(", "").strip()
+        try:
+            qty = float(raw_qty)
+        except Exception:
+            qty = 0.0
+    return code, qty
+
+
+def _transfer_value_from_details(conn, from_branch_id, details):
+    total = 0.0
+    for line in str(details or "").splitlines():
+        code, qty = _parse_transfer_line(line)
+        if not code or qty <= 0:
+            continue
+        item = conn.execute(
+            """SELECT COALESCE(avg_cost, buy_price, 0) AS unit_cost
+               FROM items WHERE branch_id=? AND item_code=? LIMIT 1""",
+            (from_branch_id, code)
+        ).fetchone()
+        if item:
+            total += qty * float(item["unit_cost"] or 0)
+    return total
 
 
 # ============================================================
-# تقرير المخزون والتكلفة
+# تحميل أرشيف التحويلات
 # ============================================================
 
-def show_inventory_report(
-    branches,
-    is_admin_or_supervisor
+def load_transfer_archive(
+    from_date,
+    to_date,
+    target_branch_id=None
 ):
 
-    st.markdown(
-        "### 📦 تقرير المخزون "
-        "ومتوسط التكلفة"
-    )
+    conn = None
 
-    branch_id, branch_name = (
-        get_branch_filter(
-            branches,
-            "اختر الفرع:",
-            "inventory_report_branch"
-        )
-    )
+    try:
 
-    params = []
-    branch_sql = ""
+        conn = get_db_connection()
 
-    if branch_id:
+        params = [
+            from_date,
+            to_date
+        ]
 
-        branch_sql = (
-            " WHERE i.branch_id = ? "
-        )
+        branch_sql = ""
 
-        params.append(
-            branch_id
-        )
+        if target_branch_id:
 
-    df = query_dataframe(
-        f"""
-        SELECT
-            i.item_code AS "كود الصنف",
-            i.item_name AS "اسم الصنف",
-            b.branch_name AS "الفرع",
-            i.quantity AS "الكمية المتاحة",
-            i.buy_price AS "آخر سعر شراء",
-            i.avg_cost AS "متوسط التكلفة",
-            i.sale_price AS "سعر البيع"
-        FROM items i
-
-        LEFT JOIN branches b
-            ON b.id = i.branch_id
-
-        {branch_sql}
-
-        ORDER BY
-            b.branch_name,
-            i.item_name
-        """,
-        tuple(params)
-    )
-
-    if df.empty:
-
-        st.info(
-            "لا توجد أصناف."
-        )
-
-        return
-
-    # ========================================================
-    # الأرقام
-    # ========================================================
-
-    for column in [
-        "الكمية المتاحة",
-        "آخر سعر شراء",
-        "متوسط التكلفة",
-        "سعر البيع"
-    ]:
-
-        df[column] = pd.to_numeric(
-            df[column],
-            errors="coerce"
-        ).fillna(0.0)
-
-    # ========================================================
-    # الإدارة فقط ترى التكلفة والأرباح
-    # ========================================================
-
-    if is_admin_or_supervisor:
-
-        # لو المتوسط صفر نستخدم آخر سعر شراء
-        df["التكلفة المعتمدة"] = (
-            df.apply(
-                lambda row:
-                    row["متوسط التكلفة"]
-                    if row["متوسط التكلفة"] > 0
-                    else row["آخر سعر شراء"],
-                axis=1
+            branch_sql = (
+                " AND t.to_branch_id = ? "
             )
-        )
 
-        df["قيمة المخزون بالتكلفة"] = (
-            df["الكمية المتاحة"]
-            * df["التكلفة المعتمدة"]
-        )
-
-        df["ربح الوحدة المتوقع"] = (
-            df["سعر البيع"]
-            - df["التكلفة المعتمدة"]
-        )
-
-        df["نسبة الزيادة على التكلفة %"] = (
-            df.apply(
-                lambda row:
-                    round(
-                        (
-                            row[
-                                "ربح الوحدة المتوقع"
-                            ]
-                            / row[
-                                "التكلفة المعتمدة"
-                            ]
-                        )
-                        * 100,
-                        2
-                    )
-                    if row[
-                        "التكلفة المعتمدة"
-                    ] > 0
-                    else 0.0,
-                axis=1
+            params.append(
+                target_branch_id
             )
+
+        cursor = conn.execute(
+            f"""
+            SELECT
+                t.id
+                    AS "رقم الفاتورة",
+
+                t.from_branch_id
+                    AS "_from_branch_id",
+
+                b1.branch_name
+                    AS "المرسل",
+
+                b2.branch_name
+                    AS "المستهدف",
+
+                t.items_details
+                    AS "تفاصيل الأصناف والكميات",
+
+                t.status
+                    AS "الحالة",
+
+                t.transfer_date
+                    AS "تاريخ الإصدار"
+
+            FROM transfer_logs t
+
+            LEFT JOIN branches b1
+                ON t.from_branch_id = b1.id
+
+            LEFT JOIN branches b2
+                ON t.to_branch_id = b2.id
+
+            WHERE DATE(t.transfer_date)
+                  BETWEEN ? AND ?
+
+            {branch_sql}
+
+            ORDER BY
+                t.transfer_date DESC,
+                t.id DESC
+            """,
+            tuple(params)
         )
 
-        total_stock_value = (
-            df[
-                "قيمة المخزون بالتكلفة"
-            ].sum()
+        rows = cursor.fetchall()
+
+        if not rows:
+
+            return pd.DataFrame()
+
+        columns = [
+            desc[0]
+            for desc in cursor.description
+        ]
+
+        df = pd.DataFrame(
+            [[row[col] for col in columns] for row in rows],
+            columns=columns
         )
-
-        st.metric(
-            "💰 قيمة المخزون بالتكلفة",
-            f"{total_stock_value:,.2f} د.ل"
+        df["إجمالي قيمة التحويل"] = df.apply(
+            lambda r: _transfer_value_from_details(
+                conn, r["_from_branch_id"], r["تفاصيل الأصناف والكميات"]
+            ),
+            axis=1
         )
+        df.drop(columns=["_from_branch_id"], inplace=True, errors="ignore")
+        return df
 
-    else:
+    finally:
 
-        df = df.drop(
-            columns=[
-                "آخر سعر شراء",
-                "متوسط التكلفة"
-            ],
-            errors="ignore"
+        if conn:
+            conn.close()
+
+
+# ============================================================
+# الصفحة
+# ============================================================
+
+@st.dialog("✅ تمت العملية بنجاح")
+def _transfer_success_dialog():
+    st.success(
+        st.session_state.get(
+            "transfer_success_message",
+            "تم ترحيل فاتورة التزويد بنجاح."
         )
-
-    st.dataframe(
-        df,
+    )
+    st.info("تم حفظ العملية. اضغط موافق لبدء عملية جديدة.")
+    if st.button(
+        "موافق",
+        type="primary",
         use_container_width=True,
-        hide_index=True
-    )
+        key="transfer_success_ok"
+    ):
+        # لا يتم تنظيف العملية إلا بعد تأكيد المستخدم.
+        st.session_state["transfer_cart"] = []
+        for key in [
+            "transfer_target_branch",
+            "pending_duplicate_transfer",
+        ]:
+            st.session_state.pop(key, None)
+        st.session_state.pop("transfer_success_pending", None)
+        st.session_state.pop("transfer_success_message", None)
+        st.rerun()
 
-    excel_button(
-        df,
-        "📥 تحميل تقرير المخزون Excel",
-        "Inventory_Report.xlsx",
-        "Inventory",
-        "inventory_excel"
-    )
-
-
-# ============================================================
-# الصفحة الرئيسية
-# ============================================================
 
 def show_page():
+    if st.session_state.get("transfer_success_pending"):
+        _transfer_success_dialog()
+
 
     st.markdown(
         """
         <style>
 
-        .stDataFrame div,
-        .stDataFrame span,
-        .stDataFrame p,
-        div[data-testid="stTable"] *,
-        th,
-        td {
-            color: #000000 !important;
-            font-weight: 700 !important;
+        .dataframe-container td,
+        .dataframe-container th {
+            white-space: pre-wrap !important;
+            word-wrap: break-word !important;
         }
 
-        th {
-            background-color: #94a3b8 !important;
-            color: #000000 !important;
-            text-align: right !important;
-        }
-
-        td {
-            background-color: #f8fafc !important;
+        .rtl-container {
+            direction: rtl !important;
             text-align: right !important;
         }
 
@@ -1802,47 +933,44 @@ def show_page():
         unsafe_allow_html=True
     )
 
-    st.markdown(
-        """
-        <h2 style="
-            color:#0f172a;
-            font-weight:900;
-        ">
-        📊 مركز التقارير الشامل
-        </h2>
-        """,
-        unsafe_allow_html=True
+    st.header(
+        "🔄 نظام تزويد الفروع والأرشيف"
     )
 
     st.info(
-        "💡 جميع تقارير الحركات متاحة "
-        "بفلترة من تاريخ إلى تاريخ، "
-        "مع إمكانية التصفية حسب الفرع "
-        "والتصدير إلى Excel."
+        "💡 إنشاء فاتورة تزويد مجمعة "
+        "من المخزن الرئيسي إلى الفروع، "
+        "مع أرشيف كامل وفلترة بالتاريخ."
     )
 
-    st.markdown("---")
-
-    role = st.session_state.get(
-        "role",
-        ""
+    username = st.session_state.get(
+        "username",
+        "غير محدد"
     )
 
-    is_admin_or_supervisor = (
-        role in [
-            "Admin",
-            "General_Supervisor"
-        ]
-    )
+    if (
+        "transfer_cart"
+        not in st.session_state
+    ):
+
+        st.session_state[
+            "transfer_cart"
+        ] = []
+
+    # ========================================================
+    # تحميل الفروع
+    # ========================================================
 
     try:
 
-        branches = get_branches()
+        branches, warehouse = (
+            get_branches_and_warehouse()
+        )
 
     except Exception as e:
 
         st.error(
-            "❌ تعذر تحميل الفروع."
+            "❌ تعذر تحميل بيانات الفروع."
         )
 
         st.code(str(e))
@@ -1852,106 +980,999 @@ def show_page():
     if not branches:
 
         st.warning(
-            "لا توجد فروع مسجلة."
+            "⚠️ يرجى إضافة الفروع "
+            "والمخزن أولاً."
         )
 
         return
 
-    report_pages = [
-        ("financial", "💰 الملخص المالي"),
-        ("sales", "🧾 المبيعات"),
-        ("purchases", "📥 المشتريات"),
-        ("expenses", "💸 المصروفات"),
-        ("revenues", "💵 الإيرادات"),
-        ("adjustments", "✍️ الحركات اليدوية"),
-        ("transfers", "🔄 التحويلات"),
-        ("production", "🔥🥜 الخلط والتحميص"),
-        ("inventory", "📦 المخزون والتكلفة"),
-        ("item_movement", "📈 حركة الأصناف"),
+    if not warehouse:
+
+        st.warning(
+            "⚠️ لا يوجد مخزن رئيسي "
+            "معرف في النظام."
+        )
+
+        return
+
+    warehouse_id = warehouse["id"]
+    warehouse_name = (
+        warehouse["branch_name"]
+    )
+
+    target_branches = [
+        b
+        for b in branches
+        if b["id"] != warehouse_id
     ]
 
-    if "reports_page_mode" not in st.session_state:
-        st.session_state["reports_page_mode"] = "financial"
+    if not target_branches:
 
-    st.markdown("### 📊 اختر التقرير")
+        st.warning(
+            "⚠️ لا يوجد فرع متاح "
+            "لإرسال التزويد إليه."
+        )
 
-    for row_start in range(0, len(report_pages), 3):
-        current = report_pages[row_start:row_start + 3]
-        cols = st.columns(len(current))
+        return
 
-        for idx, (page_key, page_label) in enumerate(current):
-            if cols[idx].button(
-                page_label,
-                use_container_width=True,
-                type="primary"
-                if st.session_state["reports_page_mode"] == page_key
-                else "secondary",
-                key=f"reports_nav_{page_key}"
-            ):
-                st.session_state["reports_page_mode"] = page_key
-                st.rerun()
+    branch_dict = {
+        b["branch_name"]: b["id"]
+        for b in target_branches
+    }
+
+    if "transfers_mode" not in st.session_state:
+        st.session_state["transfers_mode"] = "new"
+
+    st.markdown("### 🎯 اختر العملية")
+    nav1, nav2 = st.columns(2)
+
+    if nav1.button(
+        "📦 إنشاء فاتورة تزويد جديدة",
+        use_container_width=True,
+        type="primary" if st.session_state["transfers_mode"] == "new" else "secondary",
+        key="transfers_btn_new"
+    ):
+        st.session_state["transfers_mode"] = "new"
+        st.rerun()
+
+    if nav2.button(
+        "📋 الأرشيف وإعادة الطباعة",
+        use_container_width=True,
+        type="primary" if st.session_state["transfers_mode"] == "archive" else "secondary",
+        key="transfers_btn_archive"
+    ):
+        st.session_state["transfers_mode"] = "archive"
+        st.rerun()
+
+    transfer_mode = (
+        "📦 إنشاء فاتورة تزويد جديدة"
+        if st.session_state["transfers_mode"] == "new"
+        else "📋 أرشيف فواتير التزويد وإعادة الطباعة"
+    )
 
     st.markdown("---")
 
-    selected_report = st.session_state["reports_page_mode"]
+    # ========================================================
+    # إنشاء فاتورة
+    # ========================================================
 
-    if selected_report == "financial":
-        show_financial_summary(
-            branches,
-            is_admin_or_supervisor
+    if transfer_mode.startswith("📦"):
+
+        c1, c2 = st.columns(2)
+
+        target_branch_name = (
+            c1.selectbox(
+                "اختر الفرع المستهدف:",
+                list(
+                    branch_dict.keys()
+                )
+            )
         )
 
-    elif selected_report == "sales":
-        show_sales_report(
-            branches,
-            is_admin_or_supervisor
+        target_branch_id = (
+            branch_dict[
+                target_branch_name
+            ]
         )
 
-    elif selected_report == "purchases":
-        show_purchases_report(
-            branches,
-            is_admin_or_supervisor
+        transfer_notes = (
+            c2.text_input(
+                "ملاحظات الفاتورة:",
+                value=""
+            )
         )
 
-    elif selected_report == "expenses":
-        show_expenses_report(
-            branches,
-            is_admin_or_supervisor
+        st.caption(
+            f"📤 التزويد من: "
+            f"{warehouse_name}"
         )
 
-    elif selected_report == "revenues":
-        show_revenues_report(
-            branches,
-            is_admin_or_supervisor
+        # ====================================================
+        # تثبيت الفرع للسلة
+        # ====================================================
+
+        if st.session_state[
+            "transfer_cart"
+        ]:
+
+            cart_target = (
+                st.session_state.get(
+                    "transfer_target_branch"
+                )
+            )
+
+            if (
+                cart_target
+                != target_branch_id
+            ):
+
+                st.warning(
+                    "⚠️ السلة الحالية مرتبطة "
+                    "بفرع مختلف. أكمل الفاتورة "
+                    "أو قم بتفريغها قبل تغيير "
+                    "الفرع المستهدف."
+                )
+
+                if st.button(
+                    "🗑️ تفريغ السلة "
+                    "والبدء للفرع الجديد"
+                ):
+
+                    st.session_state[
+                        "transfer_cart"
+                    ] = []
+
+                    st.session_state.pop(
+                        "transfer_target_branch",
+                        None
+                    )
+
+                    st.rerun()
+
+                return
+
+        # ====================================================
+        # أصناف المخزن
+        # ====================================================
+
+        try:
+
+            warehouse_items = (
+                get_warehouse_items(
+                    warehouse_id
+                )
+            )
+
+        except Exception as e:
+
+            st.error(
+                "❌ تعذر تحميل أصناف المخزن."
+            )
+
+            st.code(str(e))
+
+            return
+
+        st.markdown(
+            "### 🛒 إضافة أصناف "
+            "لفاتورة التزويد"
         )
 
-    elif selected_report == "adjustments":
-        show_adjustments_report(
-            branches,
-            is_admin_or_supervisor
+        if warehouse_items:
+
+            item_options = {}
+
+            for item in warehouse_items:
+
+                label = (
+                    f"[{item['item_code']}] "
+                    f"{item['item_name']} "
+                    f"| المتوفر: "
+                    f"{float(item['quantity'] or 0):,.2f}"
+                )
+
+                item_options[
+                    label
+                ] = item
+
+            with st.form(
+                "add_transfer_item",
+                clear_on_submit=True
+            ):
+
+                ci1, ci2 = st.columns(
+                    [3, 1]
+                )
+
+                selected_label = (
+                    ci1.selectbox(
+                        "اختر الصنف:",
+                        list(
+                            item_options.keys()
+                        )
+                    )
+                )
+
+                selected_item = (
+                    item_options[
+                        selected_label
+                    ]
+                )
+
+                max_qty = float(
+                    selected_item[
+                        "quantity"
+                    ] or 0
+                )
+
+                transfer_qty = (
+                    ci2.number_input(
+                        "الكمية:",
+                        min_value=0.01,
+                        max_value=max_qty,
+                        value=min(
+                            1.0,
+                            max_qty
+                        ),
+                        step=1.0
+                    )
+                )
+
+                add_btn = (
+                    st.form_submit_button(
+                        "➕ إضافة للسلة",
+                        type="primary"
+                    )
+                )
+
+            if add_btn:
+
+                existing = None
+
+                for cart_item in (
+                    st.session_state[
+                        "transfer_cart"
+                    ]
+                ):
+
+                    if (
+                        cart_item["id"]
+                        == selected_item["id"]
+                    ):
+
+                        existing = cart_item
+                        break
+
+                if existing:
+
+                    new_qty = (
+                        float(
+                            existing["qty"]
+                        )
+                        + float(
+                            transfer_qty
+                        )
+                    )
+
+                    if new_qty > max_qty:
+
+                        st.warning(
+                            f"⚠️ إجمالي الكمية "
+                            f"المطلوبة أكبر من "
+                            f"المتوفر "
+                            f"({max_qty:,.2f})."
+                        )
+
+                    else:
+
+                        existing[
+                            "qty"
+                        ] = new_qty
+
+                        st.rerun()
+
+                else:
+
+                    st.session_state[
+                        "transfer_cart"
+                    ].append(
+                        {
+                            "id":
+                                selected_item[
+                                    "id"
+                                ],
+
+                            "code":
+                                selected_item[
+                                    "item_code"
+                                ],
+
+                            "name":
+                                selected_item[
+                                    "item_name"
+                                ],
+
+                            "qty":
+                                float(
+                                    transfer_qty
+                                )
+                        }
+                    )
+
+                    st.session_state[
+                        "transfer_target_branch"
+                    ] = target_branch_id
+
+                    st.rerun()
+
+        else:
+
+            st.warning(
+                f"⚠️ المخزن الرئيسي "
+                f"({warehouse_name}) "
+                "لا يحتوي على رصيد متاح."
+            )
+
+        # ====================================================
+        # عرض السلة
+        # ====================================================
+
+        st.markdown(
+            "### 📋 فاتورة التزويد الحالية"
         )
 
-    elif selected_report == "transfers":
-        show_transfers_report(
-            branches,
-            is_admin_or_supervisor
+        if st.session_state[
+            "transfer_cart"
+        ]:
+
+            total_units = 0.0
+
+            for index, cart_item in enumerate(
+                st.session_state[
+                    "transfer_cart"
+                ]
+            ):
+
+                total_units += float(
+                    cart_item["qty"]
+                )
+
+                c1, c2, c3 = st.columns(
+                    [3, 2, 1]
+                )
+
+                c1.write(
+                    f"🏷️ "
+                    f"{cart_item['name']} "
+                    f"[{cart_item['code']}]"
+                )
+
+                c2.write(
+                    f"الكمية: "
+                    f"{cart_item['qty']:,.2f}"
+                )
+
+                if c3.button(
+                    "🗑️ حذف",
+                    key=(
+                        f"del_transfer_"
+                        f"{index}"
+                    )
+                ):
+
+                    st.session_state[
+                        "transfer_cart"
+                    ].pop(index)
+
+                    if not st.session_state[
+                        "transfer_cart"
+                    ]:
+
+                        st.session_state.pop(
+                            "transfer_target_branch",
+                            None
+                        )
+
+                    st.rerun()
+
+            st.metric(
+                "📦 إجمالي الوحدات المحولة",
+                f"{total_units:,.2f}"
+            )
+
+            pending_dup = st.session_state.get("pending_duplicate_transfer")
+            if pending_dup:
+                st.warning(
+                    f"⚠️ يبدو أن نفس فاتورة التزويد تم ترحيلها من قبل "
+                    f"(فاتورة #{pending_dup.get('previous_id')} بتاريخ {pending_dup.get('previous_at')}). "
+                    "هل تريد ترحيلها مرة أخرى؟"
+                )
+                d1, d2 = st.columns(2)
+                if d1.button("✅ نعم، رحّلها مرة أخرى", type="primary", use_container_width=True, key="confirm_duplicate_transfer"):
+                    execute_transfer(
+                        warehouse_id=pending_dup["warehouse_id"],
+                        target_branch_id=pending_dup["target_branch_id"],
+                        target_branch_name=pending_dup["target_branch_name"],
+                        transfer_cart=pending_dup["transfer_cart"],
+                        transfer_notes=pending_dup["transfer_notes"],
+                        username=pending_dup["username"],
+                        allow_duplicate=True
+                    )
+                if d2.button("❌ لا، إلغاء العملية", use_container_width=True, key="cancel_duplicate_transfer"):
+                    st.session_state.pop("pending_duplicate_transfer", None)
+                    st.rerun()
+                return
+
+            st.markdown("---")
+
+            ca1, ca2 = st.columns(2)
+
+            confirm_transfer = (
+                ca1.button(
+                    "🚀 اعتماد وترحيل "
+                    "فاتورة التزويد",
+                    type="primary",
+                    use_container_width=True
+                )
+            )
+
+            clear_transfer = (
+                ca2.button(
+                    "🗑️ تفريغ السلة بالكامل",
+                    use_container_width=True
+                )
+            )
+
+            if clear_transfer:
+
+                st.session_state[
+                    "transfer_cart"
+                ] = []
+
+                st.session_state.pop(
+                    "transfer_target_branch",
+                    None
+                )
+
+                st.rerun()
+
+            if confirm_transfer:
+
+                execute_transfer(
+                    warehouse_id=warehouse_id,
+                    target_branch_id=(
+                        target_branch_id
+                    ),
+                    target_branch_name=(
+                        target_branch_name
+                    ),
+                    transfer_cart=(
+                        st.session_state[
+                            "transfer_cart"
+                        ]
+                    ),
+                    transfer_notes=(
+                        transfer_notes
+                    ),
+                    username=username
+                )
+
+        else:
+
+            st.info(
+                "🛒 السلة فارغة."
+            )
+
+    # ========================================================
+    # الأرشيف
+    # ========================================================
+
+    else:
+
+        st.subheader(
+            "📋 أرشيف فواتير التزويد"
         )
 
-    elif selected_report == "production":
-        show_production_report(
-            branches,
-            is_admin_or_supervisor
+        # التراجع خاص بالعمليات الإدارية وليس بالكاشير.
+        role = str(st.session_state.get("role", "")).strip().lower()
+        is_cashier = role in {"cashier", "كاشير"}
+        if not is_cashier:
+            last_op = get_last_reversible_transfer(username)
+            if last_op:
+                with st.expander("↩️ التراجع عن آخر عملية تزويد", expanded=False):
+                    st.warning(
+                        f"آخر عملية متاحة: فاتورة #{last_op['transfer_log_id']} "
+                        f"بتاريخ {last_op['created_at']}. التراجع سيعيد أرصدة المخزن والفرع عكس العملية بالكامل."
+                    )
+                    confirm_undo = st.checkbox(
+                        "أؤكد أنني أريد التراجع عن آخر عملية تزويد",
+                        key="confirm_undo_last_transfer"
+                    )
+                    if st.button(
+                        "↩️ تنفيذ التراجع",
+                        disabled=not confirm_undo,
+                        type="primary",
+                        use_container_width=True,
+                        key="undo_last_transfer_btn"
+                    ):
+                        ok, message = undo_last_transfer(username)
+                        if ok:
+                            st.success("✅ " + message)
+                            st.rerun()
+                        else:
+                            st.error("❌ " + message)
+
+        fc1, fc2 = st.columns(2)
+
+        from_date = fc1.date_input(
+            "📅 من تاريخ:",
+            value=(
+                date.today()
+                - timedelta(days=30)
+            ),
+            key="transfer_from_date"
         )
 
-    elif selected_report == "inventory":
-        show_inventory_report(
-            branches,
-            is_admin_or_supervisor
+        to_date = fc2.date_input(
+            "📅 إلى تاريخ:",
+            value=date.today(),
+            key="transfer_to_date"
         )
 
-    elif selected_report == "item_movement":
-        show_item_movement_report(
-            branches,
-            is_admin_or_supervisor
+        archive_branch_options = (
+            ["🌐 كل الفروع"]
+            + list(
+                branch_dict.keys()
+            )
         )
 
+        archive_branch = st.selectbox(
+            "🏢 فلترة حسب الفرع المستلم:",
+            archive_branch_options,
+            key="transfer_archive_branch"
+        )
+
+        if from_date > to_date:
+
+            st.error(
+                "⚠️ تاريخ البداية يجب "
+                "أن يكون قبل تاريخ النهاية."
+            )
+
+            return
+
+        if archive_branch == "🌐 كل الفروع":
+
+            archive_branch_id = None
+
+        else:
+
+            archive_branch_id = (
+                branch_dict[
+                    archive_branch
+                ]
+            )
+
+        try:
+
+            logs_df = load_transfer_archive(
+                from_date,
+                to_date,
+                archive_branch_id
+            )
+
+        except Exception as e:
+
+            st.error(
+                "❌ تعذر تحميل "
+                "أرشيف التزويد."
+            )
+
+            st.code(str(e))
+
+            return
+
+        if logs_df.empty:
+
+            st.info(
+                "📌 لا توجد فواتير تزويد "
+                "ضمن الفترة المحددة."
+            )
+
+            return
+
+        total_transfer_value = float(
+            logs_df["إجمالي قيمة التحويل"].sum()
+            if "إجمالي قيمة التحويل" in logs_df.columns else 0
+        )
+        mc1, mc2, mc3 = st.columns(3)
+        mc1.metric("عدد فواتير التزويد", f"{len(logs_df):,}")
+        mc2.metric("إجمالي قيمة التحويلات", f"{total_transfer_value:,.2f} د.ل")
+        mc3.metric("الفترة", f"{from_date} ← {to_date}")
+
+        st.markdown(
+            '<div class="dataframe-container">',
+            unsafe_allow_html=True
+        )
+
+        st.dataframe(
+            logs_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "تفاصيل الأصناف والكميات":
+                    st.column_config.TextColumn(
+                        "تفاصيل الأصناف والكميات",
+                        width="large"
+                    ),
+                "إجمالي قيمة التحويل":
+                    st.column_config.NumberColumn(
+                        "إجمالي قيمة التحويل",
+                        format="%.2f د.ل"
+                    )
+            }
+        )
+
+        st.markdown(
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+        # ====================================================
+        # Excel
+        # ====================================================
+
+        try:
+
+            excel_bytes = to_excel(
+                logs_df
+            )
+
+            st.download_button(
+                label=(
+                    "📥 تصدير الأرشيف "
+                    "إلى Excel"
+                ),
+                data=excel_bytes,
+                file_name=(
+                    f"transfers_"
+                    f"{from_date}_to_"
+                    f"{to_date}.xlsx"
+                ),
+                mime=(
+                    "application/vnd.openxmlformats-"
+                    "officedocument.spreadsheetml.sheet"
+                ),
+                use_container_width=True
+            )
+
+        except Exception as e:
+
+            st.error(
+                "تعذر إنشاء ملف Excel."
+            )
+
+            st.code(str(e))
+
+        # ====================================================
+        # إعادة الطباعة
+        # ====================================================
+
+        st.markdown("---")
+
+        st.markdown(
+            '<h3 class="rtl-container">'
+            '🖨️ إعادة طباعة فاتورة تزويد'
+            '</h3>',
+            unsafe_allow_html=True
+        )
+
+        invoice_options = {}
+
+        for _, row in logs_df.iterrows():
+
+            label = (
+                f"فاتورة "
+                f"#{row['رقم الفاتورة']} "
+                f"| إلى: "
+                f"{row['المستهدف']} "
+                f"| التاريخ: "
+                f"{row['تاريخ الإصدار']}"
+            )
+
+            invoice_options[
+                label
+            ] = row
+
+        selected_invoice_label = (
+            st.selectbox(
+                "🔍 اختر الفاتورة:",
+                [
+                    "-- اختر الفاتورة --"
+                ]
+                + list(
+                    invoice_options.keys()
+                )
+            )
+        )
+
+        if (
+            selected_invoice_label
+            != "-- اختر الفاتورة --"
+        ):
+
+            selected_row = (
+                invoice_options[
+                    selected_invoice_label
+                ]
+            )
+
+            items_text = str(
+                selected_row[
+                    "تفاصيل الأصناف والكميات"
+                ] or ""
+            )
+
+            items_html = ""
+            notes_text = ""
+            created_by = ""
+
+            lines = items_text.splitlines()
+
+            for line in lines:
+
+                line = line.strip()
+
+                if not line:
+                    continue
+
+                if line.startswith(
+                    "ملاحظات:"
+                ):
+
+                    notes_text = (
+                        line.replace(
+                            "ملاحظات:",
+                            "",
+                            1
+                        ).strip()
+                    )
+
+                    continue
+
+                if line.startswith(
+                    "بواسطة:"
+                ):
+
+                    created_by = (
+                        line.replace(
+                            "بواسطة:",
+                            "",
+                            1
+                        ).strip()
+                    )
+
+                    continue
+
+                clean_line = (
+                    line.replace(
+                        "▪",
+                        ""
+                    ).strip()
+                )
+
+                if (
+                    "(" in clean_line
+                    and ")" in clean_line
+                ):
+
+                    name_part = (
+                        clean_line[
+                            :clean_line.rfind(
+                                "("
+                            )
+                        ].strip()
+                    )
+
+                    qty_part = (
+                        clean_line[
+                            clean_line.rfind(
+                                "("
+                            ) + 1:
+                            clean_line.rfind(
+                                ")"
+                            )
+                        ]
+                        .replace(
+                            "الكمية:",
+                            ""
+                        )
+                        .strip()
+                    )
+
+                    items_html += (
+                        "<tr>"
+                        f"<td>{name_part}</td>"
+                        f"<td>{qty_part}</td>"
+                        "</tr>"
+                    )
+
+                else:
+
+                    items_html += (
+                        "<tr>"
+                        "<td colspan='2'>"
+                        f"{clean_line}"
+                        "</td>"
+                        "</tr>"
+                    )
+
+            notes_html = ""
+
+            if notes_text:
+
+                notes_html = (
+                    "<p style='text-align:right;'>"
+                    "<b>ملاحظات:</b> "
+                    f"{notes_text}"
+                    "</p>"
+                )
+
+            created_by_html = ""
+
+            if created_by:
+
+                created_by_html = (
+                    "<p style='text-align:right;'>"
+                    "<b>أنشأ الفاتورة:</b> "
+                    f"{created_by}"
+                    "</p>"
+                )
+
+            html_content = f"""
+            <html dir="rtl">
+
+            <head>
+                <meta charset="utf-8">
+                <title>فاتورة تزويد #{selected_row['رقم الفاتورة']}</title>
+                <style>
+                    @page {{
+                        size: 80mm auto;
+                        margin: 3mm;
+                    }}
+                    @media print {{
+                        .no-print {{
+                            display: none !important;
+                        }}
+                        body {{
+                            border: none !important;
+                            padding: 0 !important;
+                        }}
+                    }}
+                </style>
+            </head>
+
+            <body style="
+                font-family: Arial;
+                text-align: center;
+                max-width: 420px;
+                margin: auto;
+                padding: 20px;
+                border: 1px solid #000;
+                background-color: #fff;
+            ">
+
+                <h2>
+                    مجموعة أبو زيد التجارية
+                </h2>
+
+                <p style="
+                    font-weight: bold;
+                    background-color: #e2e8f0;
+                    padding: 7px;
+                ">
+                    فاتورة تزويد فرع
+                </p>
+
+                <hr>
+
+                <p style="text-align:right;">
+
+                    <b>رقم الفاتورة:</b>
+                    #{selected_row['رقم الفاتورة']}
+                    <br>
+
+                    <b>التاريخ:</b>
+                    {selected_row['تاريخ الإصدار']}
+                    <br>
+
+                    <b>من:</b>
+                    {selected_row['المرسل']}
+                    <br>
+
+                    <b>إلى:</b>
+                    {selected_row['المستهدف']}
+                    <br>
+
+                    <b>الحالة:</b>
+                    {selected_row['الحالة']}
+
+                </p>
+
+                <hr>
+
+                <table style="
+                    width:100%;
+                    text-align:right;
+                    border-collapse:collapse;
+                ">
+
+                    <tr style="
+                        border-bottom:1px solid #000;
+                        background-color:#f1f5f9;
+                    ">
+                        <th>الصنف</th>
+                        <th>الكمية</th>
+                    </tr>
+
+                    {items_html}
+
+                </table>
+
+                <hr>
+
+                {notes_html}
+
+                {created_by_html}
+
+                <p style="
+                    font-size:14px;
+                    margin-top:30px;
+                    text-align:right;
+                ">
+                    توقيع المستلم:
+                    ........................
+                </p>
+
+                <div class="no-print" style="margin-top:15px;">
+                    <button
+                        onclick="window.print()"
+                        style="
+                            width:100%;
+                            padding:10px;
+                            font-size:16px;
+                            font-weight:bold;
+                            cursor:pointer;
+                        "
+                    >
+                        🖨️ طباعة الآن
+                    </button>
+                </div>
+
+            </body>
+
+            </html>
+            """
+
+            st.components.v1.html(
+                html_content,
+                height=500,
+                scrolling=True
+            )
+
+            st.download_button(
+                label=(
+                    "📥 تحميل نسخة "
+                    "الفاتورة HTML"
+                ),
+                data=html_content.encode(
+                    "utf-8"
+                ),
+                file_name=(
+                    "Transfer_Invoice_"
+                    f"{selected_row['رقم الفاتورة']}"
+                    ".html"
+                ),
+                mime="text/html",
+                use_container_width=True
+            )
