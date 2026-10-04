@@ -2,7 +2,7 @@ import streamlit as st
 import json
 from datetime import datetime
 from database import get_db_connection, ensure_pos_extensions_schema
-from offline_store import get_pos_connection, server_available, pending_count
+from offline_store import get_pos_connection, server_available, pending_count, sync_now
 
 
 # ============================================================
@@ -192,8 +192,8 @@ def add_missing_item_dialog(scanned_code, b_id):
     try:
         conn, _pos_mode = get_pos_connection()
 
-        if _pos_mode == "offline":
-            st.warning("🟠 إضافة صنف جديد غير متاحة أثناء Offline. استخدم الأصناف التي تم تنزيلها مسبقًا، ثم أضف الصنف الجديد بعد عودة الاتصال.")
+        if _pos_mode in ("offline", "local"):
+            st.warning("🟠 إضافة صنف جديد من نقطة البيع غير متاحة في وضع Local-first. استخدم الأصناف التي تم تنزيلها مسبقًا، ثم أضف الصنف الجديد بعد عودة الاتصال.")
             return
 
         existing = conn.execute(
@@ -1432,9 +1432,13 @@ def build_historical_z_html(
 def show_page():
 
     ensure_cart()
-    if server_available():
+
+    # تحسين أداء: تجهيز مخطط إضافات POS مرة واحدة فقط لكل جلسة،
+    # بدلاً من إرسال أوامر DDL إلى PostgreSQL/Supabase مع كل rerun في Streamlit.
+    if server_available() and not st.session_state.get("pos_schema_ready", False):
         try:
             ensure_pos_extensions_schema()
+            st.session_state["pos_schema_ready"] = True
         except Exception as e:
             st.error("❌ تعذر تجهيز إضافات نقطة البيع.")
             st.code(str(e))
@@ -1509,11 +1513,23 @@ def show_page():
 
         conn, _pos_mode = get_pos_connection()
 
-        if _pos_mode == "offline":
-            st.warning(f"🟠 وضع العمل المحلي Offline — المبيعات ستُحفظ على هذا الجهاز وتُزامن عند عودة الاتصال. عمليات معلقة: {pending_count()}")
-        else:
-            pc = pending_count()
-            st.success(f"🟢 متصل بالسيرفر — المزامنة فعالة" + (f" | متبقي {pc} عملية" if pc else ""))
+        pc = pending_count()
+        st.success(f"⚡ وضع Local-first — نقطة البيع تعمل من القاعدة المحلية بسرعة | عمليات بانتظار المزامنة: {pc}")
+
+        if st.button("🔄 مزامنة الآن مع السيرفر", key="pos_sync_now"):
+            try:
+                with st.spinner("جاري رفع المبيعات وتنزيل أحدث البيانات..."):
+                    result = sync_now()
+                if result.get("failed", 0):
+                    st.warning(f"تمت المزامنة جزئيًا: {result.get('synced', 0)} ناجحة، {result.get('failed', 0)} فشلت.")
+                elif result.get("download_ok"):
+                    st.success(f"✅ تمت المزامنة بنجاح. تم رفع {result.get('synced', 0)} عملية.")
+                    st.rerun()
+                else:
+                    st.warning(f"تم رفع المبيعات، لكن تعذر تحديث البيانات المحلية: {result.get('error') or 'خطأ غير معروف'}")
+            except Exception as e:
+                st.error("❌ تعذرت المزامنة مع السيرفر. البيع المحلي ما زال متاحًا.")
+                st.code(str(e))
 
         # ====================================================
         # تحديد الفرع
