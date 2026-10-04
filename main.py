@@ -355,74 +355,73 @@ st.sidebar.markdown("---")
 
 MENU_GROUPS = {
     "🏠 لوحة التحكم": [
-        ("🏠 الرئيسية واللوحة", "فتح لوحة التحكم", {}),
+        ("🏠 الرئيسية واللوحة", "🏠 لوحة التحكم"),
     ],
     "🛒 إدارة المبيعات": [
-        ("🛒 نقطة البيع (POS)", "🧾 فاتورة بيع", {}),
-        ("📊 التقارير والأرباح", "📊 أرشيف وتقارير البيع X & Z", {}),
+        ("🛒 نقطة البيع (POS)", "1- فاتورة بيع"),
+        ("📊 التقارير والأرباح", "2- أرشيف وتقارير البيع X & Z وإعادة طباعة الفواتير"),
     ],
     "📥 إدارة المشتريات": [
-        ("📥 المشتريات", "🧾 المشتريات والأرشيف", {}),
+        ("📥 المشتريات", "1- فاتورة مشتريات"),
+        ("📊 التقارير والأرباح", "2- أرشيف وتقارير المشتريات"),
     ],
     "📦 المخزون والأصناف": [
-        ("📦 إدارة المخزن والفروع", "📦 الأصناف والكميات والصلاحيات", {"inventory_mode": "list"}),
-        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "♻️ التالف والمرتجع والتسويات", {}),
-        ("📁 استيراد Excel", "📥 استيراد الأصناف من Excel", {}),
+        ("📦 إدارة المخزن والفروع", "1- إضافة صنف جديد"),
+        ("📦 إدارة المخزن والفروع", "2- الأصناف وتعديل سعر البيع والكميات"),
+        ("📦 إدارة المخزن والفروع", "3- الصلاحيات وحركة المخزون"),
+        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "♻️ التالف والمرتجع والتسويات"),
+        ("📁 استيراد Excel", "📥 استيراد الأصناف من Excel"),
     ],
     "🏭 إدارة التصنيع": [
-        ("🥜 التحميص والخلط", "🏭 الخلط والتحميص وسجل الإنتاج", {"production_screen_mode": "mix"}),
+        ("🥜 التحميص والخلط", "1- خلط"),
+        ("🥜 التحميص والخلط", "2- تحميص"),
+        ("🥜 التحميص والخلط", "3- سجل الإنتاج"),
     ],
     "👥 العملاء والموردون": [
-        ("👥 جهات التعامل", "👥 العملاء والموردون والحسابات", {"parties_mode": "suppliers"}),
+        ("👥 جهات التعامل", "العملاء والموردون وكشوف الحساب"),
     ],
     "👤 الفروع والمستخدمون والصلاحيات": [
-        ("🎨 تخصيص المظهر", "🎨 تخصيص المظهر", {}),
-        ("👥 إدارة المستخدمين", "👥 المستخدمون والصلاحيات", {}),
-        ("🏢 إدارة الفروع", "🏢 إدارة الفروع", {}),
+        ("🎨 تخصيص المظهر", "1- تخصيص المظهر"),
+        ("👥 إدارة المستخدمين", "2- المستخدمون والصلاحيات"),
+        ("🏢 إدارة الفروع", "3- إدارة الفروع"),
     ],
     "💰 الإدارة المالية": [
-        ("👥 جهات التعامل", "🧾 الدفع والقبض وأرشيف الإيصالات", {"parties_mode": "vouchers"}),
-        ("💰 المصروفات", "💰 المصروفات", {}),
-        ("📊 التقارير والأرباح", "📊 التقارير المالية", {}),
+        ("👥 جهات التعامل", "1- إيصال دفع"),
+        ("👥 جهات التعامل", "2- إيصال قبض"),
+        ("💰 المصروفات", "3- المصروفات (عام / خاص)"),
+        ("📊 التقارير والأرباح", "4- أرشيف المالية"),
     ],
     "🔄 التحويلات وتزويد الفروع": [
-        ("🔄 تزويد الفروع والأرشيف", "🔄 التزويد والتحويلات والأرشيف", {}),
+        ("🔄 تزويد الفروع والأرشيف", "1- إنشاء فاتورة تزويد فرع"),
+        ("🔄 تزويد الفروع والأرشيف", "2- تحويل من فرع إلى آخر"),
+        ("🔄 تزويد الفروع والأرشيف", "3- أرشيف التحويلات والتزويد"),
     ],
     "⚙️ أدوات الإدارة": [
-        ("⚙️ الجرد والتصفير السنوي", "📆 إقفال وأرشفة السنة", {}),
-        ("🧹 تهيئة النظام لأول تشغيل", "🧹 تهيئة النظام لأول تشغيل", {}),
+        ("⚙️ الجرد والتصفير السنوي", "📆 إقفال وأرشفة السنة"),
+        ("🧹 تهيئة النظام لأول تشغيل", "🧹 تهيئة النظام لأول تشغيل"),
     ],
 }
 
 def allowed_group_entries(group_name):
     return [
-        (target, label, state_updates)
-        for target, label, state_updates in MENU_GROUPS.get(group_name, [])
+        (target, label)
+        for target, label in MENU_GROUPS.get(group_name, [])
         if check_user_permission(target)
     ]
 
-available_groups = [
-    group_name for group_name in MENU_GROUPS
-    if allowed_group_entries(group_name)
-]
-
-selected_group = st.sidebar.selectbox(
-    "📂 اختر القسم:",
-    available_groups,
-    key="sidebar_group_dropdown"
-)
-
-if st.sidebar.button(
-    "فتح القسم",
-    type="primary",
-    use_container_width=True,
-    key="sidebar_open_group"
-):
-    if selected_group == "🏠 لوحة التحكم":
-        set_page("🏠 الرئيسية واللوحة")
-    else:
-        st.session_state["page"] = f"__GROUP__::{selected_group}"
-        st.rerun()
+for group_name in MENU_GROUPS:
+    entries = allowed_group_entries(group_name)
+    if entries:
+        if st.sidebar.button(
+            group_name,
+            use_container_width=True,
+            key=f"sidebar_group_{group_name}"
+        ):
+            if group_name == "🏠 لوحة التحكم":
+                set_page("🏠 الرئيسية واللوحة")
+            else:
+                st.session_state["page"] = f"__GROUP__::{group_name}"
+                st.rerun()
 
 st.sidebar.markdown("---")
 if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
@@ -452,14 +451,12 @@ if choice.startswith("__GROUP__::"):
         st.stop()
 
     cols = st.columns(3)
-    for idx, (target, label, state_updates) in enumerate(entries):
+    for idx, (target, label) in enumerate(entries):
         if cols[idx % 3].button(
             label,
             use_container_width=True,
             key=f"group_action_{group_name}_{target}_{idx}"
         ):
-            for state_key, state_value in state_updates.items():
-                st.session_state[state_key] = state_value
             set_page(target)
 
     st.stop()
