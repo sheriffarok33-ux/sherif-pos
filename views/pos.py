@@ -1513,9 +1513,6 @@ def show_page():
 
         conn, _pos_mode = get_pos_connection()
 
-        pc = pending_count()
-        st.success(f"⚡ وضع Local-first — نقطة البيع تعمل من القاعدة المحلية بسرعة | عمليات بانتظار المزامنة: {pc}")
-
         if st.button("🔄 مزامنة الآن مع السيرفر", key="pos_sync_now"):
             try:
                 with st.spinner("جاري رفع المبيعات وتنزيل أحدث البيانات..."):
