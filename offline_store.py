@@ -202,11 +202,15 @@ def sync_now():
     finally: remote.close()
 
 def get_pos_connection():
+    """
+    اتصال POS خفيف:
+    لا ينفذ مزامنة كاملة عند كل إعادة تشغيل أو قراءة باركود.
+    المزامنة الكاملة تبقى متاحة عبر sync_now().
+    """
     try:
         from database import get_db_connection
-        remote=get_db_connection(); remote.execute('SELECT 1').fetchone()
-        try: sync_pending_sales(remote); sync_reference_data(remote)
-        except Exception: pass
+        remote = get_db_connection()
+        remote.execute('SELECT 1').fetchone()
         return remote, 'online'
     except Exception:
         return get_local_connection(), 'offline'
