@@ -242,12 +242,7 @@ def execute_adjustment(
 
         conn.commit()
 
-        st.success(
-            "✅ تم تسجيل الحركة وتحديث "
-            "المخزون بنجاح."
-        )
-
-        st.rerun()
+        _damages_done("تم تسجيل الحركة وتحديث المخزون بنجاح.")
 
     except Exception as e:
 
@@ -353,12 +348,7 @@ def execute_surplus(
 
         conn.commit()
 
-        st.success(
-            f"✅ تمت إضافة الفائض "
-            f"({qty}) للصنف بنجاح."
-        )
-
-        st.rerun()
+        _damages_done(f"تمت إضافة الفائض ({qty}) للصنف بنجاح.")
 
     except Exception as e:
 
@@ -436,12 +426,7 @@ def execute_price_update(
 
         conn.commit()
 
-        st.success(
-            f"✅ تم تحديث وتعميم السعر الجديد "
-            f"({new_price:.2f} د.ل) بنجاح."
-        )
-
-        st.rerun()
+        _damages_done(f"تم تحديث وتعميم السعر الجديد ({new_price:.2f} د.ل) بنجاح.")
 
     except Exception as e:
 
@@ -476,7 +461,25 @@ def _set_damage_mode(mode):
     st.rerun()
 
 
+@st.dialog("✅ تمت العملية بنجاح")
+def _damages_success_dialog():
+    st.success(st.session_state.get("damages_success_message", "تمت العملية بنجاح."))
+    if st.button("موافق", type="primary", use_container_width=True, key="damages_success_ok"):
+        st.session_state.pop("damages_success_pending", None)
+        st.session_state.pop("damages_success_message", None)
+        st.rerun()
+
+
+def _damages_done(message):
+    st.session_state["damages_success_message"] = message
+    st.session_state["damages_success_pending"] = True
+    st.rerun()
+
+
 def show_page():
+    if st.session_state.get("damages_success_pending"):
+        _damages_success_dialog()
+
     st.markdown(
         """
         <style>

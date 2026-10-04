@@ -250,12 +250,10 @@ def add_stock_to_existing_item(
 
         conn.commit()
         label = "كجم" if stored_type == "kg" else "قطعة"
-        st.success(
-            f"✅ تمت إضافة {added_quantity:,.3f} {label} إلى "
-            f"({existing['item_name']}). الرصيد الجديد: "
-            f"{new_qty:,.3f} {label}."
+        _inventory_done(
+            f"تمت إضافة {added_quantity:,.3f} {label} إلى "
+            f"({existing['item_name']}). الرصيد الجديد: {new_qty:,.3f} {label}."
         )
-        st.rerun()
     except Exception as e:
         if conn:
             conn.rollback()
@@ -349,11 +347,9 @@ def create_new_inventory_item(
         conn.commit()
 
         label = "كجم" if unit_type == "kg" else "قطعة"
-        st.success(
-            f"✅ تم إنشاء الصنف ({item_name}) برصيد أولي "
-            f"{initial_quantity:,.3f} {label}."
+        _inventory_done(
+            f"تم إنشاء الصنف ({item_name}) برصيد أولي {initial_quantity:,.3f} {label}."
         )
-        st.rerun()
     except Exception as e:
         if conn:
             conn.rollback()
@@ -397,8 +393,7 @@ def change_legacy_unit(item_id, branch_id, new_type, pieces_per_carton=1):
             (new_type, int(pieces_per_carton or 1), item_id, branch_id)
         )
         conn.commit()
-        st.success("✅ تم تحديث وحدة الصنف.")
-        st.rerun()
+        _inventory_done("تم تحديث وحدة الصنف بنجاح.")
     except Exception as e:
         if conn:
             conn.rollback()
@@ -510,8 +505,7 @@ def _update_items_from_editor(branch_id, original_rows, edited_df):
                 )
 
         conn.commit()
-        st.success("✅ تم حفظ تعديلات الأصناف بنجاح.")
-        st.rerun()
+        _inventory_done("تم حفظ تعديلات الأصناف بنجاح.")
     except Exception as e:
         if conn:
             conn.rollback()
@@ -563,8 +557,7 @@ def _delete_inventory_item(branch_id, item_id):
             (item_id, branch_id)
         )
         conn.commit()
-        st.success("✅ تم حذف الصنف.")
-        st.rerun()
+        _inventory_done("تم حذف الصنف بنجاح.")
     except Exception as e:
         if conn:
             conn.rollback()
@@ -591,7 +584,25 @@ def _editable_inventory_dataframe(rows):
     return pd.DataFrame(data)
 
 
+@st.dialog("✅ تمت العملية بنجاح")
+def _inventory_success_dialog():
+    st.success(st.session_state.get("inventory_success_message", "تمت العملية بنجاح."))
+    if st.button("موافق", type="primary", use_container_width=True, key="inventory_success_ok"):
+        st.session_state.pop("inventory_success_pending", None)
+        st.session_state.pop("inventory_success_message", None)
+        st.rerun()
+
+
+def _inventory_done(message):
+    st.session_state["inventory_success_message"] = message
+    st.session_state["inventory_success_pending"] = True
+    st.rerun()
+
+
 def show_page():
+    if st.session_state.get("inventory_success_pending"):
+        _inventory_success_dialog()
+
     try:
         ensure_inventory_columns()
     except Exception as e:

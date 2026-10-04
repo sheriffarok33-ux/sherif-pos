@@ -101,12 +101,27 @@ def _save_voucher(conn, voucher_type, party_type, party_id, party_name,
     raise RuntimeError("تعذر إنشاء رقم إيصال مسلسل جديد.")
 
 
+@st.dialog("✅ تمت العملية بنجاح")
+def _parties_success_dialog():
+    st.success(st.session_state.get("parties_success_message", "تمت العملية بنجاح."))
+    if st.button("موافق", type="primary", use_container_width=True, key="parties_success_ok"):
+        st.session_state.pop("parties_success_pending", None)
+        st.session_state.pop("parties_success_message", None)
+        st.rerun()
+
+
+def _parties_done(message):
+    st.session_state["parties_success_message"] = message
+    st.session_state["parties_success_pending"] = True
+    st.rerun()
+
+
 def show_page():
+    if st.session_state.get("parties_success_pending"):
+        _parties_success_dialog()
+
     st.header("👥 الموردون والعملاء والحسابات")
     st.info("الإضافة، التعديل، الحذف، السداد والتحصيل والتصدير من شاشة واحدة.")
-
-    if st.session_state.get("last_party_voucher"):
-        st.success(st.session_state.pop("last_party_voucher"))
 
     if "parties_mode" not in st.session_state:
         st.session_state["parties_mode"] = "suppliers"
@@ -165,8 +180,7 @@ def show_page():
                                 (name.strip(), phone.strip())
                             )
                         conn.commit()
-                        st.success("✅ تم الحفظ.")
-                        st.rerun()
+                        _parties_done("تم الحفظ بنجاح.")
                     except Exception as e:
                         conn.rollback()
                         st.error("تعذر الحفظ؛ قد يكون الاسم أو الهاتف مسجلاً.")
@@ -197,8 +211,7 @@ def show_page():
                                 (str(r["اسم المورد"]).strip(), str(r["الهاتف"]).strip(), int(r["id"]))
                             )
                         conn.commit()
-                        st.success("✅ تم حفظ التعديلات.")
-                        st.rerun()
+                        _parties_done("تم حفظ تعديلات الموردين بنجاح.")
                     except Exception as e:
                         conn.rollback()
                         st.error(str(e))
@@ -225,8 +238,7 @@ def show_page():
                             else:
                                 conn.execute("DELETE FROM suppliers WHERE id=?", (sel["id"],))
                                 conn.commit()
-                                st.success("✅ تم حذف المورد.")
-                                st.rerun()
+                                _parties_done("تم حذف المورد بنجاح.")
                         except Exception as e:
                             conn.rollback()
                             st.error(str(e))
@@ -264,8 +276,7 @@ def show_page():
                                 (str(r["اسم العميل"]).strip(), str(r["الهاتف"]).strip(), int(r["id"]))
                             )
                         conn.commit()
-                        st.success("✅ تم حفظ التعديلات.")
-                        st.rerun()
+                        _parties_done("تم حفظ تعديلات العملاء بنجاح.")
                     except Exception as e:
                         conn.rollback()
                         st.error(str(e))
@@ -323,11 +334,9 @@ def show_page():
                             amount, "دفعة من حساب مورد"
                         )
                         conn.commit()
-                        st.session_state["last_party_voucher"] = (
-                            f"✅ تم تسجيل الدفعة وتحديث رصيد المورد. "
-                            f"رقم إيصال الدفع: {voucher_no}"
+                        _parties_done(
+                            f"تم تسجيل الدفعة وتحديث رصيد المورد. رقم إيصال الدفع: {voucher_no}"
                         )
-                        st.rerun()
 
         elif mode == "customer_collection":
             rows = conn.execute(
@@ -362,11 +371,9 @@ def show_page():
                             amount, "تحصيل من حساب عميل"
                         )
                         conn.commit()
-                        st.session_state["last_party_voucher"] = (
-                            f"✅ تم تسجيل التحصيل وتحديث رصيد العميل. "
-                            f"رقم إيصال القبض: {voucher_no}"
+                        _parties_done(
+                            f"تم تسجيل التحصيل وتحديث رصيد العميل. رقم إيصال القبض: {voucher_no}"
                         )
-                        st.rerun()
         elif mode == "vouchers":
             st.subheader("🧾 أرشيف إيصالات الدفع والقبض")
             voucher_filter = st.selectbox(

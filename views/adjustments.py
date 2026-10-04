@@ -140,12 +140,7 @@ def execute_add_surplus(b_id, item_id, qty_val):
 
         conn.commit()
 
-        st.success(
-            "✅ تمت إضافة الفائض وتحديث "
-            "كمية الصنف بنجاح!"
-        )
-
-        st.rerun()
+        _adjustments_done("تمت إضافة الفائض وتحديث كمية الصنف بنجاح.")
 
     except Exception as e:
 
@@ -255,13 +250,7 @@ def execute_damage_return(
 
         conn.commit()
 
-        st.success(
-            f"✅ تم تسجيل العملية بنجاح "
-            f"(السبب: {reason_type}) "
-            "وخصم الكمية."
-        )
-
-        st.rerun()
+        _adjustments_done(f"تم تسجيل العملية بنجاح (السبب: {reason_type}) وخصم الكمية.")
 
     except Exception as e:
 
@@ -321,12 +310,7 @@ def execute_global_price_update(
 
         conn.commit()
 
-        st.success(
-            "✅ تم تعديل سعر البيع وتعميمه "
-            "على كافة الفروع بنجاح!"
-        )
-
-        st.rerun()
+        _adjustments_done("تم تعديل سعر البيع وتعميمه على كافة الفروع بنجاح.")
 
     except Exception as e:
 
@@ -349,7 +333,25 @@ def execute_global_price_update(
 # الواجهة
 # ============================================================
 
+@st.dialog("✅ تمت العملية بنجاح")
+def _adjustments_success_dialog():
+    st.success(st.session_state.get("adjustments_success_message", "تمت العملية بنجاح."))
+    if st.button("موافق", type="primary", use_container_width=True, key="adjustments_success_ok"):
+        st.session_state.pop("adjustments_success_pending", None)
+        st.session_state.pop("adjustments_success_message", None)
+        st.rerun()
+
+
+def _adjustments_done(message):
+    st.session_state["adjustments_success_message"] = message
+    st.session_state["adjustments_success_pending"] = True
+    st.rerun()
+
+
 def show_page():
+    if st.session_state.get("adjustments_success_pending"):
+        _adjustments_success_dialog()
+
 
     st.header(
         "➕ الفائض، التوالف، المرتجعات وتعديل الأسعار"

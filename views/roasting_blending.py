@@ -409,24 +409,13 @@ def execute_mix(
 
         conn.commit()
 
-        st.session_state[
-            "mix_list_state"
-        ] = []
-
-        st.success(
-            "🎉 تم اعتماد الخلطة بنجاح.\n\n"
-            f"⚖️ الوزن الناتج: "
-            f"{total_mix_weight:,.2f} كجم\n\n"
-            f"💰 تكلفة الخلطة: "
-            f"{total_mix_cost:,.2f} د.ل\n\n"
-            f"📊 تكلفة الكيلو المنتج: "
-            f"{new_mix_cost:,.2f} د.ل\n\n"
-            f"📦 متوسط تكلفة رصيد "
-            f"الصنف الناتج بعد الدمج: "
-            f"{final_avg_cost:,.2f} د.ل"
+        _production_done(
+            "تم اعتماد الخلطة بنجاح. "
+            f"الوزن الناتج: {total_mix_weight:,.2f} كجم — "
+            f"تكلفة الخلطة: {total_mix_cost:,.2f} د.ل — "
+            f"تكلفة الكيلو المنتج: {new_mix_cost:,.2f} د.ل — "
+            f"متوسط تكلفة الرصيد بعد الدمج: {final_avg_cost:,.2f} د.ل"
         )
-
-        st.rerun()
 
     except ValueError as e:
 
@@ -842,27 +831,15 @@ def execute_roasting(
             else 0.0
         )
 
-        st.success(
-            "🎉 تمت عملية التحميص بنجاح.\n\n"
-            f"⚖️ الخام: "
-            f"{raw_weight:,.2f} كجم\n\n"
-            f"🔥 الناتج: "
-            f"{roasted_weight:,.2f} كجم\n\n"
-            f"📉 الفقد: "
-            f"{loss_weight:,.2f} كجم "
-            f"({loss_percent:,.2f}%)\n\n"
-            f"💰 إجمالي تكلفة الخام: "
-            f"{total_raw_cost:,.2f} د.ل\n\n"
-            f"📊 تكلفة كيلو المنتج "
-            f"بعد الفقد: "
-            f"{roasted_unit_cost:,.2f} د.ل\n\n"
-            f"📈 ربح الكيلو المتوقع: "
-            f"{profit_per_kg:,.2f} د.ل "
-            f"({profit_margin_sale:,.2f}% "
-            f"من سعر البيع)"
+        _production_done(
+            "تمت عملية التحميص بنجاح. "
+            f"الخام: {raw_weight:,.2f} كجم — الناتج: {roasted_weight:,.2f} كجم — "
+            f"الفقد: {loss_weight:,.2f} كجم ({loss_percent:,.2f}%) — "
+            f"إجمالي تكلفة الخام: {total_raw_cost:,.2f} د.ل — "
+            f"تكلفة كيلو المنتج: {roasted_unit_cost:,.2f} د.ل — "
+            f"ربح الكيلو المتوقع: {profit_per_kg:,.2f} د.ل "
+            f"({profit_margin_sale:,.2f}% من سعر البيع)"
         )
-
-        st.rerun()
 
     except ValueError as e:
 
@@ -894,7 +871,30 @@ def execute_roasting(
 # الصفحة
 # ============================================================
 
+@st.dialog("✅ تمت العملية بنجاح")
+def _production_success_dialog():
+    st.success(st.session_state.get("production_success_message", "تمت العملية بنجاح."))
+    if st.button("موافق", type="primary", use_container_width=True, key="production_success_ok"):
+        for _key in ['mix_list_state', 'roast_raw_weight', 'roast_finished_weight', 'roast_raw_item', 'roast_target_item']:
+            st.session_state.pop(_key, None)
+        for _key in list(st.session_state.keys()):
+            if str(_key).startswith("roast_sale_"):
+                st.session_state.pop(_key, None)
+        st.session_state.pop("production_success_pending", None)
+        st.session_state.pop("production_success_message", None)
+        st.rerun()
+
+
+def _production_done(message):
+    st.session_state["production_success_message"] = message
+    st.session_state["production_success_pending"] = True
+    st.rerun()
+
+
 def show_page():
+    if st.session_state.get("production_success_pending"):
+        _production_success_dialog()
+
 
     st.markdown(
         """
