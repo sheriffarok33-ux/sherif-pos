@@ -1,9 +1,172 @@
 import streamlit as st
 import pandas as pd
 import io
+import json
+import hashlib
 from datetime import datetime, date, timedelta
 from database import get_db_connection
 
+
+
+# ============================================================
+# أمان العمليات الإدارية: كشف التكرار + التراجع
+# ============================================================
+
+def _base_sqlite(conn):
+    """الوصول لاتصال SQLite الخام حتى لا تدخل بيانات الأمان المحلية في طابور المزامنة العام."""
+    return getattr(conn, "_conn", conn)
+
+
+def ensure_transfer_safety_schema():
+    conn = get_db_connection()
+    try:
+        raw = _base_sqlite(conn)
+        raw.execute(
+            """
+            CREATE TABLE IF NOT EXISTS transfer_safety_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transfer_log_id INTEGER,
+                signature TEXT NOT NULL,
+                from_branch_id INTEGER NOT NULL,
+                to_branch_id INTEGER NOT NULL,
+                username TEXT,
+                payload_json TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                is_undone INTEGER DEFAULT 0,
+                undone_at TEXT,
+                undone_by TEXT
+            )
+            """
+        )
+        raw.execute(
+            "CREATE INDEX IF NOT EXISTS ix_transfer_safety_sig ON transfer_safety_log(signature, is_undone, created_at)"
+        )
+        raw.commit()
+    finally:
+        conn.close()
+
+
+def _transfer_signature(warehouse_id, target_branch_id, transfer_cart):
+    merged = {}
+    for item in transfer_cart:
+        key = str(item.get("code") or item.get("id") or item.get("name"))
+        merged[key] = round(merged.get(key, 0.0) + float(item.get("qty") or 0), 6)
+    canonical = {
+        "from": int(warehouse_id),
+        "to": int(target_branch_id),
+        "items": sorted(merged.items()),
+    }
+    text = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def find_recent_duplicate(warehouse_id, target_branch_id, transfer_cart, hours=24):
+    ensure_transfer_safety_schema()
+    signature = _transfer_signature(warehouse_id, target_branch_id, transfer_cart)
+    conn = get_db_connection()
+    try:
+        raw = _base_sqlite(conn)
+        return raw.execute(
+            """
+            SELECT id, transfer_log_id, username, created_at
+            FROM transfer_safety_log
+            WHERE signature = ? AND is_undone = 0
+              AND datetime(created_at) >= datetime('now', ?)
+            ORDER BY id DESC LIMIT 1
+            """,
+            (signature, f"-{int(hours)} hours")
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def get_last_reversible_transfer(username):
+    ensure_transfer_safety_schema()
+    conn = get_db_connection()
+    try:
+        raw = _base_sqlite(conn)
+        return raw.execute(
+            """
+            SELECT id, transfer_log_id, from_branch_id, to_branch_id, username,
+                   payload_json, created_at
+            FROM transfer_safety_log
+            WHERE is_undone = 0 AND username = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (username,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def undo_last_transfer(username):
+    row = get_last_reversible_transfer(username)
+    if not row:
+        return False, "لا توجد عملية تزويد سابقة متاحة للتراجع لهذا المستخدم."
+
+    conn = get_db_connection()
+    try:
+        raw = _base_sqlite(conn)
+        # حماية: لا نسمح بعكس عملية أقدم بينما توجد عملية تزويد أحدث غير متراجع عنها.
+        newer = raw.execute(
+            "SELECT id FROM transfer_safety_log WHERE is_undone=0 AND id>? ORDER BY id DESC LIMIT 1",
+            (row["id"],)
+        ).fetchone()
+        if newer:
+            return False, "لا يمكن التراجع لأن هناك عملية تزويد أحدث منها. التراجع مسموح لآخر عملية فقط."
+
+        payload = json.loads(row["payload_json"] or "{}")
+        items = payload.get("items", [])
+        if not items:
+            return False, "تعذر قراءة تفاصيل العملية الأصلية؛ لم يتم تغيير أي رصيد."
+
+        # افحص أولاً قبل أي تعديل.
+        for item in items:
+            target = raw.execute("SELECT id, quantity FROM items WHERE id=?", (item["target_item_id"],)).fetchone()
+            if not target:
+                return False, f"تعذر التراجع: الصنف ({item['name']}) غير موجود في الفرع المستهدف."
+            if float(target["quantity"] or 0) + 1e-9 < float(item["qty"]):
+                return False, f"تعذر التراجع: رصيد ({item['name']}) في الفرع أصبح أقل من الكمية التي تم تزويدها."
+
+        raw.execute("BEGIN IMMEDIATE")
+        for item in items:
+            qty = float(item["qty"] or 0)
+            # إعادة الكمية للمخزن.
+            conn.execute("UPDATE items SET quantity = quantity + ? WHERE id = ?", (qty, item["source_item_id"]))
+
+            target = raw.execute("SELECT quantity FROM items WHERE id=?", (item["target_item_id"],)).fetchone()
+            remaining = float(target["quantity"] or 0) - qty
+            if item.get("target_created_by_transfer") and abs(remaining) < 1e-9:
+                conn.execute("DELETE FROM items WHERE id=?", (item["target_item_id"],))
+            else:
+                conn.execute(
+                    """UPDATE items SET quantity=?, avg_cost=?, buy_price=?, sale_price=? WHERE id=?""",
+                    (remaining, item.get("target_avg_cost_before"), item.get("target_buy_price_before"),
+                     item.get("target_sale_price_before"), item["target_item_id"])
+                )
+
+        raw.execute(
+            "UPDATE transfer_safety_log SET is_undone=1, undone_at=CURRENT_TIMESTAMP, undone_by=? WHERE id=?",
+            (username, row["id"])
+        )
+        # نحتفظ بالفاتورة في الأرشيف ولا نحذف التاريخ.
+        try:
+            conn.execute(
+                "UPDATE transfer_logs SET status=? WHERE id=?",
+                (f"تم التراجع بواسطة {username}", row["transfer_log_id"])
+            )
+        except Exception:
+            pass
+        raw.commit()
+        return True, f"تم التراجع عن فاتورة التزويد رقم #{row['transfer_log_id']} وإعادة الأرصدة بنجاح."
+    except Exception as e:
+        try:
+            _base_sqlite(conn).rollback()
+        except Exception:
+            pass
+        return False, str(e)
+    finally:
+        conn.close()
 
 # ============================================================
 # Excel
@@ -116,7 +279,8 @@ def execute_transfer(
     target_branch_name,
     transfer_cart,
     transfer_notes,
-    username
+    username,
+    allow_duplicate=False
 ):
 
     conn = None
@@ -133,6 +297,23 @@ def execute_transfer(
                 "لا يمكن التزويد من المخزن "
                 "إلى نفس المخزن."
             )
+
+        ensure_transfer_safety_schema()
+
+        if not allow_duplicate:
+            duplicate = find_recent_duplicate(warehouse_id, target_branch_id, transfer_cart)
+            if duplicate:
+                st.session_state["pending_duplicate_transfer"] = {
+                    "warehouse_id": warehouse_id,
+                    "target_branch_id": target_branch_id,
+                    "target_branch_name": target_branch_name,
+                    "transfer_cart": [dict(x) for x in transfer_cart],
+                    "transfer_notes": transfer_notes,
+                    "username": username,
+                    "previous_id": duplicate["transfer_log_id"],
+                    "previous_at": duplicate["created_at"],
+                }
+                st.rerun()
 
         conn = get_db_connection()
 
@@ -195,6 +376,7 @@ def execute_transfer(
             ]["qty"] += qty
 
         items_summary = []
+        undo_items = []
 
         # ====================================================
         # قفل وفحص كل أصناف المخزن أولاً
@@ -343,6 +525,11 @@ def execute_transfer(
 
             if target_item:
 
+                target_before = conn.execute(
+                    "SELECT id, quantity, avg_cost, buy_price, sale_price FROM items WHERE id = ?",
+                    (target_item["id"],)
+                ).fetchone()
+
                 conn.execute(
                     """
                     UPDATE items
@@ -374,13 +561,24 @@ def execute_transfer(
                     )
                 )
 
+                undo_items.append({
+                    "name": source["item_name"],
+                    "qty": qty,
+                    "source_item_id": source["id"],
+                    "target_item_id": target_item["id"],
+                    "target_created_by_transfer": False,
+                    "target_avg_cost_before": target_before["avg_cost"],
+                    "target_buy_price_before": target_before["buy_price"],
+                    "target_sale_price_before": target_before["sale_price"],
+                })
+
             # -----------------------------------------------
             # الصنف غير موجود في الفرع
             # -----------------------------------------------
 
             else:
 
-                conn.execute(
+                new_target_cursor = conn.execute(
                     """
                     INSERT INTO items
                     (
@@ -420,6 +618,17 @@ def execute_transfer(
                     )
                 )
 
+                undo_items.append({
+                    "name": source["item_name"],
+                    "qty": qty,
+                    "source_item_id": source["id"],
+                    "target_item_id": new_target_cursor.lastrowid,
+                    "target_created_by_transfer": True,
+                    "target_avg_cost_before": None,
+                    "target_buy_price_before": None,
+                    "target_sale_price_before": None,
+                })
+
             items_summary.append(
                 (
                     f"▪ {source['item_name']} "
@@ -453,7 +662,7 @@ def execute_transfer(
         # تسجيل فاتورة التزويد
         # ====================================================
 
-        conn.execute(
+        transfer_cursor = conn.execute(
             """
             INSERT INTO transfer_logs
             (
@@ -474,8 +683,21 @@ def execute_transfer(
             )
         )
 
+        # سجل أمان محلي للتكرار والتراجع. لا نحذف الفاتورة الأصلية عند التراجع.
+        raw = _base_sqlite(conn)
+        signature = _transfer_signature(warehouse_id, target_branch_id, transfer_cart)
+        payload = {"items": undo_items, "target_branch_name": target_branch_name, "notes": transfer_notes}
+        raw.execute(
+            """INSERT INTO transfer_safety_log
+               (transfer_log_id, signature, from_branch_id, to_branch_id, username, payload_json)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (transfer_cursor.lastrowid, signature, warehouse_id, target_branch_id, username,
+             json.dumps(payload, ensure_ascii=False, default=str))
+        )
+
         conn.commit()
 
+        st.session_state.pop("pending_duplicate_transfer", None)
         st.session_state[
             "transfer_cart"
         ] = []
@@ -1092,6 +1314,29 @@ def show_page():
                 f"{total_units:,.2f}"
             )
 
+            pending_dup = st.session_state.get("pending_duplicate_transfer")
+            if pending_dup:
+                st.warning(
+                    f"⚠️ يبدو أن نفس فاتورة التزويد تم ترحيلها من قبل "
+                    f"(فاتورة #{pending_dup.get('previous_id')} بتاريخ {pending_dup.get('previous_at')}). "
+                    "هل تريد ترحيلها مرة أخرى؟"
+                )
+                d1, d2 = st.columns(2)
+                if d1.button("✅ نعم، رحّلها مرة أخرى", type="primary", use_container_width=True, key="confirm_duplicate_transfer"):
+                    execute_transfer(
+                        warehouse_id=pending_dup["warehouse_id"],
+                        target_branch_id=pending_dup["target_branch_id"],
+                        target_branch_name=pending_dup["target_branch_name"],
+                        transfer_cart=pending_dup["transfer_cart"],
+                        transfer_notes=pending_dup["transfer_notes"],
+                        username=pending_dup["username"],
+                        allow_duplicate=True
+                    )
+                if d2.button("❌ لا، إلغاء العملية", use_container_width=True, key="cancel_duplicate_transfer"):
+                    st.session_state.pop("pending_duplicate_transfer", None)
+                    st.rerun()
+                return
+
             st.markdown("---")
 
             ca1, ca2 = st.columns(2)
@@ -1161,6 +1406,35 @@ def show_page():
         st.subheader(
             "📋 أرشيف فواتير التزويد"
         )
+
+        # التراجع خاص بالعمليات الإدارية وليس بالكاشير.
+        role = str(st.session_state.get("role", "")).strip().lower()
+        is_cashier = role in {"cashier", "كاشير"}
+        if not is_cashier:
+            last_op = get_last_reversible_transfer(username)
+            if last_op:
+                with st.expander("↩️ التراجع عن آخر عملية تزويد", expanded=False):
+                    st.warning(
+                        f"آخر عملية متاحة: فاتورة #{last_op['transfer_log_id']} "
+                        f"بتاريخ {last_op['created_at']}. التراجع سيعيد أرصدة المخزن والفرع عكس العملية بالكامل."
+                    )
+                    confirm_undo = st.checkbox(
+                        "أؤكد أنني أريد التراجع عن آخر عملية تزويد",
+                        key="confirm_undo_last_transfer"
+                    )
+                    if st.button(
+                        "↩️ تنفيذ التراجع",
+                        disabled=not confirm_undo,
+                        type="primary",
+                        use_container_width=True,
+                        key="undo_last_transfer_btn"
+                    ):
+                        ok, message = undo_last_transfer(username)
+                        if ok:
+                            st.success("✅ " + message)
+                            st.rerun()
+                        else:
+                            st.error("❌ " + message)
 
         fc1, fc2 = st.columns(2)
 
