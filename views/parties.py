@@ -191,21 +191,21 @@ def show_page():
         st.session_state["parties_mode"] = "suppliers"
 
     if not st.session_state.get("parties_entry_lock"):
-        r1 = st.columns(6)
-        if r1[0].button("🚛 الموردون", use_container_width=True):
-            _set_mode("suppliers")
-        if r1[1].button("🤝 العملاء", use_container_width=True):
-            _set_mode("customers")
-        if r1[2].button("➕ إضافة جهة", use_container_width=True):
-            _set_mode("add")
-        if r1[3].button("💳 دفع لمورد", use_container_width=True):
-            _set_mode("supplier_payment")
-        if r1[4].button("💵 تحصيل عميل", use_container_width=True):
-            _set_mode("customer_collection")
-        if r1[5].button("🧾 أرشيف الإيصالات", use_container_width=True):
-            _set_mode("vouchers")
-        if st.button("🏦 خزينة الشركة وخزائن الفروع", use_container_width=True, key="open_treasuries"):
-            _set_mode("treasuries")
+        party_modes = {
+            "🚛 الموردون": "suppliers",
+            "🤝 العملاء": "customers",
+            "➕ إضافة جهة": "add",
+            "💳 سند دفع لمورد": "supplier_payment",
+            "💵 سند قبض من عميل": "customer_collection",
+            "🧾 أرشيف السندات": "vouchers",
+            "🏦 خزينة الشركة وخزائن الفروع": "treasuries",
+        }
+        current_label = next((k for k,v in party_modes.items() if v == st.session_state["parties_mode"]), list(party_modes)[0])
+        selected_label = st.selectbox("اختر العملية:", list(party_modes), index=list(party_modes).index(current_label), key="parties_action_dropdown")
+        selected_mode = party_modes[selected_label]
+        if selected_mode != st.session_state["parties_mode"]:
+            st.session_state["parties_mode"] = selected_mode
+            st.rerun()
     
     conn = get_db_connection()
     try:

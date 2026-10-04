@@ -1054,27 +1054,14 @@ def show_page():
         st.session_state["transfers_mode"] = "new"
 
     if not st.session_state.get("transfers_entry_lock"):
-        st.markdown("### 🎯 اختر العملية")
-        nav1, nav2 = st.columns(2)
-    
-        if nav1.button(
-            "📦 إنشاء فاتورة تزويد جديدة",
-            use_container_width=True,
-            type="primary" if st.session_state["transfers_mode"] == "new" else "secondary",
-            key="transfers_btn_new"
-        ):
-            st.session_state["transfers_mode"] = "new"
+        transfer_modes = {"📦 إنشاء فاتورة تزويد جديدة":"new", "📋 الأرشيف وإعادة الطباعة":"archive"}
+        current_label = next((k for k,v in transfer_modes.items() if v == st.session_state["transfers_mode"]), list(transfer_modes)[0])
+        selected_label = st.selectbox("اختر العملية:", list(transfer_modes), index=list(transfer_modes).index(current_label), key="transfers_action_dropdown")
+        selected_value = transfer_modes[selected_label]
+        if selected_value != st.session_state["transfers_mode"]:
+            st.session_state["transfers_mode"] = selected_value
             st.rerun()
-    
-        if nav2.button(
-            "📋 الأرشيف وإعادة الطباعة",
-            use_container_width=True,
-            type="primary" if st.session_state["transfers_mode"] == "archive" else "secondary",
-            key="transfers_btn_archive"
-        ):
-            st.session_state["transfers_mode"] = "archive"
-            st.rerun()
-    
+
     transfer_mode = (
         "📦 إنشاء فاتورة تزويد جديدة"
         if st.session_state["transfers_mode"] == "new"

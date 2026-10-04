@@ -676,16 +676,18 @@ def show_page():
         st.session_state["inventory_mode"] = "list"
 
     if not st.session_state.get("inventory_entry_lock"):
-        st.markdown("### اختر العملية")
-        c1, c2, c3, c4 = st.columns(4)
-        if c1.button("📋 الأصناف والتعديل", use_container_width=True):
-            _set_inventory_mode("list")
-        if c2.button("📦 إضافة كمية", use_container_width=True):
-            _set_inventory_mode("add")
-        if c3.button("➕ صنف جديد", use_container_width=True):
-            _set_inventory_mode("new")
-        if c4.button("📅 الصلاحيات", use_container_width=True):
-            _set_inventory_mode("expiry")
+        mode_labels = {
+            "📋 الأصناف والتعديل": "list",
+            "📦 إضافة كمية": "add",
+            "➕ صنف جديد": "new",
+            "📅 الصلاحيات": "expiry",
+        }
+        current_label = next((k for k,v in mode_labels.items() if v == st.session_state["inventory_mode"]), list(mode_labels)[0])
+        selected_label = st.selectbox("اختر العملية:", list(mode_labels), index=list(mode_labels).index(current_label), key="inventory_action_dropdown")
+        selected_mode = mode_labels[selected_label]
+        if selected_mode != st.session_state["inventory_mode"]:
+            st.session_state["inventory_mode"] = selected_mode
+            st.rerun()
     
     mode = st.session_state["inventory_mode"]
     st.markdown("---")

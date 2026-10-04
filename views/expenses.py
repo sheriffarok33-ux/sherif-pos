@@ -720,18 +720,12 @@ def show_page():
         st.session_state["finance_screen_mode"] = "expense"
 
     if not st.session_state.get("finance_entry_lock"):
-        nav1, nav2, nav3 = st.columns(3)
-        if nav1.button("💸 مصروف جديد", use_container_width=True,
-                          type="primary" if st.session_state["finance_screen_mode"] == "expense" else "secondary"):
-            st.session_state["finance_screen_mode"] = "expense"
-            st.rerun()
-        if nav2.button("💵 إيراد آخر", use_container_width=True,
-                          type="primary" if st.session_state["finance_screen_mode"] == "revenue" else "secondary"):
-            st.session_state["finance_screen_mode"] = "revenue"
-            st.rerun()
-        if nav3.button("📋 الأرشيف والتقارير", use_container_width=True,
-                          type="primary" if st.session_state["finance_screen_mode"] == "archive" else "secondary"):
-            st.session_state["finance_screen_mode"] = "archive"
+        finance_modes = {"💸 مصروف جديد":"expense", "💵 إيراد آخر":"revenue", "📋 الأرشيف والتقارير":"archive"}
+        current_label = next((k for k,v in finance_modes.items() if v == st.session_state["finance_screen_mode"]), list(finance_modes)[0])
+        selected_label = st.selectbox("اختر العملية:", list(finance_modes), index=list(finance_modes).index(current_label), key="finance_action_dropdown")
+        selected_value = finance_modes[selected_label]
+        if selected_value != st.session_state["finance_screen_mode"]:
+            st.session_state["finance_screen_mode"] = selected_value
             st.rerun()
     
     selected_mode = (

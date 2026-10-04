@@ -918,18 +918,12 @@ def show_page():
         if "purchase_quick_mode" not in st.session_state:
             st.session_state["purchase_quick_mode"] = "invoice"
     
-        q1, q2, q3, q4 = st.columns(4)
-        if q1.button("🛒 فاتورة مشتريات", use_container_width=True):
-            st.session_state["purchase_quick_mode"] = "invoice"
-            st.rerun()
-        if q2.button("📊 الأرشيف والتقارير", use_container_width=True):
-            st.session_state["purchase_quick_mode"] = "reports"
-            st.rerun()
-        if q3.button("➕ إضافة مورد", use_container_width=True):
-            st.session_state["purchase_quick_mode"] = "supplier"
-            st.rerun()
-        if q4.button("➕ إضافة زبون آجل", use_container_width=True):
-            st.session_state["purchase_quick_mode"] = "customer"
+        purchase_modes = {"🛒 فاتورة مشتريات":"invoice", "📊 الأرشيف والتقارير":"reports", "➕ إضافة مورد":"supplier", "➕ إضافة زبون آجل":"customer"}
+        current_label = next((k for k,v in purchase_modes.items() if v == st.session_state["purchase_quick_mode"]), list(purchase_modes)[0])
+        selected_label = st.selectbox("اختر العملية:", list(purchase_modes), index=list(purchase_modes).index(current_label), key="purchase_action_dropdown")
+        selected_value = purchase_modes[selected_label]
+        if selected_value != st.session_state["purchase_quick_mode"]:
+            st.session_state["purchase_quick_mode"] = selected_value
             st.rerun()
     
     quick_mode = st.session_state["purchase_quick_mode"]
