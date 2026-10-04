@@ -122,12 +122,21 @@ def add_branch_expense(
             )
         )
 
+        expense_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()
 
-        st.success(
-            "✅ تم تسجيل المصروف بنجاح."
-        )
-
+        st.session_state["finance_last_undo"] = {
+            "table": "expenses", "ids": [expense_id],
+            "label": "مصروف فرع", "amount": float(amount),
+        }
+        st.session_state["finance_success_info"] = {
+            "message": "✅ تم تسجيل المصروف على الفرع المحدد بنجاح.",
+            "summary": [
+                ("المبلغ", f"{float(amount):,.2f} د.ل"),
+                ("البيان", description.strip()),
+                ("تاريخ التسجيل", expense_date.strftime("%Y-%m-%d")),
+            ],
+        }
         st.rerun()
 
     except Exception as e:
@@ -188,6 +197,7 @@ def add_general_expense(
             float(amount) / op_count
         )
 
+        inserted_ids = []
         for branch in operational_branches:
 
             branch_desc = (
@@ -220,15 +230,23 @@ def add_general_expense(
                     )
                 )
             )
+            inserted_ids.append(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
 
         conn.commit()
 
-        st.success(
-            "✅ تم تسجيل المصروف العام "
-            "وتوزيعه بالتساوي على "
-            "الفروع التشغيلية بنجاح."
-        )
-
+        st.session_state["finance_last_undo"] = {
+            "table": "expenses", "ids": inserted_ids,
+            "label": "مصروف عام موزع على الفروع", "amount": float(amount),
+        }
+        st.session_state["finance_success_info"] = {
+            "message": "✅ تم تسجيل المصروف العام وتوزيعه على الفروع التشغيلية بنجاح.",
+            "summary": [
+                ("إجمالي المصروف", f"{float(amount):,.2f} د.ل"),
+                ("عدد الفروع", str(op_count)),
+                ("نصيب كل فرع", f"{share_per_branch:,.2f} د.ل"),
+                ("البيان", description.strip()),
+            ],
+        }
         st.rerun()
 
     except Exception as e:
@@ -305,13 +323,21 @@ def add_revenue(
             )
         )
 
+        revenue_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()
 
-        st.success(
-            "✅ تم تسجيل الإيراد بنجاح "
-            "في خزينة الفرع / المخزن."
-        )
-
+        st.session_state["finance_last_undo"] = {
+            "table": "revenues", "ids": [revenue_id],
+            "label": "إيراد", "amount": float(amount),
+        }
+        st.session_state["finance_success_info"] = {
+            "message": "✅ تم تسجيل الإيراد في الفرع / المخزن المحدد بنجاح.",
+            "summary": [
+                ("المبلغ", f"{float(amount):,.2f} د.ل"),
+                ("المصدر", revenue_source.strip()),
+                ("تاريخ الإيراد", revenue_date.strftime("%Y-%m-%d")),
+            ],
+        }
         st.rerun()
 
     except Exception as e:
@@ -534,11 +560,105 @@ def delete_expense(
             conn.close()
 
 
+
+# ============================================================
+# مراجعة / نجاح / تراجع آمن
+# ============================================================
+
+@st.dialog("⚠️ مراجعة العملية قبل التنفيذ")
+def _finance_confirm_dialog():
+    pending = st.session_state.get("finance_pending_action")
+    if not pending:
+        st.info("لا توجد عملية معلقة للمراجعة.")
+        return
+
+    st.warning("راجع البيانات التالية جيدًا. لن يتم تغيير أي رصيد قبل الضغط على «تأكيد التنفيذ».")
+    for label, value in pending.get("summary", []):
+        st.write(f"**{label}:** {value}")
+
+    c1, c2 = st.columns(2)
+    if c1.button("✅ تأكيد التنفيذ", type="primary", use_container_width=True, key="finance_confirm_yes"):
+        action = pending.get("action")
+        data = pending.get("data", {})
+        st.session_state.pop("finance_pending_action", None)
+        if action == "branch_expense":
+            add_branch_expense(**data)
+        elif action == "general_expense":
+            add_general_expense(**data)
+        elif action == "revenue":
+            add_revenue(**data)
+
+    if c2.button("❌ إلغاء", use_container_width=True, key="finance_confirm_no"):
+        st.session_state.pop("finance_pending_action", None)
+        st.rerun()
+
+
+@st.dialog("✅ تمت العملية بنجاح")
+def _finance_success_dialog():
+    info = st.session_state.get("finance_success_info")
+    if not info:
+        return
+    st.success(info.get("message", "تمت العملية بنجاح."))
+    for label, value in info.get("summary", []):
+        st.write(f"**{label}:** {value}")
+    if st.button("موافق", type="primary", use_container_width=True, key="finance_success_ok"):
+        st.session_state.pop("finance_success_info", None)
+        st.rerun()
+
+
+@st.dialog("↩️ تأكيد التراجع عن آخر إدخال")
+def _finance_undo_dialog():
+    undo = st.session_state.get("finance_last_undo")
+    if not undo:
+        st.info("لا توجد عملية حديثة قابلة للتراجع.")
+        return
+
+    st.warning("سيتم عكس آخر إدخال فقط. هل تريد المتابعة؟")
+    st.write(f"**العملية:** {undo.get('label', '')}")
+    st.write(f"**القيمة:** {undo.get('amount', 0):,.2f} د.ل")
+    c1, c2 = st.columns(2)
+    if c1.button("✅ نعم، تراجع", type="primary", use_container_width=True, key="finance_undo_yes"):
+        conn = get_db_connection()
+        try:
+            table = undo["table"]
+            ids = [int(x) for x in undo.get("ids", [])]
+            if table not in ("expenses", "revenues") or not ids:
+                raise ValueError("بيانات التراجع غير صالحة.")
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(f"DELETE FROM {table} WHERE id IN ({placeholders})", ids)
+            conn.commit()
+            st.session_state.pop("finance_last_undo", None)
+            st.session_state.pop("finance_undo_open", None)
+            st.session_state["finance_success_info"] = {
+                "message": "↩️ تم التراجع عن آخر إدخال بنجاح.",
+                "summary": [("العملية", undo.get("label", ""))]
+            }
+            st.rerun()
+        except Exception as e:
+            conn.rollback()
+            st.error(f"تعذر التراجع: {e}")
+        finally:
+            conn.close()
+    if c2.button("❌ إلغاء", use_container_width=True, key="finance_undo_no"):
+        st.session_state.pop("finance_undo_open", None)
+        st.rerun()
+
+
 # ============================================================
 # الصفحة الرئيسية
 # ============================================================
 
 def show_page():
+
+    if st.session_state.get("finance_success_info"):
+        _finance_success_dialog()
+        st.stop()
+    if st.session_state.get("finance_pending_action"):
+        _finance_confirm_dialog()
+        st.stop()
+    if st.session_state.get("finance_undo_open"):
+        _finance_undo_dialog()
+        st.stop()
 
     st.header(
         "💰 إدارة وتوزيع المصروفات "
@@ -618,6 +738,11 @@ def show_page():
     )
 
     st.markdown("---")
+
+    if st.session_state.get("finance_last_undo"):
+        if st.button("↩️ تراجع عن آخر إدخال", use_container_width=True, key="finance_open_undo"):
+            st.session_state["finance_undo_open"] = True
+            st.rerun()
 
     # ========================================================
     # 1 - تسجيل مصروف
@@ -761,25 +886,43 @@ def show_page():
                     sel_branch_name
                 ]
 
-                add_branch_expense(
-                    branch_id,
-                    amount,
-                    description,
-                    target_month,
-                    expense_date,
-                    expense_type,
-                    advance_end_date
-                )
+                st.session_state["finance_pending_action"] = {
+                    "action": "branch_expense",
+                    "data": {
+                        "branch_id": branch_id, "amount": amount,
+                        "description": description, "target_month": target_month,
+                        "expense_date": expense_date, "expense_type": expense_type,
+                        "advance_end_date": advance_end_date,
+                    },
+                    "summary": [
+                        ("الفرع", sel_branch_name),
+                        ("المبلغ", f"{float(amount):,.2f} د.ل"),
+                        ("نوع المصروف", expense_type),
+                        ("البيان", description.strip()),
+                        ("شهر الاستحقاق", target_month),
+                        ("تاريخ التسجيل", expense_date.strftime("%Y-%m-%d")),
+                    ],
+                }
+                st.rerun()
 
             else:
 
-                add_general_expense(
-                    operational_branches,
-                    amount,
-                    description,
-                    target_month,
-                    expense_date
-                )
+                st.session_state["finance_pending_action"] = {
+                    "action": "general_expense",
+                    "data": {
+                        "operational_branches": operational_branches,
+                        "amount": amount, "description": description,
+                        "target_month": target_month, "expense_date": expense_date,
+                    },
+                    "summary": [
+                        ("النطاق", "مصروف عام موزع على الفروع التشغيلية"),
+                        ("إجمالي المبلغ", f"{float(amount):,.2f} د.ل"),
+                        ("عدد الفروع", str(len(operational_branches))),
+                        ("البيان", description.strip()),
+                        ("شهر الاستحقاق", target_month),
+                    ],
+                }
+                st.rerun()
 
     # ========================================================
     # 2 - تسجيل إيراد
@@ -853,13 +996,22 @@ def show_page():
                     rev_branch
                 ]
 
-                add_revenue(
-                    b_id,
-                    rev_source,
-                    rev_amount,
-                    rev_notes,
-                    rev_date
-                )
+                st.session_state["finance_pending_action"] = {
+                    "action": "revenue",
+                    "data": {
+                        "branch_id": b_id, "revenue_source": rev_source,
+                        "amount": rev_amount, "notes": rev_notes,
+                        "revenue_date": rev_date,
+                    },
+                    "summary": [
+                        ("الفرع / المخزن", rev_branch),
+                        ("المبلغ", f"{float(rev_amount):,.2f} د.ل"),
+                        ("مصدر الإيراد", rev_source.strip()),
+                        ("التاريخ", rev_date.strftime("%Y-%m-%d")),
+                        ("ملاحظات", rev_notes.strip() or "-"),
+                    ],
+                }
+                st.rerun()
 
     # ========================================================
     # 3 - الأرشيف والتقارير
