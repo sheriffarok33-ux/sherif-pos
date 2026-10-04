@@ -746,6 +746,39 @@ def execute_transfer(
             conn.close()
 
 
+def _parse_transfer_line(line):
+    line = str(line or "").strip().replace("▪", "").strip()
+    if not line or line.startswith("ملاحظات:") or line.startswith("بواسطة:"):
+        return None, 0.0
+    code = None
+    if "[" in line and "]" in line:
+        code = line.split("[", 1)[1].split("]", 1)[0].strip()
+    qty = 0.0
+    if "الكمية:" in line:
+        raw_qty = line.split("الكمية:", 1)[1].replace(")", "").replace("(", "").strip()
+        try:
+            qty = float(raw_qty)
+        except Exception:
+            qty = 0.0
+    return code, qty
+
+
+def _transfer_value_from_details(conn, from_branch_id, details):
+    total = 0.0
+    for line in str(details or "").splitlines():
+        code, qty = _parse_transfer_line(line)
+        if not code or qty <= 0:
+            continue
+        item = conn.execute(
+            """SELECT COALESCE(avg_cost, buy_price, 0) AS unit_cost
+               FROM items WHERE branch_id=? AND item_code=? LIMIT 1""",
+            (from_branch_id, code)
+        ).fetchone()
+        if item:
+            total += qty * float(item["unit_cost"] or 0)
+    return total
+
+
 # ============================================================
 # تحميل أرشيف التحويلات
 # ============================================================
@@ -784,6 +817,9 @@ def load_transfer_archive(
             SELECT
                 t.id
                     AS "رقم الفاتورة",
+
+                t.from_branch_id
+                    AS "_from_branch_id",
 
                 b1.branch_name
                     AS "المرسل",
@@ -831,13 +867,18 @@ def load_transfer_archive(
             for desc in cursor.description
         ]
 
-        return pd.DataFrame(
-            [
-                [row[col] for col in columns]
-                for row in rows
-            ],
+        df = pd.DataFrame(
+            [[row[col] for col in columns] for row in rows],
             columns=columns
         )
+        df["إجمالي قيمة التحويل"] = df.apply(
+            lambda r: _transfer_value_from_details(
+                conn, r["_from_branch_id"], r["تفاصيل الأصناف والكميات"]
+            ),
+            axis=1
+        )
+        df.drop(columns=["_from_branch_id"], inplace=True, errors="ignore")
+        return df
 
     finally:
 
@@ -1519,10 +1560,14 @@ def show_page():
 
             return
 
-        st.metric(
-            "عدد فواتير التزويد",
-            f"{len(logs_df):,}"
+        total_transfer_value = float(
+            logs_df["إجمالي قيمة التحويل"].sum()
+            if "إجمالي قيمة التحويل" in logs_df.columns else 0
         )
+        mc1, mc2, mc3 = st.columns(3)
+        mc1.metric("عدد فواتير التزويد", f"{len(logs_df):,}")
+        mc2.metric("إجمالي قيمة التحويلات", f"{total_transfer_value:,.2f} د.ل")
+        mc3.metric("الفترة", f"{from_date} ← {to_date}")
 
         st.markdown(
             '<div class="dataframe-container">',
@@ -1538,6 +1583,11 @@ def show_page():
                     st.column_config.TextColumn(
                         "تفاصيل الأصناف والكميات",
                         width="large"
+                    ),
+                "إجمالي قيمة التحويل":
+                    st.column_config.NumberColumn(
+                        "إجمالي قيمة التحويل",
+                        format="%.2f د.ل"
                     )
             }
         )
