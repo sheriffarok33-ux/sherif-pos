@@ -612,3 +612,4 @@ elif choice == "📊 التقارير والأرباح":
         reports.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود.")
+ 
