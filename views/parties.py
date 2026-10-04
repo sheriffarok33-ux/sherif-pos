@@ -27,14 +27,91 @@ def _table_columns(conn, table_name):
     return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
 
 
+def _ensure_voucher_schema(conn):
+    """Local-first voucher archive. Safe to run repeatedly on SQLite."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS financial_vouchers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            voucher_no TEXT UNIQUE NOT NULL,
+            voucher_type TEXT NOT NULL,
+            party_type TEXT NOT NULL,
+            party_id INTEGER,
+            party_name TEXT NOT NULL,
+            branch_id INTEGER,
+            user_id INTEGER,
+            amount REAL NOT NULL DEFAULT 0,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_financial_vouchers_type_date "
+        "ON financial_vouchers(voucher_type, created_at)"
+    )
+    conn.commit()
+
+
+def _next_voucher_no(conn, voucher_type):
+    """PAY-000001 for supplier payments, REC-000001 for customer receipts."""
+    prefix = "PAY" if voucher_type == "دفع" else "REC"
+    row = conn.execute(
+        """
+        SELECT voucher_no
+        FROM financial_vouchers
+        WHERE voucher_type = ?
+          AND voucher_no LIKE ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (voucher_type, f"{prefix}-%")
+    ).fetchone()
+    last_num = 0
+    if row and row["voucher_no"]:
+        try:
+            last_num = int(str(row["voucher_no"]).rsplit("-", 1)[-1])
+        except Exception:
+            last_num = 0
+    return f"{prefix}-{last_num + 1:06d}"
+
+
+def _save_voucher(conn, voucher_type, party_type, party_id, party_name,
+                  branch_id, user_id, amount, notes):
+    # Retry protects against a rare duplicate number if two users save together.
+    for _ in range(5):
+        voucher_no = _next_voucher_no(conn, voucher_type)
+        try:
+            conn.execute(
+                """
+                INSERT INTO financial_vouchers
+                (voucher_no, voucher_type, party_type, party_id, party_name,
+                 branch_id, user_id, amount, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    voucher_no, voucher_type, party_type, party_id, party_name,
+                    branch_id, user_id, float(amount), notes
+                )
+            )
+            return voucher_no
+        except Exception as exc:
+            if "UNIQUE" not in str(exc).upper():
+                raise
+    raise RuntimeError("تعذر إنشاء رقم إيصال مسلسل جديد.")
+
+
 def show_page():
     st.header("👥 الموردون والعملاء والحسابات")
     st.info("الإضافة، التعديل، الحذف، السداد والتحصيل والتصدير من شاشة واحدة.")
 
+    if st.session_state.get("last_party_voucher"):
+        st.success(st.session_state.pop("last_party_voucher"))
+
     if "parties_mode" not in st.session_state:
         st.session_state["parties_mode"] = "suppliers"
 
-    r1 = st.columns(5)
+    r1 = st.columns(6)
     if r1[0].button("🚛 الموردون", use_container_width=True):
         _set_mode("suppliers")
     if r1[1].button("🤝 العملاء", use_container_width=True):
@@ -45,9 +122,12 @@ def show_page():
         _set_mode("supplier_payment")
     if r1[4].button("💵 تحصيل عميل", use_container_width=True):
         _set_mode("customer_collection")
+    if r1[5].button("🧾 أرشيف الإيصالات", use_container_width=True):
+        _set_mode("vouchers")
 
     conn = get_db_connection()
     try:
+        _ensure_voucher_schema(conn)
         mode = st.session_state["parties_mode"]
 
         if mode == "add":
@@ -237,8 +317,16 @@ def show_page():
                                 "دفعة من حساب مورد"
                             )
                         )
+                        voucher_no = _save_voucher(
+                            conn, "دفع", "مورد", supplier["id"],
+                            supplier["supplier_name"], branch_id, user_id,
+                            amount, "دفعة من حساب مورد"
+                        )
                         conn.commit()
-                        st.success("✅ تم تسجيل الدفعة وتحديث رصيد المورد.")
+                        st.session_state["last_party_voucher"] = (
+                            f"✅ تم تسجيل الدفعة وتحديث رصيد المورد. "
+                            f"رقم إيصال الدفع: {voucher_no}"
+                        )
                         st.rerun()
 
         elif mode == "customer_collection":
@@ -259,12 +347,74 @@ def show_page():
                     if amount <= 0:
                         st.warning("أدخل مبلغًا أكبر من صفر.")
                     else:
+                        branch_id = st.session_state.get("branch_id")
+                        user_id = st.session_state.get("user_id")
+                        if not branch_id:
+                            st.error("⚠️ المستخدم غير مرتبط بفرع؛ لا يمكن تسجيل التحصيل.")
+                            return
                         conn.execute(
                             "UPDATE customers SET balance = balance - ? WHERE id = ?",
                             (amount, customer["id"])
                         )
+                        voucher_no = _save_voucher(
+                            conn, "قبض", "عميل", customer["id"],
+                            customer["customer_name"], branch_id, user_id,
+                            amount, "تحصيل من حساب عميل"
+                        )
                         conn.commit()
-                        st.success("✅ تم تسجيل التحصيل وتحديث رصيد العميل.")
+                        st.session_state["last_party_voucher"] = (
+                            f"✅ تم تسجيل التحصيل وتحديث رصيد العميل. "
+                            f"رقم إيصال القبض: {voucher_no}"
+                        )
                         st.rerun()
+        elif mode == "vouchers":
+            st.subheader("🧾 أرشيف إيصالات الدفع والقبض")
+            voucher_filter = st.selectbox(
+                "نوع الإيصال:",
+                ["الكل", "دفع", "قبض"],
+                key="voucher_archive_type"
+            )
+            if voucher_filter == "الكل":
+                rows = conn.execute(
+                    """
+                    SELECT voucher_no, voucher_type, party_type, party_name,
+                           amount, notes, created_at
+                    FROM financial_vouchers
+                    ORDER BY datetime(created_at) DESC, id DESC
+                    """
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT voucher_no, voucher_type, party_type, party_name,
+                           amount, notes, created_at
+                    FROM financial_vouchers
+                    WHERE voucher_type = ?
+                    ORDER BY datetime(created_at) DESC, id DESC
+                    """,
+                    (voucher_filter,)
+                ).fetchall()
+
+            if not rows:
+                st.info("لا توجد إيصالات مسجلة حتى الآن.")
+            else:
+                df = pd.DataFrame([{
+                    "رقم الإيصال": r["voucher_no"],
+                    "النوع": "إيصال دفع" if r["voucher_type"] == "دفع" else "إيصال قبض",
+                    "الجهة": r["party_type"],
+                    "الاسم": r["party_name"],
+                    "المبلغ": float(r["amount"] or 0),
+                    "البيان": r["notes"] or "",
+                    "التاريخ والوقت": r["created_at"],
+                } for r in rows])
+                st.dataframe(df, hide_index=True, use_container_width=True)
+                st.download_button(
+                    "📥 تصدير الإيصالات Excel",
+                    _excel_bytes(df, "Vouchers"),
+                    "financial_vouchers.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+
     finally:
         conn.close()
