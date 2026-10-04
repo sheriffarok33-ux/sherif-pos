@@ -140,6 +140,94 @@ def get_low_stock_after_sale_alerts(conn, branch_id, cart, threshold=5.0):
     return alerts
 
 
+def get_item_stock_expiry_alert(conn, item_id, branch_id, cart_qty, threshold=5.0):
+    """تنبيه لحظي للصنف في أي موقع/فرع، بما في ذلك المخزن الرئيسي."""
+    item_cols = {r["name"] for r in conn.execute("PRAGMA table_info(items)").fetchall()}
+    unit_select = ", unit_type" if "unit_type" in item_cols else ""
+    item = conn.execute(
+        f"SELECT item_name, quantity {unit_select} FROM items WHERE id=? AND branch_id=?",
+        (item_id, branch_id)
+    ).fetchone()
+    if not item:
+        return None
+
+    total_qty = float(item["quantity"] or 0)
+    expired_qty = get_expired_tracked_quantity(conn, item_id, branch_id)
+    available_before = max(0.0, total_qty - expired_qty)
+    remaining_after = available_before - float(cart_qty or 0)
+
+    unit_type = str(item["unit_type"] or "").strip().lower() if "unit_type" in item_cols else ""
+    kg_units = {"kg", "kilo", "kilogram", "weight", "وزن", "كيلو", "كجم"}
+    unit_label = "كجم" if unit_type in kg_units else "قطعة"
+
+    expiry_rows = conn.execute(
+        """
+        SELECT expiry_date, remaining_quantity,
+               CAST(julianday(date(expiry_date)) - julianday(date('now','localtime')) AS INTEGER) AS days_left
+        FROM inventory_batches
+        WHERE item_id=? AND branch_id=?
+          AND COALESCE(remaining_quantity,0) > 0
+          AND expiry_date IS NOT NULL
+          AND TRIM(CAST(expiry_date AS TEXT)) <> ''
+          AND date(expiry_date) <= date('now','localtime','+30 days')
+        ORDER BY date(expiry_date) ASC
+        """,
+        (item_id, branch_id)
+    ).fetchall()
+
+    low_stock = 0 <= remaining_after <= float(threshold)
+    if not low_stock and not expiry_rows:
+        return None
+
+    return {
+        "name": item["item_name"],
+        "remaining_after": remaining_after,
+        "unit": unit_label,
+        "low_stock": low_stock,
+        "expiry_rows": [dict(r) for r in expiry_rows],
+    }
+
+
+@st.dialog("🚨 تنبيه مخزون وصلاحية", width="large")
+def stock_expiry_warning_dialog(alert):
+    st.error("⚠️ تنبيه مهم — يرجى مراجعة حالة الصنف قبل متابعة العمل.")
+
+    if alert.get("low_stock"):
+        st.warning(
+            f"📉 **انخفاض المخزون:** بعد الكمية الموجودة بالفاتورة سيصبح رصيد "
+            f"**{alert['name']}** حوالي **{alert['remaining_after']:,.3f} {alert['unit']}**."
+        )
+
+    for batch in alert.get("expiry_rows", []):
+        days = int(batch.get("days_left") or 0)
+        qty = float(batch.get("remaining_quantity") or 0)
+        exp = batch.get("expiry_date")
+        if days < 0:
+            st.error(
+                f"🔴 **دفعة منتهية الصلاحية:** {alert['name']} — "
+                f"الكمية {qty:,.3f} — انتهت بتاريخ {exp}."
+            )
+        elif days == 0:
+            st.error(
+                f"🔴 **تنتهي اليوم:** {alert['name']} — "
+                f"الكمية {qty:,.3f} — تاريخ الانتهاء {exp}."
+            )
+        elif days <= 7:
+            st.warning(
+                f"🟠 **صلاحية قريبة جدًا:** {alert['name']} — "
+                f"الكمية {qty:,.3f} — متبقي {days} يوم — {exp}."
+            )
+        else:
+            st.info(
+                f"🟡 **صلاحية قريبة:** {alert['name']} — "
+                f"الكمية {qty:,.3f} — متبقي {days} يوم — {exp}."
+            )
+
+    st.caption("هذا التنبيه يظهر لكل المواقع والفروع، بما فيها المخزن الرئيسي.")
+    if st.button("✅ فهمت التنبيه", type="primary", use_container_width=True):
+        st.rerun()
+
+
 def deduct_batches_fefo(conn, item_id, branch_id, requested_qty):
     """
     يخصم من الدفعات غير المنتهية ذات تاريخ الصلاحية الأقرب أولاً.
@@ -588,33 +676,6 @@ def checkout_payment_dialog(
                     f"العجز: "
                     f"**{abs(change_due):,.2f} د.ل**"
                 )
-
-        # ====================================================
-        # تنبيه لحظي بانخفاض الرصيد بعد إتمام هذه الفاتورة
-        # ====================================================
-
-        try:
-            low_stock_alerts = get_low_stock_after_sale_alerts(
-                conn,
-                b_id,
-                st.session_state.get("cart", []),
-                threshold=5.0
-            )
-        except Exception:
-            low_stock_alerts = []
-
-        if low_stock_alerts:
-            warning_lines = []
-            for alert in low_stock_alerts:
-                warning_lines.append(
-                    f"• {alert['name']}: سيصبح المتبقي "
-                    f"{alert['remaining']:,.3f} {alert['unit']}"
-                )
-
-            st.warning(
-                "⚠️ تنبيه انخفاض المخزون بعد إتمام الفاتورة:\n\n"
-                + "\n\n".join(warning_lines)
-            )
 
         # ====================================================
         # تأكيد الفاتورة
@@ -1150,9 +1211,27 @@ def process_barcode_scan():
                     }
                 )
 
+            # تنبيه إجباري فور إضافة الصنف للسلة، وليس في آخر نافذة الدفع.
+            cart_total_qty = 0.0
+            for _cart_item in st.session_state["cart"]:
+                if _cart_item.get("id") == item["id"]:
+                    cart_total_qty += float(_cart_item.get("qty", 0) or 0)
+
+            _stock_expiry_alert = get_item_stock_expiry_alert(
+                conn,
+                item["id"],
+                b_id,
+                cart_total_qty,
+                threshold=5.0
+            )
+
             st.session_state[
                 "barcode_qty_input"
             ] = 1.0
+
+            if _stock_expiry_alert:
+                stock_expiry_warning_dialog(_stock_expiry_alert)
+                return
 
         else:
 
