@@ -627,6 +627,23 @@ def checkout_payment_dialog(
                     acc_opts[sel_acc_str]
                 )
 
+                # عند اختيار زبون آجل مسجل نعتمد اسمه الحقيقي في الفاتورة والطباعة،
+                # بدلاً من بقاء الاسم الافتراضي "زبون نقدي".
+                selected_account = next(
+                    (
+                        a for a in accounts
+                        if a["id"] == selected_account_id
+                    ),
+                    None
+                )
+                if selected_account:
+                    cust_name = str(
+                        selected_account["customer_name"] or ""
+                    ).strip() or "زبون نقدي"
+                    cust_phone = str(
+                        selected_account["phone"] or ""
+                    ).strip()
+
             else:
                 st.error(
                     "⚠️ لا يوجد زبائن آجلون "
@@ -822,12 +839,17 @@ def checkout_payment_dialog(
             ensure_ascii=False
         )
 
+        # الاسم النهائي المعتمد للفاتورة: العميل المسجل إن تم اختياره،
+        # وإلا الاسم المدخل يدوياً، وإلا زبون نقدي.
+        final_customer_name = str(cust_name or "").strip() or "زبون نقدي"
+        final_customer_phone = str(cust_phone or "").strip()
+
         # ====================================================
         # حفظ/تحديث بيانات العميل عند إدخال الهاتف
         # ====================================================
 
-        clean_phone = cust_phone.strip()
-        clean_name = cust_name.strip() or "زبون نقدي"
+        clean_phone = final_customer_phone
+        clean_name = final_customer_name
 
         if clean_phone:
             existing_customer = conn.execute(
@@ -885,12 +907,8 @@ def checkout_payment_dialog(
                     "user_id",
                     1
                 ),
-                (
-                    cust_name.strip()
-                    if cust_name.strip()
-                    else "زبون نقدي"
-                ),
-                cust_phone.strip(),
+                final_customer_name,
+                final_customer_phone,
                 final_tot,
                 pay_method,
                 invoice_json,
@@ -992,11 +1010,7 @@ def checkout_payment_dialog(
                 ),
 
             "customer":
-                (
-                    cust_name.strip()
-                    if cust_name.strip()
-                    else "زبون نقدي"
-                ),
+                final_customer_name,
 
             "items":
                 st.session_state[
