@@ -4,7 +4,8 @@ import threading
 import uuid
 import socket
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date, time
+from decimal import Decimal
 
 LOCAL_DB = Path(__file__).with_name('abu_zaid_local.db')
 _LOCK = threading.RLock()
@@ -181,15 +182,43 @@ def _cols(rows):
     try: return list(r.keys())
     except Exception: return []
 
+def _sqlite_value(value):
+    """Convert PostgreSQL values to types SQLite can bind safely."""
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, memoryview):
+        return bytes(value)
+    return value
+
 def _replace_table(local, table, rows, allowed):
-    local.execute(f'DELETE FROM {table}')
-    if not rows: return
+    # Prepare/convert everything BEFORE deleting the existing local table.
+    # This prevents a PostgreSQL Decimal (or another unsupported value)
+    # from leaving the local reference table empty.
+    if not rows:
+        return
     cols = [x for x in _cols(rows) if x in allowed]
-    if not cols: return
+    if not cols:
+        return
     q = ','.join('?' for _ in cols)
     sql = f"INSERT OR REPLACE INTO {table} ({','.join(cols)}) VALUES ({q})"
-    vals = [tuple(r[x] for x in cols) for r in rows]
-    local.executemany(sql, vals)
+    vals = [tuple(_sqlite_value(r[x]) for x in cols) for r in rows]
+
+    savepoint = f"sync_replace_{table}"
+    local.execute(f"SAVEPOINT {savepoint}")
+    try:
+        local.execute(f'DELETE FROM {table}')
+        local.executemany(sql, vals)
+        local.execute(f"RELEASE SAVEPOINT {savepoint}")
+    except Exception:
+        local.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        local.execute(f"RELEASE SAVEPOINT {savepoint}")
+        raise
 
 def _merge_table(local, table, rows, allowed):
     """Merge server history into local SQLite without deleting local-only rows."""
@@ -200,7 +229,7 @@ def _merge_table(local, table, rows, allowed):
         return
     q = ','.join('?' for _ in cols)
     sql = f"INSERT OR REPLACE INTO {table} ({','.join(cols)}) VALUES ({q})"
-    vals = [tuple(r[x] for x in cols) for r in rows]
+    vals = [tuple(_sqlite_value(r[x]) for x in cols) for r in rows]
     local.executemany(sql, vals)
 
 
