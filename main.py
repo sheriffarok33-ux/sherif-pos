@@ -277,7 +277,7 @@ if not st.session_state["logged_in"]:
         st.title("🔐 بوابة دخول نظام المحامص")
         st.subheader("مجموعة أبو زيد التجارية")
 
-        with st.form("login_form"):
+        with st.form("login_form", enter_to_submit=True):
             u_name = st.text_input("اسم المستخدم")
             u_pass = st.text_input("كلمة المرور", type="password")
             submit = st.form_submit_button("🚀 دخول للنظام", use_container_width=True)
