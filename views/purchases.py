@@ -697,6 +697,106 @@ def post_purchase_invoice(
 
 
 # ============================================================
+# أرشيف وتقارير المشتريات
+# ============================================================
+
+def show_purchase_reports(branches, suppliers_data):
+    st.markdown("### 📊 أرشيف وتقارير المشتريات")
+
+    branch_map = {"كل الفروع": None}
+    branch_map.update({b["branch_name"]: b["id"] for b in branches})
+    supplier_map = {"كل الموردين": None}
+    supplier_map.update({s["supplier_name"]: s["id"] for s in suppliers_data})
+
+    today = date.today()
+    month_start = today.replace(day=1)
+
+    f1, f2 = st.columns(2)
+    selected_supplier = f1.selectbox("المورد", list(supplier_map), key="purchase_report_supplier")
+    selected_branch = f2.selectbox("الفرع / المخزن", list(branch_map), key="purchase_report_branch")
+
+    d1, d2 = st.columns(2)
+    date_from = d1.date_input("من تاريخ", value=month_start, key="purchase_report_from")
+    date_to = d2.date_input("إلى تاريخ", value=today, key="purchase_report_to")
+
+    if date_from > date_to:
+        st.error("تاريخ البداية يجب أن يكون قبل أو مساوياً لتاريخ النهاية.")
+        return
+
+    where = ["date(p.invoice_date) BETWEEN date(?) AND date(?)"]
+    params = [date_from.isoformat(), date_to.isoformat()]
+
+    supplier_id = supplier_map[selected_supplier]
+    if supplier_id is not None:
+        where.append("p.supplier_id = ?")
+        params.append(supplier_id)
+
+    branch_id = branch_map[selected_branch]
+    if branch_id is not None:
+        where.append("p.branch_id = ?")
+        params.append(branch_id)
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        rows = conn.execute(
+            f"""
+            SELECT p.id, p.invoice_number, p.invoice_date, p.supplier_name,
+                   COALESCE(br.branch_name, '') AS branch_name,
+                   p.payment_type, COALESCE(p.total_cost, 0) AS total_cost,
+                   COALESCE(p.items_details, '') AS items_details
+            FROM purchases p
+            LEFT JOIN branches br ON br.id = p.branch_id
+            WHERE {' AND '.join(where)}
+            ORDER BY date(p.invoice_date) DESC, p.id DESC
+            """,
+            tuple(params)
+        ).fetchall()
+    except Exception as e:
+        st.error("❌ تعذر تحميل تقرير المشتريات.")
+        st.code(str(e))
+        return
+    finally:
+        if conn:
+            conn.close()
+
+    total_value = sum(float(r["total_cost"] or 0) for r in rows)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("عدد الفواتير", len(rows))
+    m2.metric("إجمالي المشتريات", f"{total_value:,.2f} د.ل")
+    m3.metric("المورد", selected_supplier)
+
+    if not rows:
+        st.info("لا توجد فواتير مشتريات مطابقة للفترة والفلتر المحدد.")
+        return
+
+    table_rows = [{
+        "رقم الفاتورة": r["invoice_number"],
+        "التاريخ": r["invoice_date"],
+        "المورد": r["supplier_name"],
+        "الفرع / المخزن": r["branch_name"],
+        "طريقة الدفع": r["payment_type"],
+        "الإجمالي": float(r["total_cost"] or 0),
+    } for r in rows]
+
+    st.dataframe(
+        table_rows, use_container_width=True, hide_index=True,
+        column_config={"الإجمالي": st.column_config.NumberColumn("الإجمالي", format="%.2f د.ل")}
+    )
+
+    st.markdown("#### 🔎 تفاصيل الفواتير")
+    for r in rows:
+        with st.expander(
+            f"فاتورة {r['invoice_number']} — {r['supplier_name']} — "
+            f"{float(r['total_cost'] or 0):,.2f} د.ل"
+        ):
+            st.write(f"**التاريخ:** {r['invoice_date']}")
+            st.write(f"**الفرع / المخزن:** {r['branch_name'] or '-'}")
+            st.write(f"**طريقة الدفع:** {r['payment_type'] or '-'}")
+            st.write(f"**تفاصيل الأصناف:** {r['items_details'] or '-'}")
+
+
+# ============================================================
 # الصفحة
 # ============================================================
 
@@ -771,18 +871,25 @@ def show_page():
     if "purchase_quick_mode" not in st.session_state:
         st.session_state["purchase_quick_mode"] = "invoice"
 
-    q1, q2, q3 = st.columns(3)
-    if q1.button("🛒 فاتورة توريد", use_container_width=True):
+    q1, q2, q3, q4 = st.columns(4)
+    if q1.button("🛒 فاتورة مشتريات", use_container_width=True):
         st.session_state["purchase_quick_mode"] = "invoice"
         st.rerun()
-    if q2.button("➕ إضافة مورد", use_container_width=True):
+    if q2.button("📊 الأرشيف والتقارير", use_container_width=True):
+        st.session_state["purchase_quick_mode"] = "reports"
+        st.rerun()
+    if q3.button("➕ إضافة مورد", use_container_width=True):
         st.session_state["purchase_quick_mode"] = "supplier"
         st.rerun()
-    if q3.button("➕ إضافة زبون آجل", use_container_width=True):
+    if q4.button("➕ إضافة زبون آجل", use_container_width=True):
         st.session_state["purchase_quick_mode"] = "customer"
         st.rerun()
 
     quick_mode = st.session_state["purchase_quick_mode"]
+
+    if quick_mode == "reports":
+        show_purchase_reports(branches, suppliers_data)
+        return
 
     # ========================================================
     # مورد جديد
