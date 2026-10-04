@@ -191,6 +191,19 @@ def _replace_table(local, table, rows, allowed):
     vals = [tuple(r[x] for x in cols) for r in rows]
     local.executemany(sql, vals)
 
+def _merge_table(local, table, rows, allowed):
+    """Merge server history into local SQLite without deleting local-only rows."""
+    if not rows:
+        return
+    cols = [x for x in _cols(rows) if x in allowed]
+    if not cols:
+        return
+    q = ','.join('?' for _ in cols)
+    sql = f"INSERT OR REPLACE INTO {table} ({','.join(cols)}) VALUES ({q})"
+    vals = [tuple(r[x] for x in cols) for r in rows]
+    local.executemany(sql, vals)
+
+
 def sync_reference_data(remote=None):
     own = False
     if remote is None:
@@ -234,6 +247,25 @@ def sync_reference_data(remote=None):
                 _replace_table(local, table, rows, allowed)
             except Exception:
                 pass
+
+        # سجل التحويلات تاريخ تشغيلي وليس بيانات مرجعية:
+        # لا نحذفه محلياً عند تسجيل الدخول. ننزل الموجود على السيرفر ونقوم بدمجه فقط.
+        # بهذا تبقى فاتورة التزويد ظاهرة بعد الخروج/الدخول أو إعادة تشغيل التطبيق.
+        try:
+            transfer_rows = remote.execute('SELECT * FROM transfer_logs').fetchall()
+            _merge_table(
+                local,
+                'transfer_logs',
+                transfer_rows,
+                {
+                    'id', 'from_branch_id', 'to_branch_id', 'items_details',
+                    'transfer_date', 'status', 'created_by', 'received_by',
+                    'created_at'
+                }
+            )
+        except Exception:
+            # فشل تنزيل السجل لا يمسح السجل المحلي الموجود.
+            pass
         local.execute("INSERT OR REPLACE INTO local_meta(key,value) VALUES('last_download',?)",(datetime.now().isoformat(timespec='seconds'),))
         local.commit()
         return True, None
