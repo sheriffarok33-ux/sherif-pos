@@ -355,57 +355,64 @@ st.sidebar.markdown("---")
 
 MENU_GROUPS = {
     "🏠 لوحة التحكم": [
-        ("🏠 الرئيسية واللوحة", "🏠 لوحة التحكم"),
+        ("🏠 الرئيسية واللوحة", "🏠 لوحة التحكم", {}),
     ],
     "🛒 إدارة المبيعات": [
-        ("🛒 نقطة البيع (POS)", "1- فاتورة بيع"),
-        ("📊 التقارير والأرباح", "2- أرشيف وتقارير البيع X & Z وإعادة طباعة الفواتير"),
+        ("🛒 نقطة البيع (POS)", "1- فاتورة بيع", {}),
+        ("📊 التقارير والأرباح", "2- أرشيف وتقارير البيع X & Z", {"reports_entry_mode": "sales"}),
     ],
-    "📥 إدارة المشتريات": [
-        ("📥 المشتريات", "1- فاتورة مشتريات"),
-        ("📊 التقارير والأرباح", "2- أرشيف وتقارير المشتريات"),
+    "📥 إدارة المشتريات والموردين": [
+        ("📥 المشتريات", "1- فاتورة مشتريات", {"purchase_quick_mode": "invoice"}),
+        ("📥 المشتريات", "2- أرشيف وتقارير المشتريات", {"purchase_quick_mode": "reports"}),
+        ("👥 جهات التعامل", "3- الموردون وكشوف الحساب", {"parties_mode": "suppliers"}),
+        ("👥 جهات التعامل", "4- دفع لمورد", {"parties_mode": "supplier_payment"}),
     ],
-    "📦 المخزون والأصناف": [
-        ("📦 إدارة المخزن والفروع", "1- إضافة صنف جديد"),
-        ("📦 إدارة المخزن والفروع", "2- الأصناف وتعديل سعر البيع والكميات"),
-        ("📦 إدارة المخزن والفروع", "3- الصلاحيات وحركة المخزون"),
-        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "♻️ التالف والمرتجع والتسويات"),
-        ("📁 استيراد Excel", "📥 استيراد الأصناف من Excel"),
+    "📦 المخازن والأصناف": [
+        ("📦 إدارة المخزن والفروع", "1- الأصناف وتعديل الكميات والأسعار", {"inventory_mode": "list"}),
+        ("📦 إدارة المخزن والفروع", "2- إضافة كمية", {"inventory_mode": "add"}),
+        ("📦 إدارة المخزن والفروع", "3- إضافة صنف جديد", {"inventory_mode": "new"}),
+        ("📦 إدارة المخزن والفروع", "4- الصلاحيات", {"inventory_mode": "expiry"}),
+        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "5- تالف / هالك", {"damage_returns_mode": "adjustment", "damage_adj_type": "🗑️ تلف / كسر (خسارة تشغيلية)"}),
+        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "6- مرتجعات مخزنية", {"damage_returns_mode": "return"}),
+        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "7- فائض مخزني", {"damage_returns_mode": "surplus"}),
+        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "8- سجل حركات المخزون", {"damage_returns_mode": "log"}),
+        ("📁 استيراد Excel", "9- استيراد الأصناف من Excel", {}),
     ],
-    "🏭 إدارة التصنيع": [
-        ("🥜 التحميص والخلط", "1- خلط"),
-        ("🥜 التحميص والخلط", "2- تحميص"),
-        ("🥜 التحميص والخلط", "3- سجل الإنتاج"),
+    "🏭 التحميص والتصنيع": [
+        ("🥜 التحميص والخلط", "1- خلط", {"production_screen_mode": "mix"}),
+        ("🥜 التحميص والخلط", "2- تحميص", {"production_screen_mode": "roast"}),
+        ("🥜 التحميص والخلط", "3- سجل الإنتاج", {"production_screen_mode": "log"}),
     ],
-    "👥 العملاء والموردون": [
-        ("👥 جهات التعامل", "العملاء والموردون وكشوف الحساب"),
-    ],
-    "👤 الفروع والمستخدمون والصلاحيات": [
-        ("🎨 تخصيص المظهر", "1- تخصيص المظهر"),
-        ("👥 إدارة المستخدمين", "2- المستخدمون والصلاحيات"),
-        ("🏢 إدارة الفروع", "3- إدارة الفروع"),
+    "👥 العملاء": [
+        ("👥 جهات التعامل", "1- العملاء وكشوف الحساب", {"parties_mode": "customers"}),
+        ("👥 جهات التعامل", "2- تحصيل من عميل", {"parties_mode": "customer_collection"}),
+        ("👥 جهات التعامل", "3- إضافة عميل أو مورد", {"parties_mode": "add"}),
+        ("👥 جهات التعامل", "4- أرشيف إيصالات القبض والدفع", {"parties_mode": "vouchers"}),
     ],
     "💰 الإدارة المالية": [
-        ("👥 جهات التعامل", "1- إيصال دفع"),
-        ("👥 جهات التعامل", "2- إيصال قبض"),
-        ("💰 المصروفات", "3- المصروفات (عام / خاص)"),
-        ("📊 التقارير والأرباح", "4- أرشيف المالية"),
+        ("💰 المصروفات", "1- تسجيل مصروف", {"finance_screen_mode": "expense"}),
+        ("💰 المصروفات", "2- تسجيل إيراد آخر", {"finance_screen_mode": "revenue"}),
+        ("💰 المصروفات", "3- أرشيف المصروفات والإيرادات", {"finance_screen_mode": "archive"}),
+        ("👥 جهات التعامل", "4- إيصال دفع لمورد", {"parties_mode": "supplier_payment"}),
+        ("👥 جهات التعامل", "5- إيصال قبض من عميل", {"parties_mode": "customer_collection"}),
     ],
     "🔄 التحويلات وتزويد الفروع": [
-        ("🔄 تزويد الفروع والأرشيف", "1- إنشاء فاتورة تزويد فرع"),
-        ("🔄 تزويد الفروع والأرشيف", "2- تحويل من فرع إلى آخر"),
-        ("🔄 تزويد الفروع والأرشيف", "3- أرشيف التحويلات والتزويد"),
+        ("🔄 تزويد الفروع والأرشيف", "1- إنشاء فاتورة تزويد فرع", {"transfers_mode": "new"}),
+        ("🔄 تزويد الفروع والأرشيف", "2- أرشيف التحويلات والتزويد", {"transfers_mode": "archive"}),
     ],
-    "⚙️ أدوات الإدارة": [
-        ("⚙️ الجرد والتصفير السنوي", "📆 إقفال وأرشفة السنة"),
-        ("🧹 تهيئة النظام لأول تشغيل", "🧹 تهيئة النظام لأول تشغيل"),
+    "👤 الإدارة العامة": [
+        ("🏢 إدارة الفروع", "1- الفروع", {}),
+        ("👥 إدارة المستخدمين", "2- المستخدمون والصلاحيات", {}),
+        ("🎨 تخصيص المظهر", "3- تخصيص المظهر", {}),
+        ("⚙️ الجرد والتصفير السنوي", "4- إقفال وأرشفة السنة", {}),
+        ("🧹 تهيئة النظام لأول تشغيل", "5- تهيئة النظام لأول تشغيل", {}),
     ],
 }
 
 def allowed_group_entries(group_name):
     return [
-        (target, label)
-        for target, label in MENU_GROUPS.get(group_name, [])
+        (target, label, state_updates)
+        for target, label, state_updates in MENU_GROUPS.get(group_name, [])
         if check_user_permission(target)
     ]
 
@@ -451,12 +458,37 @@ if choice.startswith("__GROUP__::"):
         st.stop()
 
     cols = st.columns(3)
-    for idx, (target, label) in enumerate(entries):
+    for idx, (target, label, state_updates) in enumerate(entries):
         if cols[idx % 3].button(
             label,
             use_container_width=True,
             key=f"group_action_{group_name}_{target}_{idx}"
         ):
+            # القائمة الرئيسية هي مكان التنقل الوحيد.
+            for lock_key in [
+                "inventory_entry_lock", "production_entry_lock",
+                "parties_entry_lock", "purchases_entry_lock",
+                "finance_entry_lock", "damage_returns_entry_lock",
+                "transfers_entry_lock"
+            ]:
+                st.session_state.pop(lock_key, None)
+
+            for state_key, state_value in state_updates.items():
+                st.session_state[state_key] = state_value
+
+            lock_map = {
+                "inventory_mode": "inventory_entry_lock",
+                "production_screen_mode": "production_entry_lock",
+                "parties_mode": "parties_entry_lock",
+                "purchase_quick_mode": "purchases_entry_lock",
+                "finance_screen_mode": "finance_entry_lock",
+                "damage_returns_mode": "damage_returns_entry_lock",
+                "transfers_mode": "transfers_entry_lock",
+            }
+            for state_key, lock_key in lock_map.items():
+                if state_key in state_updates:
+                    st.session_state[lock_key] = True
+
             set_page(target)
 
     st.stop()
