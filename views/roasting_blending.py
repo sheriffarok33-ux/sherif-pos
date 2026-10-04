@@ -987,32 +987,33 @@ def show_page():
     if "production_screen_mode" not in st.session_state:
         st.session_state["production_screen_mode"] = "mix"
 
-    nav1, nav2, nav3 = st.columns(3)
-
-    if nav1.button(
-        "🧪 خلط",
-        use_container_width=True,
-        type="primary" if st.session_state["production_screen_mode"] == "mix" else "secondary"
-    ):
-        st.session_state["production_screen_mode"] = "mix"
-        st.rerun()
-
-    if nav2.button(
-        "🔥 تحميص",
-        use_container_width=True,
-        type="primary" if st.session_state["production_screen_mode"] == "roast" else "secondary"
-    ):
-        st.session_state["production_screen_mode"] = "roast"
-        st.rerun()
-
-    if nav3.button(
-        "📋 سجل الإنتاج",
-        use_container_width=True,
-        type="primary" if st.session_state["production_screen_mode"] == "log" else "secondary"
-    ):
-        st.session_state["production_screen_mode"] = "log"
-        st.rerun()
-
+    if not st.session_state.get("production_entry_lock"):
+        nav1, nav2, nav3 = st.columns(3)
+    
+        if nav1.button(
+            "🧪 خلط",
+            use_container_width=True,
+            type="primary" if st.session_state["production_screen_mode"] == "mix" else "secondary"
+        ):
+            st.session_state["production_screen_mode"] = "mix"
+            st.rerun()
+    
+        if nav2.button(
+            "🔥 تحميص",
+            use_container_width=True,
+            type="primary" if st.session_state["production_screen_mode"] == "roast" else "secondary"
+        ):
+            st.session_state["production_screen_mode"] = "roast"
+            st.rerun()
+    
+        if nav3.button(
+            "📋 سجل الإنتاج",
+            use_container_width=True,
+            type="primary" if st.session_state["production_screen_mode"] == "log" else "secondary"
+        ):
+            st.session_state["production_screen_mode"] = "log"
+            st.rerun()
+    
     if st.session_state["production_screen_mode"] == "log":
         st.markdown("### 📋 سجل وتقارير عمليات التحميص والخلط")
 

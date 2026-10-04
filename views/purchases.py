@@ -879,28 +879,29 @@ def show_page():
     # الإدارة السريعة
     # ========================================================
 
-    st.markdown(
-        "### ⚙️ الإدارة السريعة "
-        "لجهات التعامل"
-    )
-
-    if "purchase_quick_mode" not in st.session_state:
-        st.session_state["purchase_quick_mode"] = "invoice"
-
-    q1, q2, q3, q4 = st.columns(4)
-    if q1.button("🛒 فاتورة مشتريات", use_container_width=True):
-        st.session_state["purchase_quick_mode"] = "invoice"
-        st.rerun()
-    if q2.button("📊 الأرشيف والتقارير", use_container_width=True):
-        st.session_state["purchase_quick_mode"] = "reports"
-        st.rerun()
-    if q3.button("➕ إضافة مورد", use_container_width=True):
-        st.session_state["purchase_quick_mode"] = "supplier"
-        st.rerun()
-    if q4.button("➕ إضافة زبون آجل", use_container_width=True):
-        st.session_state["purchase_quick_mode"] = "customer"
-        st.rerun()
-
+    if not st.session_state.get("purchases_entry_lock"):
+        st.markdown(
+            "### ⚙️ الإدارة السريعة "
+            "لجهات التعامل"
+        )
+    
+        if "purchase_quick_mode" not in st.session_state:
+            st.session_state["purchase_quick_mode"] = "invoice"
+    
+        q1, q2, q3, q4 = st.columns(4)
+        if q1.button("🛒 فاتورة مشتريات", use_container_width=True):
+            st.session_state["purchase_quick_mode"] = "invoice"
+            st.rerun()
+        if q2.button("📊 الأرشيف والتقارير", use_container_width=True):
+            st.session_state["purchase_quick_mode"] = "reports"
+            st.rerun()
+        if q3.button("➕ إضافة مورد", use_container_width=True):
+            st.session_state["purchase_quick_mode"] = "supplier"
+            st.rerun()
+        if q4.button("➕ إضافة زبون آجل", use_container_width=True):
+            st.session_state["purchase_quick_mode"] = "customer"
+            st.rerun()
+    
     quick_mode = st.session_state["purchase_quick_mode"]
 
     if quick_mode == "reports":

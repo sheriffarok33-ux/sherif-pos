@@ -516,27 +516,28 @@ def show_page():
     if "damage_returns_mode" not in st.session_state:
         st.session_state["damage_returns_mode"] = "adjustment"
 
-    # كل الاختيارات التشغيلية أزرار.
-    row1 = st.columns(4)
-    if row1[0].button("🗑️ تالف / هالك", use_container_width=True):
-        st.session_state["damage_adj_type"] = "🗑️ تلف / كسر (خسارة تشغيلية)"
-        _set_damage_mode("adjustment")
-    if row1[1].button("📅 منتهي الصلاحية", use_container_width=True):
-        st.session_state["damage_adj_type"] = "⏳ منتهي الصلاحية (خسارة تشغيلية)"
-        _set_damage_mode("adjustment")
-    if row1[2].button("↩️ مرتجع", use_container_width=True):
-        _set_damage_mode("return")
-    if row1[3].button("➕ فائض مخزني", use_container_width=True):
-        _set_damage_mode("surplus")
-
-    row2 = st.columns(3)
-    if row2[0].button("💲 تعديل السعر", use_container_width=True):
-        _set_damage_mode("price")
-    if row2[1].button("📋 سجل الحركات", use_container_width=True):
-        _set_damage_mode("log")
-    if row2[2].button("📥 تصدير الحركات Excel", use_container_width=True):
-        _set_damage_mode("export")
-
+    if not st.session_state.get("damage_returns_entry_lock"):
+        # كل الاختيارات التشغيلية أزرار.
+        row1 = st.columns(4)
+        if row1[0].button("🗑️ تالف / هالك", use_container_width=True):
+            st.session_state["damage_adj_type"] = "🗑️ تلف / كسر (خسارة تشغيلية)"
+            _set_damage_mode("adjustment")
+        if row1[1].button("📅 منتهي الصلاحية", use_container_width=True):
+            st.session_state["damage_adj_type"] = "⏳ منتهي الصلاحية (خسارة تشغيلية)"
+            _set_damage_mode("adjustment")
+        if row1[2].button("↩️ مرتجع", use_container_width=True):
+            _set_damage_mode("return")
+        if row1[3].button("➕ فائض مخزني", use_container_width=True):
+            _set_damage_mode("surplus")
+    
+        row2 = st.columns(3)
+        if row2[0].button("💲 تعديل السعر", use_container_width=True):
+            _set_damage_mode("price")
+        if row2[1].button("📋 سجل الحركات", use_container_width=True):
+            _set_damage_mode("log")
+        if row2[2].button("📥 تصدير الحركات Excel", use_container_width=True):
+            _set_damage_mode("export")
+    
     mode = st.session_state["damage_returns_mode"]
     st.markdown("---")
 

@@ -596,20 +596,21 @@ def show_page():
     if "finance_screen_mode" not in st.session_state:
         st.session_state["finance_screen_mode"] = "expense"
 
-    nav1, nav2, nav3 = st.columns(3)
-    if nav1.button("💸 مصروف جديد", use_container_width=True,
-                      type="primary" if st.session_state["finance_screen_mode"] == "expense" else "secondary"):
-        st.session_state["finance_screen_mode"] = "expense"
-        st.rerun()
-    if nav2.button("💵 إيراد آخر", use_container_width=True,
-                      type="primary" if st.session_state["finance_screen_mode"] == "revenue" else "secondary"):
-        st.session_state["finance_screen_mode"] = "revenue"
-        st.rerun()
-    if nav3.button("📋 الأرشيف والتقارير", use_container_width=True,
-                      type="primary" if st.session_state["finance_screen_mode"] == "archive" else "secondary"):
-        st.session_state["finance_screen_mode"] = "archive"
-        st.rerun()
-
+    if not st.session_state.get("finance_entry_lock"):
+        nav1, nav2, nav3 = st.columns(3)
+        if nav1.button("💸 مصروف جديد", use_container_width=True,
+                          type="primary" if st.session_state["finance_screen_mode"] == "expense" else "secondary"):
+            st.session_state["finance_screen_mode"] = "expense"
+            st.rerun()
+        if nav2.button("💵 إيراد آخر", use_container_width=True,
+                          type="primary" if st.session_state["finance_screen_mode"] == "revenue" else "secondary"):
+            st.session_state["finance_screen_mode"] = "revenue"
+            st.rerun()
+        if nav3.button("📋 الأرشيف والتقارير", use_container_width=True,
+                          type="primary" if st.session_state["finance_screen_mode"] == "archive" else "secondary"):
+            st.session_state["finance_screen_mode"] = "archive"
+            st.rerun()
+    
     selected_mode = (
         '➕ تسجيل مصروف جديد' if st.session_state["finance_screen_mode"] == "expense"
         else '💵 تسجيل إيراد جديد' if st.session_state["finance_screen_mode"] == "revenue"

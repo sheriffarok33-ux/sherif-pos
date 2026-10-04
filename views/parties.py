@@ -126,20 +126,21 @@ def show_page():
     if "parties_mode" not in st.session_state:
         st.session_state["parties_mode"] = "suppliers"
 
-    r1 = st.columns(6)
-    if r1[0].button("🚛 الموردون", use_container_width=True):
-        _set_mode("suppliers")
-    if r1[1].button("🤝 العملاء", use_container_width=True):
-        _set_mode("customers")
-    if r1[2].button("➕ إضافة جهة", use_container_width=True):
-        _set_mode("add")
-    if r1[3].button("💳 دفع لمورد", use_container_width=True):
-        _set_mode("supplier_payment")
-    if r1[4].button("💵 تحصيل عميل", use_container_width=True):
-        _set_mode("customer_collection")
-    if r1[5].button("🧾 أرشيف الإيصالات", use_container_width=True):
-        _set_mode("vouchers")
-
+    if not st.session_state.get("parties_entry_lock"):
+        r1 = st.columns(6)
+        if r1[0].button("🚛 الموردون", use_container_width=True):
+            _set_mode("suppliers")
+        if r1[1].button("🤝 العملاء", use_container_width=True):
+            _set_mode("customers")
+        if r1[2].button("➕ إضافة جهة", use_container_width=True):
+            _set_mode("add")
+        if r1[3].button("💳 دفع لمورد", use_container_width=True):
+            _set_mode("supplier_payment")
+        if r1[4].button("💵 تحصيل عميل", use_container_width=True):
+            _set_mode("customer_collection")
+        if r1[5].button("🧾 أرشيف الإيصالات", use_container_width=True):
+            _set_mode("vouchers")
+    
     conn = get_db_connection()
     try:
         _ensure_voucher_schema(conn)

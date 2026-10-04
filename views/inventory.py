@@ -645,17 +645,18 @@ def show_page():
     if "inventory_mode" not in st.session_state:
         st.session_state["inventory_mode"] = "list"
 
-    st.markdown("### اختر العملية")
-    c1, c2, c3, c4 = st.columns(4)
-    if c1.button("📋 الأصناف والتعديل", use_container_width=True):
-        _set_inventory_mode("list")
-    if c2.button("📦 إضافة كمية", use_container_width=True):
-        _set_inventory_mode("add")
-    if c3.button("➕ صنف جديد", use_container_width=True):
-        _set_inventory_mode("new")
-    if c4.button("📅 الصلاحيات", use_container_width=True):
-        _set_inventory_mode("expiry")
-
+    if not st.session_state.get("inventory_entry_lock"):
+        st.markdown("### اختر العملية")
+        c1, c2, c3, c4 = st.columns(4)
+        if c1.button("📋 الأصناف والتعديل", use_container_width=True):
+            _set_inventory_mode("list")
+        if c2.button("📦 إضافة كمية", use_container_width=True):
+            _set_inventory_mode("add")
+        if c3.button("➕ صنف جديد", use_container_width=True):
+            _set_inventory_mode("new")
+        if c4.button("📅 الصلاحيات", use_container_width=True):
+            _set_inventory_mode("expiry")
+    
     mode = st.session_state["inventory_mode"]
     st.markdown("---")
 

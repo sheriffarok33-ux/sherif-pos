@@ -1023,27 +1023,28 @@ def show_page():
     if "transfers_mode" not in st.session_state:
         st.session_state["transfers_mode"] = "new"
 
-    st.markdown("### 🎯 اختر العملية")
-    nav1, nav2 = st.columns(2)
-
-    if nav1.button(
-        "📦 إنشاء فاتورة تزويد جديدة",
-        use_container_width=True,
-        type="primary" if st.session_state["transfers_mode"] == "new" else "secondary",
-        key="transfers_btn_new"
-    ):
-        st.session_state["transfers_mode"] = "new"
-        st.rerun()
-
-    if nav2.button(
-        "📋 الأرشيف وإعادة الطباعة",
-        use_container_width=True,
-        type="primary" if st.session_state["transfers_mode"] == "archive" else "secondary",
-        key="transfers_btn_archive"
-    ):
-        st.session_state["transfers_mode"] = "archive"
-        st.rerun()
-
+    if not st.session_state.get("transfers_entry_lock"):
+        st.markdown("### 🎯 اختر العملية")
+        nav1, nav2 = st.columns(2)
+    
+        if nav1.button(
+            "📦 إنشاء فاتورة تزويد جديدة",
+            use_container_width=True,
+            type="primary" if st.session_state["transfers_mode"] == "new" else "secondary",
+            key="transfers_btn_new"
+        ):
+            st.session_state["transfers_mode"] = "new"
+            st.rerun()
+    
+        if nav2.button(
+            "📋 الأرشيف وإعادة الطباعة",
+            use_container_width=True,
+            type="primary" if st.session_state["transfers_mode"] == "archive" else "secondary",
+            key="transfers_btn_archive"
+        ):
+            st.session_state["transfers_mode"] = "archive"
+            st.rerun()
+    
     transfer_mode = (
         "📦 إنشاء فاتورة تزويد جديدة"
         if st.session_state["transfers_mode"] == "new"
