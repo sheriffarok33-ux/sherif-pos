@@ -203,17 +203,11 @@ def sync_now():
 
 def get_pos_connection():
     """
-    اتصال POS خفيف:
-    لا ينفذ مزامنة كاملة عند كل إعادة تشغيل أو قراءة باركود.
-    المزامنة الكاملة تبقى متاحة عبر sync_now().
+    Local-first POS connection.
+    Synchronization is intentionally NOT performed here.
+    It is performed once after each successful online login in main.py.
     """
-    try:
-        from database import get_db_connection
-        remote = get_db_connection()
-        remote.execute('SELECT 1').fetchone()
-        return remote, 'online'
-    except Exception:
-        return get_local_connection(), 'offline'
+    return get_local_connection(), 'offline'
 
 def pending_count():
     c=get_local_connection()
