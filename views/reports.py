@@ -395,7 +395,7 @@ def show_financial_summary(
                             OR adjustment_type
                                 LIKE '%منتهي%'
                         THEN
-                            GREATEST(
+                            MAX(
                                 COALESCE(
                                     loss_or_gain_value,
                                     0
