@@ -668,18 +668,22 @@ def execute_transfer(
             (
                 from_branch_id,
                 to_branch_id,
-                transfer_type,
                 items_details,
-                status
+                status,
+                created_by,
+                transfer_date,
+                created_at
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 warehouse_id,
                 target_branch_id,
-                "فاتورة تزويد مجمعة",
                 items_details,
-                "بانتظار تأكيد الكاشير"
+                "بانتظار تأكيد الكاشير",
+                username,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             )
         )
 
