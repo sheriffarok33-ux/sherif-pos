@@ -57,12 +57,10 @@ appearance = load_appearance_settings()
 # إضافة ستايل CSS ومؤشر الاتصال (Online/Offline) في رأس الصفحة
 st.markdown("""
     <style>
-    html, body, [class*="css"], p, span, div, label, h1, h2, h3, h4, h5, h6, table, th, td { 
-        font-family: Arial, Tahoma, sans-serif !important; 
-        color: #000000 !important; 
-        font-weight: 900 !important;
-        font-size: 17px !important;
-    }
+    html, body, [class*="css"] { font-family: Arial, Tahoma, sans-serif !important; }
+    .stApp p, .stApp label, .stApp td, .stApp th { color:#000000 !important; font-weight:700 !important; font-size:15px !important; line-height:1.55 !important; }
+    [data-testid="stWidgetLabel"] p { white-space: normal !important; overflow-wrap:anywhere !important; }
+    [data-testid="stSelectbox"] { margin-bottom: .35rem !important; }
     .main { background-color: #f8fafc; }
     h1 { font-size: 28px !important; color: #0f172a !important; }
     h2 { font-size: 24px !important; color: #1e293b !important; }
@@ -210,11 +208,11 @@ st.markdown(
         background-color: {appearance['app_bg_color']} !important;
         {_login_bg_css}
     }}
-    html, body, [class*="css"], p, span, div, label,
-    h1, h2, h3, h4, h5, h6, table, th, td {{
+    .stApp p, .stApp label, .stApp td, .stApp th {{
         color: {appearance['text_color']} !important;
         font-weight: {appearance['font_weight']} !important;
         font-size: {appearance['font_size']}px !important;
+        line-height: 1.55 !important;
     }}
     div.stButton > button {{
         background: {appearance['button_color']} !important;
