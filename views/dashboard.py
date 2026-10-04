@@ -239,6 +239,14 @@ def ensure_expiry_batches_table():
             conn.close()
 
 
+def _table_columns(conn, table_name):
+    """إرجاع أسماء أعمدة جدول SQLite بدون افتراض نسخة معينة من القاعدة."""
+    try:
+        return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    except Exception:
+        return set()
+
+
 def get_expiry_alerts():
     conn = None
     try:
@@ -255,6 +263,12 @@ def get_expiry_alerts():
             where_branch = "AND b.branch_id = ?"
             params.append(branch_id)
 
+        item_columns = _table_columns(conn, "items")
+        no_expiry_filter = ""
+        if "no_expiry" in item_columns:
+            no_expiry_filter = "AND COALESCE(i.no_expiry, 0) = 0"
+
+        # SQLite: julianday/date بدلاً من PostgreSQL INTERVAL وطرح التواريخ.
         return conn.execute(
             f"""
             SELECT
@@ -264,15 +278,20 @@ def get_expiry_alerts():
                 br.branch_name,
                 b.remaining_quantity,
                 b.expiry_date,
-                (b.expiry_date - CURRENT_DATE) AS days_left
+                CAST(
+                    julianday(date(b.expiry_date)) - julianday(date('now', 'localtime'))
+                    AS INTEGER
+                ) AS days_left
             FROM inventory_batches b
             JOIN items i ON i.id = b.item_id
             JOIN branches br ON br.id = b.branch_id
             WHERE b.expiry_date IS NOT NULL
+              AND TRIM(CAST(b.expiry_date AS TEXT)) <> ''
               AND COALESCE(b.remaining_quantity, 0) > 0
-              AND b.expiry_date <= CURRENT_DATE + INTERVAL '30 days'
+              AND date(b.expiry_date) <= date('now', 'localtime', '+30 days')
+              {no_expiry_filter}
               {where_branch}
-            ORDER BY b.expiry_date ASC, i.item_name ASC
+            ORDER BY date(b.expiry_date) ASC, i.item_name ASC
             """,
             tuple(params)
         ).fetchall()
@@ -281,62 +300,126 @@ def get_expiry_alerts():
             conn.close()
 
 
-def show_expiry_alerts():
+def get_low_stock_alerts(limit_value=5):
+    """الأصناف التي أصبح إجمالي رصيدها في الفرع 5 كجم/قطع أو أقل، مع استبعاد الرصيد الصفري."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        role = st.session_state.get("role", "")
+        branch_id = st.session_state.get("branch_id")
+        item_columns = _table_columns(conn, "items")
+
+        unit_expr = "'piece'"
+        if "unit_type" in item_columns:
+            unit_expr = "COALESCE(i.unit_type, 'piece')"
+
+        where_branch = ""
+        params = []
+        if role not in ["Admin", "General_Supervisor"]:
+            if branch_id is None:
+                return []
+            where_branch = "AND b.branch_id = ?"
+            params.append(branch_id)
+
+        params.append(float(limit_value))
+
+        return conn.execute(
+            f"""
+            SELECT
+                i.id AS item_id,
+                i.item_code,
+                i.item_name,
+                br.id AS branch_id,
+                br.branch_name,
+                {unit_expr} AS unit_type,
+                COALESCE(SUM(b.remaining_quantity), 0) AS remaining_quantity
+            FROM inventory_batches b
+            JOIN items i ON i.id = b.item_id
+            JOIN branches br ON br.id = b.branch_id
+            WHERE 1=1
+              {where_branch}
+            GROUP BY i.id, i.item_code, i.item_name, br.id, br.branch_name, {unit_expr}
+            HAVING COALESCE(SUM(b.remaining_quantity), 0) > 0
+               AND COALESCE(SUM(b.remaining_quantity), 0) <= ?
+            ORDER BY remaining_quantity ASC, i.item_name ASC
+            """,
+            tuple(params)
+        ).fetchall()
+    finally:
+        if conn:
+            conn.close()
+
+
+def show_inventory_alerts():
+    # التنبيهات الإدارية لا تظهر للكاشير.
+    role = st.session_state.get("role", "")
+    if role not in ["Admin", "General_Supervisor", "Branch_Supervisor"]:
+        return
+
     try:
         ensure_expiry_batches_table()
-        alerts = get_expiry_alerts()
+        expiry_alerts = get_expiry_alerts()
+        low_stock = get_low_stock_alerts(5)
     except Exception as e:
-        st.error("❌ تعذر تحميل تنبيهات تواريخ الصلاحية.")
+        st.error("❌ تعذر تحميل تنبيهات المخزون.")
         st.code(str(e))
         return
 
-    if not alerts:
-        st.success("✅ لا توجد دفعات مسجلة منتهية أو ستنتهي خلال 30 يوماً.")
-        return
+    expired = [r for r in expiry_alerts if int(r["days_left"] or 0) < 0]
+    seven_days = [r for r in expiry_alerts if 0 <= int(r["days_left"] or 0) <= 7]
+    thirty_days = [r for r in expiry_alerts if 8 <= int(r["days_left"] or 0) <= 30]
 
-    expired = [r for r in alerts if int(r["days_left"]) < 0]
-    seven_days = [r for r in alerts if 0 <= int(r["days_left"]) <= 7]
-    thirty_days = [r for r in alerts if 8 <= int(r["days_left"]) <= 30]
-
-    st.markdown("### ⏰ تنبيهات صلاحية المخزون")
-
-    c1, c2, c3 = st.columns(3)
+    st.markdown("### 🔔 تنبيهات المخزون")
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("🔴 منتهي الصلاحية", len(expired))
     c2.metric("🟠 خلال 7 أيام", len(seven_days))
     c3.metric("🟡 خلال 30 يوماً", len(thirty_days))
+    c4.metric("📉 رصيد 5 أو أقل", len(low_stock))
 
     if expired:
-        st.error(
-            f"🚨 يوجد {len(expired)} دفعة منتهية الصلاحية "
-            "وبها رصيد متبقٍ."
-        )
+        st.error(f"🚨 يوجد {len(expired)} دفعة منتهية الصلاحية وبها رصيد متبقٍ.")
     if seven_days:
-        st.warning(
-            f"⚠️ يوجد {len(seven_days)} دفعة ستنتهي خلال 7 أيام."
-        )
+        st.warning(f"⚠️ يوجد {len(seven_days)} دفعة ستنتهي خلال 7 أيام.")
     if thirty_days:
-        st.info(
-            f"📅 يوجد {len(thirty_days)} دفعة ستنتهي خلال 30 يوماً."
-        )
+        st.info(f"📅 يوجد {len(thirty_days)} دفعة ستنتهي خلال 30 يوماً.")
+    if low_stock:
+        st.warning(f"📉 يوجد {len(low_stock)} صنفاً وصل رصيده إلى 5 أو أقل.")
 
-    with st.expander("عرض تفاصيل تنبيهات الصلاحية", expanded=bool(expired)):
-        for row in alerts:
-            days = int(row["days_left"])
-            if days < 0:
-                status = f"🔴 منتهي منذ {abs(days)} يوم"
-            elif days == 0:
-                status = "🔴 ينتهي اليوم"
-            elif days <= 7:
-                status = f"🟠 متبقي {days} يوم"
-            else:
-                status = f"🟡 متبقي {days} يوم"
+    if expiry_alerts:
+        with st.expander("عرض تفاصيل تنبيهات الصلاحية", expanded=bool(expired)):
+            for row in expiry_alerts:
+                days = int(row["days_left"] or 0)
+                if days < 0:
+                    status = f"🔴 منتهي منذ {abs(days)} يوم"
+                elif days == 0:
+                    status = "🔴 ينتهي اليوم"
+                elif days <= 7:
+                    status = f"🟠 متبقي {days} يوم"
+                else:
+                    status = f"🟡 متبقي {days} يوم"
 
-            st.write(
-                f"**{row['item_name']}** — {row['item_code']} | "
-                f"{row['branch_name']} | "
-                f"الرصيد بالدفعة: {float(row['remaining_quantity'] or 0):,.3f} | "
-                f"الانتهاء: {row['expiry_date']} | {status}"
-            )
+                st.write(
+                    f"**{row['item_name']}** — {row['item_code']} | "
+                    f"{row['branch_name']} | "
+                    f"الرصيد بالدفعة: {float(row['remaining_quantity'] or 0):,.3f} | "
+                    f"الانتهاء: {row['expiry_date']} | {status}"
+                )
+
+    if low_stock:
+        with st.expander("عرض تفاصيل الأصناف منخفضة الرصيد", expanded=True):
+            for row in low_stock:
+                unit_type = str(row["unit_type"] or "").lower()
+                unit_label = "كجم" if unit_type in ["kg", "kilo", "kilogram", "weight", "وزن", "كيلو"] else "قطعة"
+                qty = float(row["remaining_quantity"] or 0)
+                st.write(
+                    f"📉 **{row['item_name']}** — {row['item_code']} | "
+                    f"{row['branch_name']} | المتبقي: **{qty:,.3f} {unit_label}**"
+                )
+
+
+# إبقاء الاسم القديم للتوافق مع أي استدعاء آخر.
+def show_expiry_alerts():
+    show_inventory_alerts()
 
 
 # ============================================================
