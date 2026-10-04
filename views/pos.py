@@ -1432,13 +1432,9 @@ def build_historical_z_html(
 def show_page():
 
     ensure_cart()
-
-    # تحسين أداء: تجهيز مخطط إضافات POS مرة واحدة فقط لكل جلسة،
-    # بدلاً من إرسال أوامر DDL إلى PostgreSQL/Supabase مع كل rerun في Streamlit.
-    if server_available() and not st.session_state.get("pos_schema_ready", False):
+    if server_available():
         try:
             ensure_pos_extensions_schema()
-            st.session_state["pos_schema_ready"] = True
         except Exception as e:
             st.error("❌ تعذر تجهيز إضافات نقطة البيع.")
             st.code(str(e))
