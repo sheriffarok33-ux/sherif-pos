@@ -114,7 +114,7 @@ def ensure_local_schema():
         CREATE TABLE IF NOT EXISTS revenues(id INTEGER PRIMARY KEY, branch_id INTEGER, revenue_source TEXT, amount REAL DEFAULT 0, notes TEXT, description TEXT, revenue_date TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS stock_adjustments(id INTEGER PRIMARY KEY, branch_id INTEGER, item_id INTEGER, item_name TEXT, quantity REAL, adjustment_type TEXT, loss_or_gain_value REAL DEFAULT 0, notes TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS negative_sales_logs(id INTEGER PRIMARY KEY, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TEXT);
-        CREATE TABLE IF NOT EXISTS production_logs(id INTEGER PRIMARY KEY, branch_id INTEGER, operation_type TEXT, source_details TEXT, target_item_id INTEGER, target_item_name TEXT, input_weight REAL DEFAULT 0, output_weight REAL DEFAULT 0, loss_weight REAL DEFAULT 0, total_cost REAL DEFAULT 0, unit_cost REAL DEFAULT 0, notes TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS production_logs(id INTEGER PRIMARY KEY, branch_id INTEGER, operation_type TEXT, production_type TEXT, source_details TEXT, source_item_id INTEGER, source_item_name TEXT, target_item_id INTEGER, target_item_name TEXT, input_weight REAL DEFAULT 0, output_weight REAL DEFAULT 0, loss_weight REAL DEFAULT 0, input_quantity REAL DEFAULT 0, output_quantity REAL DEFAULT 0, loss_quantity REAL DEFAULT 0, total_cost REAL DEFAULT 0, unit_cost REAL DEFAULT 0, sale_price REAL DEFAULT 0, notes TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS employees(id INTEGER PRIMARY KEY, employee_name TEXT, phone TEXT, branch_id INTEGER, salary REAL DEFAULT 0, is_active INTEGER DEFAULT 1, created_at TEXT);
         CREATE TABLE IF NOT EXISTS employee_financial_transactions(id INTEGER PRIMARY KEY, employee_id INTEGER, branch_id INTEGER, transaction_type TEXT, amount REAL DEFAULT 0, notes TEXT, transaction_date TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS role_permissions(id INTEGER PRIMARY KEY, role_name TEXT, page_name TEXT, can_access INTEGER DEFAULT 1);
@@ -167,7 +167,14 @@ def ensure_local_schema():
         # Lightweight migrations for the full desktop/local application.
         migrations = [
           ('branches','location','TEXT'), ('users','phone','TEXT'), ('users','allowed_branches',"TEXT DEFAULT 'ALL'"), ('users','custom_permissions',"TEXT DEFAULT ''"),
-          ('items','unit_type',"TEXT DEFAULT 'piece'"), ('items','no_expiry','INTEGER DEFAULT 0'), ('items','favorite_rank','INTEGER DEFAULT 0')
+          ('items','unit_type',"TEXT DEFAULT 'piece'"), ('items','no_expiry','INTEGER DEFAULT 0'), ('items','favorite_rank','INTEGER DEFAULT 0'),
+          ('production_logs','production_type','TEXT'),
+          ('production_logs','source_item_id','INTEGER'),
+          ('production_logs','source_item_name','TEXT'),
+          ('production_logs','input_quantity','REAL DEFAULT 0'),
+          ('production_logs','output_quantity','REAL DEFAULT 0'),
+          ('production_logs','loss_quantity','REAL DEFAULT 0'),
+          ('production_logs','sale_price','REAL DEFAULT 0')
         ]
         for table, col, typ in migrations:
             try: c.execute(f'ALTER TABLE {table} ADD COLUMN {col} {typ}')
@@ -195,6 +202,14 @@ def ensure_local_schema():
         for col, typ in [('treasury_id','INTEGER'), ('treasury_name','TEXT')]:
             try: c.execute(f'ALTER TABLE financial_vouchers ADD COLUMN {col} {typ}')
             except Exception: pass
+        # Keep historical production rows readable by the current production report.
+        try:
+            c.execute("UPDATE production_logs SET production_type=operation_type WHERE (production_type IS NULL OR production_type='') AND operation_type IS NOT NULL")
+            c.execute("UPDATE production_logs SET input_quantity=input_weight WHERE COALESCE(input_quantity,0)=0 AND COALESCE(input_weight,0)<>0")
+            c.execute("UPDATE production_logs SET output_quantity=output_weight WHERE COALESCE(output_quantity,0)=0 AND COALESCE(output_weight,0)<>0")
+            c.execute("UPDATE production_logs SET loss_quantity=loss_weight WHERE COALESCE(loss_quantity,0)=0 AND COALESCE(loss_weight,0)<>0")
+        except Exception:
+            pass
         c.commit(); c.close()
 
 def get_device_id():
@@ -311,7 +326,7 @@ def sync_reference_data(remote=None):
           'revenues': {'id','branch_id','revenue_source','amount','notes','description','revenue_date','created_at'},
           'stock_adjustments': {'id','branch_id','item_id','item_name','quantity','adjustment_type','loss_or_gain_value','notes','created_at'},
           'negative_sales_logs': {'id','branch_id','user_id','item_name','sale_qty','log_time'},
-          'production_logs': {'id','branch_id','operation_type','source_details','target_item_id','target_item_name','input_weight','output_weight','loss_weight','total_cost','unit_cost','notes','created_at'},
+          'production_logs': {'id','branch_id','operation_type','production_type','source_details','source_item_id','source_item_name','target_item_id','target_item_name','input_weight','output_weight','loss_weight','input_quantity','output_quantity','loss_quantity','total_cost','unit_cost','sale_price','notes','created_at'},
           'employees': {'id','employee_name','phone','branch_id','salary','is_active','created_at'},
           'employee_financial_transactions': {'id','employee_id','branch_id','transaction_type','amount','notes','transaction_date','created_at'},
           'role_permissions': {'id','role_name','page_name','can_access'},
