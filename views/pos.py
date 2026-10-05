@@ -1749,7 +1749,13 @@ def build_historical_z_html(
 # ============================================================
 
 def show_page():
-    back_button(key="back_pos")
+    role = st.session_state.get("role", "")
+    is_cashier = role == "Cashier"
+
+    # الكاشير يعمل داخل نقطة البيع مباشرة بدون زر رجوع يشتته عن شاشة البيع.
+    # بقية الأدوار تحتفظ بزر الرجوع المعتاد.
+    if not is_cashier:
+        back_button(key="back_pos")
 
     item_alerts(st.session_state.get("branch_id"), key="alerts_pos")
 
@@ -1804,24 +1810,41 @@ def show_page():
             text-align: right !important;
         }
 
+        .cashier-hero {
+            direction: rtl;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: white;
+            border-radius: 18px;
+            padding: 14px 18px;
+            margin: 4px 0 14px 0;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, .16);
+        }
+        .cashier-hero .title {font-size: 22px; font-weight: 900; margin-bottom: 4px;}
+        .cashier-hero .meta {font-size: 13px; opacity: .86;}
+        div[data-testid="stButton"] > button {
+            border-radius: 14px;
+            min-height: 46px;
+            font-weight: 800;
+        }
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stNumberInput"] input,
+        div[data-testid="stSelectbox"] > div > div {
+            border-radius: 12px !important;
+        }
+
         </style>
         """,
         unsafe_allow_html=True
     )
 
-    st.markdown(
-        """
-        <h2 class="rtl-container">
-        🛒 نقطة البيع (POS)
-        </h2>
-        """,
-        unsafe_allow_html=True
-    )
-
-    role = st.session_state.get(
-        "role",
-        ""
-    )
+    if is_cashier:
+        st.markdown(
+            """<div class="cashier-hero"><div class="title">🛒 البيع السريع</div>
+            <div class="meta">واجهة الكاشير — امسح الباركود وابدأ البيع مباشرة</div></div>""",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown('<h2 class="rtl-container">🛒 نقطة البيع (POS)</h2>', unsafe_allow_html=True)
 
     username = st.session_state.get(
         "username",
@@ -2100,68 +2123,48 @@ def show_page():
                     st.rerun()
 
         # ====================================================
-        # مركز الإجراءات السريع
+        # مركز إجراءات الكاشير الحديث
         # ====================================================
 
         if "pos_active_view" not in st.session_state:
             st.session_state["pos_active_view"] = "الكاشير السريع"
+        if st.session_state.get("pos_active_view") == "الكاشير":
+            st.session_state["pos_active_view"] = "الكاشير السريع"
 
         st.markdown("---")
-        st.markdown("### ⚡ مركز إجراءات نقطة البيع")
-        st.caption(
-            "اختر القسم المطلوب فقط؛ ستظهر أدواته عند الحاجة "
-            "بدلاً من عرض كل الخيارات في شاشة واحدة."
-        )
+        left_services, center_status, right_services = st.columns([1.15, 2.7, 1.15], gap="medium")
 
-        nav1, nav2, nav3, nav4 = st.columns(4)
+        with right_services:
+            st.markdown("#### ⚡ البيع")
+            if st.button("🛒 البيع السريع", key="pos_nav_quick", use_container_width=True,
+                         type="primary" if st.session_state["pos_active_view"] == "الكاشير السريع" else "secondary"):
+                st.session_state["pos_active_view"] = "الكاشير السريع"
+                st.rerun()
+            if st.button("🔎 بحث / بيع يدوي", key="pos_nav_manual", use_container_width=True,
+                         type="primary" if st.session_state["pos_active_view"] == "البحث اليدوي" else "secondary"):
+                st.session_state["pos_active_view"] = "البحث اليدوي"
+                st.rerun()
 
-        if nav1.button(
-            "🛒 البيع السريع",
-            use_container_width=True,
-            type=(
-                "primary"
-                if st.session_state["pos_active_view"] == "الكاشير السريع"
-                else "secondary"
+        with center_status:
+            st.markdown(
+                f"""<div class="top-panel" style="text-align:center; border-radius:16px; padding:16px;">
+                <b style="font-size:18px;">🏪 {branch_name_display}</b><br>
+                <span>👤 {username} &nbsp; • &nbsp; 🕒 وردية {current_shift_num} &nbsp; • &nbsp; 🧾 فاتورة اليوم #{daily_inv_num}</span>
+                </div>""",
+                unsafe_allow_html=True,
             )
-        ):
-            st.session_state["pos_active_view"] = "الكاشير السريع"
-            st.rerun()
+            st.caption("الخدمات موزعة على الجانبين حتى تظل منطقة البيع في المنتصف خفيفة وواضحة.")
 
-        if nav2.button(
-            "🔎 بيع يدوي",
-            use_container_width=True,
-            type=(
-                "primary"
-                if st.session_state["pos_active_view"] == "البحث اليدوي"
-                else "secondary"
-            )
-        ):
-            st.session_state["pos_active_view"] = "البحث اليدوي"
-            st.rerun()
-
-        if nav3.button(
-            "📊 التقارير والإغلاق",
-            use_container_width=True,
-            type=(
-                "primary"
-                if st.session_state["pos_active_view"] == "التقارير"
-                else "secondary"
-            )
-        ):
-            st.session_state["pos_active_view"] = "التقارير"
-            st.rerun()
-
-        if nav4.button(
-            "🗂️ الأرشيف والطباعة",
-            use_container_width=True,
-            type=(
-                "primary"
-                if st.session_state["pos_active_view"] == "الأرشيف"
-                else "secondary"
-            )
-        ):
-            st.session_state["pos_active_view"] = "الأرشيف"
-            st.rerun()
+        with left_services:
+            st.markdown("#### 🧰 الخدمات")
+            if st.button("🗂️ الأرشيف والطباعة", key="pos_nav_archive", use_container_width=True,
+                         type="primary" if st.session_state["pos_active_view"] == "الأرشيف" else "secondary"):
+                st.session_state["pos_active_view"] = "الأرشيف"
+                st.rerun()
+            if st.button("📊 التقارير والإغلاق", key="pos_nav_reports", use_container_width=True,
+                         type="primary" if st.session_state["pos_active_view"] == "التقارير" else "secondary"):
+                st.session_state["pos_active_view"] = "التقارير"
+                st.rerun()
 
         st.markdown("---")
 
