@@ -433,6 +433,9 @@ MENU_GROUPS = {
         ("🥜 التحميص والخلط", "6- تقرير الإنتاج", {"production_screen_mode": "log"}),
         ("💰 المصروفات", "7- تقرير المصروفات والإيرادات", {"finance_screen_mode": "archive"}),
     ],
+    "🤖 المساعد الذكي AI": [
+        ("🤖 المساعد الذكي AI", "🤖 فتح المساعد الذكي", {}),
+    ],
     "🔄 التحويلات وتزويد الفروع": [
         ("🔄 تزويد الفروع والأرشيف", "1- إنشاء فاتورة تزويد فرع", {"transfers_mode": "new"}),
         ("🔄 تزويد الفروع والأرشيف", "2- أرشيف التحويلات والتزويد", {"transfers_mode": "archive"}),
@@ -631,6 +634,13 @@ elif choice == "🛒 نقطة البيع (POS)":
         pos.show_page()
     except ImportError as e:
         st.error("❌ تعذر تحميل شاشة نقطة البيع بسبب ملف أو مكتبة مفقودة.")
+        st.code(str(e))
+elif choice == "🤖 المساعد الذكي AI":
+    try:
+        from views import ai_assistant
+        ai_assistant.show_page()
+    except ImportError as e:
+        st.warning("⚠️ شاشة المساعد الذكي غير متاحة حالياً.")
         st.code(str(e))
 elif choice == "🏢 إدارة الفروع":
     try:
