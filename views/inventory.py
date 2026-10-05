@@ -3,9 +3,33 @@ from views.ui_common import item_alerts
 import streamlit as st
 import pandas as pd
 import io
-from datetime import date
+from datetime import date, datetime
 from database import get_db_connection
 
+
+
+def _as_date(value):
+    """Normalize SQLite/PostgreSQL date values to datetime.date."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    # Handles YYYY-MM-DD and ISO datetime strings.
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text[:10], fmt).date()
+        except ValueError:
+            continue
+    return None
 
 def ensure_inventory_columns():
     conn = None
@@ -144,7 +168,7 @@ def get_branch_items(branch_id):
 
         for row in rows:
             unit_type = row["unit_type"] or "piece"
-            nearest = row["nearest_expiry"]
+            nearest = _as_date(row["nearest_expiry"])
 
             if nearest:
                 days_left = (nearest - today).days
@@ -1023,7 +1047,10 @@ def show_page():
             today = date.today()
             batch_data = []
             for row in batch_rows:
-                days_left = (row["expiry_date"] - today).days
+                expiry_date = _as_date(row["expiry_date"])
+                if expiry_date is None:
+                    continue
+                days_left = (expiry_date - today).days
                 if days_left < 0:
                     status = f"🔴 منتهي منذ {abs(days_left)} يوم"
                 elif days_left == 0:
@@ -1040,7 +1067,7 @@ def show_page():
                     "الكود": row["item_code"],
                     "اسم الصنف": row["item_name"],
                     "تاريخ الدخول": row["received_date"],
-                    "تاريخ الانتهاء": row["expiry_date"],
+                    "تاريخ الانتهاء": expiry_date,
                     "كمية الدفعة": float(row["quantity"] or 0),
                     "المتبقي": float(row["remaining_quantity"] or 0),
                     "تكلفة الوحدة": float(row["unit_cost"] or 0),
