@@ -488,7 +488,15 @@ def sync_pending_sales(remote=None):
 
 
 def _ensure_remote_finance_schema(remote):
-    """Create central finance tables needed by locally queued voucher/treasury operations."""
+    """Create/upgrade central schema needed by locally queued operations."""
+    # Item master upgrades used by inventory editor / scale barcode.
+    # Must exist centrally BEFORE replaying queued UPDATE items statements, otherwise
+    # a successful local edit would fail to upload and the next reference download
+    # would restore the old server value.
+    try:
+        remote.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS scale_code TEXT")
+    except Exception:
+        pass
     remote.execute("""
         CREATE TABLE IF NOT EXISTS treasuries(
             id BIGSERIAL PRIMARY KEY,
