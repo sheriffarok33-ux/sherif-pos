@@ -115,8 +115,8 @@ def ensure_local_schema():
         CREATE TABLE IF NOT EXISTS stock_adjustments(id INTEGER PRIMARY KEY, branch_id INTEGER, item_id INTEGER, item_name TEXT, quantity REAL, adjustment_type TEXT, loss_or_gain_value REAL DEFAULT 0, notes TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS negative_sales_logs(id INTEGER PRIMARY KEY, branch_id INTEGER, user_id INTEGER, item_name TEXT, sale_qty REAL, log_time TEXT);
         CREATE TABLE IF NOT EXISTS production_logs(id INTEGER PRIMARY KEY, branch_id INTEGER, operation_type TEXT, production_type TEXT, source_details TEXT, source_item_id INTEGER, source_item_name TEXT, target_item_id INTEGER, target_item_name TEXT, input_weight REAL DEFAULT 0, output_weight REAL DEFAULT 0, loss_weight REAL DEFAULT 0, input_quantity REAL DEFAULT 0, output_quantity REAL DEFAULT 0, loss_quantity REAL DEFAULT 0, total_cost REAL DEFAULT 0, unit_cost REAL DEFAULT 0, sale_price REAL DEFAULT 0, notes TEXT, created_at TEXT);
-        CREATE TABLE IF NOT EXISTS employees(id INTEGER PRIMARY KEY, employee_name TEXT, phone TEXT, branch_id INTEGER, salary REAL DEFAULT 0, is_active INTEGER DEFAULT 1, created_at TEXT);
-        CREATE TABLE IF NOT EXISTS employee_financial_transactions(id INTEGER PRIMARY KEY, employee_id INTEGER, branch_id INTEGER, transaction_type TEXT, amount REAL DEFAULT 0, notes TEXT, transaction_date TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS employees(id INTEGER PRIMARY KEY, user_id INTEGER, full_name TEXT, employee_name TEXT, phone TEXT, address TEXT, emergency_name TEXT, emergency_phone TEXT, emergency_relation TEXT, branch_id INTEGER, monthly_salary REAL DEFAULT 0, salary REAL DEFAULT 0, hire_date TEXT, termination_date TEXT, employment_status TEXT DEFAULT 'active', is_active INTEGER DEFAULT 1, notes TEXT, created_at TEXT, updated_at TEXT);
+        CREATE TABLE IF NOT EXISTS employee_financial_transactions(id INTEGER PRIMARY KEY, employee_id INTEGER, branch_id INTEGER, transaction_type TEXT, amount REAL DEFAULT 0, payroll_year INTEGER, payroll_month INTEGER, work_days INTEGER, month_days INTEGER, base_salary REAL DEFAULT 0, notes TEXT, expense_id INTEGER, created_by INTEGER, transaction_date TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS role_permissions(id INTEGER PRIMARY KEY, role_name TEXT, page_name TEXT, can_access INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS custom_labels(id INTEGER PRIMARY KEY, label_key TEXT, label_value TEXT);
         CREATE TABLE IF NOT EXISTS activity_logs(id INTEGER PRIMARY KEY, user_id INTEGER, branch_id INTEGER, action_type TEXT, details TEXT, created_at TEXT);
@@ -174,7 +174,26 @@ def ensure_local_schema():
           ('production_logs','input_quantity','REAL DEFAULT 0'),
           ('production_logs','output_quantity','REAL DEFAULT 0'),
           ('production_logs','loss_quantity','REAL DEFAULT 0'),
-          ('production_logs','sale_price','REAL DEFAULT 0')
+          ('production_logs','sale_price','REAL DEFAULT 0'),
+          ('employees','user_id','INTEGER'),
+          ('employees','full_name','TEXT'),
+          ('employees','address','TEXT'),
+          ('employees','emergency_name','TEXT'),
+          ('employees','emergency_phone','TEXT'),
+          ('employees','emergency_relation','TEXT'),
+          ('employees','monthly_salary','REAL DEFAULT 0'),
+          ('employees','hire_date','TEXT'),
+          ('employees','termination_date','TEXT'),
+          ('employees','employment_status',"TEXT DEFAULT 'active'"),
+          ('employees','notes','TEXT'),
+          ('employees','updated_at','TEXT'),
+          ('employee_financial_transactions','payroll_year','INTEGER'),
+          ('employee_financial_transactions','payroll_month','INTEGER'),
+          ('employee_financial_transactions','work_days','INTEGER'),
+          ('employee_financial_transactions','month_days','INTEGER'),
+          ('employee_financial_transactions','base_salary','REAL DEFAULT 0'),
+          ('employee_financial_transactions','expense_id','INTEGER'),
+          ('employee_financial_transactions','created_by','INTEGER')
         ]
         for table, col, typ in migrations:
             try: c.execute(f'ALTER TABLE {table} ADD COLUMN {col} {typ}')
@@ -202,6 +221,14 @@ def ensure_local_schema():
         for col, typ in [('treasury_id','INTEGER'), ('treasury_name','TEXT')]:
             try: c.execute(f'ALTER TABLE financial_vouchers ADD COLUMN {col} {typ}')
             except Exception: pass
+        # Upgrade legacy HR rows without deleting old employee data.
+        try:
+            c.execute("UPDATE employees SET full_name=employee_name WHERE (full_name IS NULL OR TRIM(full_name)='') AND employee_name IS NOT NULL")
+            c.execute("UPDATE employees SET monthly_salary=salary WHERE COALESCE(monthly_salary,0)=0 AND COALESCE(salary,0)<>0")
+            c.execute("UPDATE employees SET employment_status=CASE WHEN COALESCE(is_active,1)=1 THEN 'active' ELSE 'terminated' END WHERE employment_status IS NULL OR employment_status=''")
+            c.execute("UPDATE employees SET hire_date=COALESCE(hire_date, substr(created_at,1,10), date('now')) WHERE hire_date IS NULL OR hire_date=''")
+        except Exception:
+            pass
         # Keep historical production rows readable by the current production report.
         try:
             c.execute("UPDATE production_logs SET production_type=operation_type WHERE (production_type IS NULL OR production_type='') AND operation_type IS NOT NULL")
@@ -327,8 +354,8 @@ def sync_reference_data(remote=None):
           'stock_adjustments': {'id','branch_id','item_id','item_name','quantity','adjustment_type','loss_or_gain_value','notes','created_at'},
           'negative_sales_logs': {'id','branch_id','user_id','item_name','sale_qty','log_time'},
           'production_logs': {'id','branch_id','operation_type','production_type','source_details','source_item_id','source_item_name','target_item_id','target_item_name','input_weight','output_weight','loss_weight','input_quantity','output_quantity','loss_quantity','total_cost','unit_cost','sale_price','notes','created_at'},
-          'employees': {'id','employee_name','phone','branch_id','salary','is_active','created_at'},
-          'employee_financial_transactions': {'id','employee_id','branch_id','transaction_type','amount','notes','transaction_date','created_at'},
+          'employees': {'id','user_id','full_name','employee_name','phone','address','emergency_name','emergency_phone','emergency_relation','branch_id','monthly_salary','salary','hire_date','termination_date','employment_status','is_active','notes','created_at','updated_at'},
+          'employee_financial_transactions': {'id','employee_id','branch_id','transaction_type','amount','payroll_year','payroll_month','work_days','month_days','base_salary','notes','expense_id','created_by','transaction_date','created_at'},
           'role_permissions': {'id','role_name','page_name','can_access'},
           'custom_labels': {'id','label_key','label_value'},
           'activity_logs': {'id','user_id','branch_id','action_type','details','created_at'},
