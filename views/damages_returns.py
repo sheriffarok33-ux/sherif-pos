@@ -55,217 +55,80 @@ def get_branch_items(branch_id):
             conn.close()
 
 
+def _get_main_warehouse(conn):
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(branches)").fetchall()}
+    if "branch_type" in cols:
+        row = conn.execute("""SELECT id,branch_name FROM branches WHERE lower(COALESCE(branch_type,'')) IN ('main','main_warehouse','warehouse','central') OR branch_type LIKE '%رئيس%' OR branch_type LIKE '%مخزن%' ORDER BY id LIMIT 1""").fetchone()
+        if row: return row
+    return conn.execute("""SELECT id,branch_name FROM branches WHERE branch_name LIKE '%المخزن الرئيسي%' OR branch_name LIKE '%مخزن رئيس%' OR branch_name LIKE '%الرئيسي%' ORDER BY id LIMIT 1""").fetchone()
+
+def _ensure_damaged_stock_schema(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS damaged_stock (id INTEGER PRIMARY KEY AUTOINCREMENT, main_branch_id INTEGER NOT NULL, source_branch_id INTEGER NOT NULL, item_code TEXT, item_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 0, damage_type TEXT NOT NULL, notes TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+
+def _add_saleable_to_main(conn, main_branch_id, source_item, qty):
+    code=str(source_item["item_code"] or "").strip()
+    target=conn.execute("SELECT id FROM items WHERE branch_id=? AND item_code=? LIMIT 1",(main_branch_id,code)).fetchone() if code else None
+    if not target:
+        target=conn.execute("SELECT id FROM items WHERE branch_id=? AND item_name=? LIMIT 1",(main_branch_id,source_item["item_name"])).fetchone()
+    if target:
+        conn.execute("UPDATE items SET quantity=COALESCE(quantity,0)+? WHERE id=?",(qty,target["id"])); return
+    cols={r["name"] for r in conn.execute("PRAGMA table_info(items)").fetchall()}
+    fields=["item_name","branch_id","quantity"]; vals=[source_item["item_name"],main_branch_id,qty]
+    for col in ["item_code","buy_price","avg_cost","sale_price"]:
+        if col in cols: fields.append(col); vals.append(source_item[col])
+    conn.execute(f"INSERT INTO items({','.join(fields)}) VALUES({','.join(['?']*len(fields))})",tuple(vals))
+
+
 # ============================================================
 # تسجيل تلف / مرتجع
 # ============================================================
 
-def execute_adjustment(
-    branch_id,
-    item_id,
-    qty,
-    adj_type,
-    notes
-):
-
-    conn = None
-
+def execute_adjustment(branch_id,item_id,qty,adj_type,notes):
+    conn=None
     try:
-        conn = get_db_connection()
-
-        # قفل الصنف أثناء الحركة
-        item = conn.execute(
-            """
-            SELECT
-                id,
-                item_name,
-                quantity,
-                buy_price,
-                avg_cost
-            FROM items
-            WHERE id = ?
-            AND branch_id = ?
-            FOR UPDATE
-            """,
-            (item_id, branch_id)
-        ).fetchone()
-
-        if not item:
-            raise ValueError(
-                "الصنف غير موجود في الفرع المحدد."
-            )
-
-        current_qty = float(
-            item["quantity"] or 0
-        )
-
-        avg_cost = float(
-            item["avg_cost"] or 0
-        )
-
-        buy_price = float(
-            item["buy_price"] or 0
-        )
-
-        unit_cost = (
-            avg_cost
-            if avg_cost > 0
-            else buy_price
-        )
-
-        total_value = (
-            float(qty) * unit_cost
-        )
-
-        # ----------------------------------------------------
-        # مرتجع صالح / إعادة صنف مُصلح
-        # ----------------------------------------------------
-
-        if (
-            "صالح للبيع" in adj_type
-            or "إعادة صنف تالف/مُصلح" in adj_type
-        ):
-
-            conn.execute(
-                """
-                UPDATE items
-                SET quantity = quantity + ?
-                WHERE id = ?
-                AND branch_id = ?
-                """,
-                (
-                    qty,
-                    item_id,
-                    branch_id
-                )
-            )
-
-            if "إعادة صنف تالف/مُصلح" in adj_type:
-
-                db_type = (
-                    "إعادة صنف مُصلح للخدمة"
-                )
-
-                # تخفيض قيمة الخسائر السابقة
-                total_value = -total_value
-
-            else:
-
-                db_type = (
-                    "مرتجع صالح للبيع"
-                )
-
-                # المرتجع الصالح ليس خسارة
-                total_value = 0.0
-
-        # ----------------------------------------------------
-        # تلف / منتهي / مرتجع تالف
-        # ----------------------------------------------------
-
-        elif (
-            "تلف" in adj_type
-            or "منتهي" in adj_type
-            or "مرتجع زبون - تالف" in adj_type
-        ):
-
-            if float(qty) > current_qty:
-
-                raise ValueError(
-                    f"الكمية المطلوبة ({qty}) "
-                    f"أكبر من الرصيد المتاح "
-                    f"({current_qty})."
-                )
-
-            conn.execute(
-                """
-                UPDATE items
-                SET quantity = quantity - ?
-                WHERE id = ?
-                AND branch_id = ?
-                """,
-                (
-                    qty,
-                    item_id,
-                    branch_id
-                )
-            )
-
-            if "منتهي" in adj_type:
-
-                db_type = (
-                    "منتهي الصلاحية"
-                )
-
-            elif "مرتجع زبون - تالف" in adj_type:
-
-                db_type = (
-                    "مرتجع زبون - تالف"
-                )
-
-            else:
-
-                db_type = (
-                    "تالف / هالك"
-                )
-
+        conn=get_db_connection()
+        item=conn.execute("SELECT id,item_code,item_name,quantity,buy_price,avg_cost,sale_price FROM items WHERE id=? AND branch_id=? FOR UPDATE",(item_id,branch_id)).fetchone()
+        if not item: raise ValueError("الصنف غير موجود في الفرع المحدد.")
+        qty=float(qty); current=float(item["quantity"] or 0)
+        if qty<=0: raise ValueError("الكمية يجب أن تكون أكبر من صفر.")
+        main=_get_main_warehouse(conn)
+        if not main: raise ValueError("لم يتم العثور على المخزن الرئيسي. تأكد من تعريفه في إدارة الفروع.")
+        main_id=int(main["id"]); source_is_main=int(branch_id)==main_id
+        unit_cost=float(item["avg_cost"] or item["buy_price"] or 0); total_value=qty*unit_cost
+        good=("صالح للبيع" in adj_type or "إعادة صنف تالف/مُصلح" in adj_type)
+        bad=("تلف" in adj_type or "هالك" in adj_type or "منتهي" in adj_type or "مرتجع زبون - تالف" in adj_type)
+        if not (good or bad): raise ValueError("نوع الحركة غير معروف.")
+        if not source_is_main:
+            if qty>current: raise ValueError(f"الكمية المطلوبة ({qty}) أكبر من الرصيد المتاح ({current}).")
+            conn.execute("UPDATE items SET quantity=quantity-? WHERE id=? AND branch_id=?",(qty,item_id,branch_id))
+        if good:
+            if source_is_main:
+                if "إعادة صنف تالف/مُصلح" in adj_type: conn.execute("UPDATE items SET quantity=quantity+? WHERE id=?",(qty,item_id))
+            else: _add_saleable_to_main(conn,main_id,item,qty)
+            if "إعادة صنف تالف/مُصلح" in adj_type: db_type="إعادة صنف مُصلح للخدمة"; total_value=-total_value
+            else: db_type="مرتجع صالح للبيع"; total_value=0.0
         else:
-
-            raise ValueError(
-                "نوع الحركة غير معروف."
-            )
-
-        # ----------------------------------------------------
-        # تسجيل الحركة
-        # ----------------------------------------------------
-
-        conn.execute(
-            """
-            INSERT INTO stock_adjustments
-            (
-                branch_id,
-                item_id,
-                item_name,
-                quantity,
-                adjustment_type,
-                loss_or_gain_value,
-                notes
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                branch_id,
-                item_id,
-                item["item_name"],
-                qty,
-                db_type,
-                total_value,
-                notes.strip()
-            )
-        )
-
+            if source_is_main:
+                if qty>current: raise ValueError(f"الكمية المطلوبة ({qty}) أكبر من الرصيد المتاح ({current}).")
+                conn.execute("UPDATE items SET quantity=quantity-? WHERE id=?",(qty,item_id))
+            _ensure_damaged_stock_schema(conn)
+            db_type="منتهي الصلاحية" if "منتهي" in adj_type else ("مرتجع زبون - تالف" if "مرتجع زبون - تالف" in adj_type else "تالف / هالك")
+            conn.execute("INSERT INTO damaged_stock(main_branch_id,source_branch_id,item_code,item_name,quantity,damage_type,notes) VALUES(?,?,?,?,?,?,?)",(main_id,branch_id,item["item_code"],item["item_name"],qty,db_type,notes.strip()))
+        movement_notes=(notes.strip()+(" | " if notes.strip() else "")+(f"تحويل إلى {main['branch_name']}" if not source_is_main else "حركة داخل المخزن الرئيسي"))
+        conn.execute("INSERT INTO stock_adjustments(branch_id,item_id,item_name,quantity,adjustment_type,loss_or_gain_value,notes) VALUES(?,?,?,?,?,?,?)",(branch_id,item_id,item["item_name"],qty,db_type,total_value,movement_notes))
         conn.commit()
-
-        _damages_done("تم تسجيل الحركة وتحديث المخزون بنجاح.")
-
+        if source_is_main: msg=f"تم تسجيل {db_type} في المخزن الرئيسي بكمية {qty:,.2f}."
+        elif good: msg=f"تم خصم {qty:,.2f} من الفرع وإرجاعها إلى {main['branch_name']} كمخزون صالح."
+        else: msg=f"تم خصم {qty:,.2f} من الفرع وإرجاعها إلى {main['branch_name']} كرَصيد تالف/غير صالح للبيع."
+        _damages_done(msg)
     except Exception as e:
-
         if conn:
-            conn.rollback()
-
-        st.error(
-            "❌ تعذر تنفيذ حركة المخزون."
-        )
-
-        st.code(str(e))
-
+            try: conn.rollback()
+            except Exception: pass
+        st.error(f"❌ تعذر تسجيل الحركة: {e}")
     finally:
+        if conn: conn.close()
 
-        if conn:
-            conn.close()
-
-
-# ============================================================
-# إضافة فائض
-# ============================================================
 
 def execute_surplus(
     branch_id,
