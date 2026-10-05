@@ -1821,6 +1821,28 @@ def show_page():
         }
         .cashier-hero .title {font-size: 22px; font-weight: 900; margin-bottom: 4px;}
         .cashier-hero .meta {font-size: 13px; opacity: .86;}
+        .customer-display {
+            direction: rtl;
+            display: grid;
+            grid-template-columns: 1.15fr .9fr .9fr 1.45fr;
+            gap: 10px;
+            align-items: stretch;
+            margin-top: 10px;
+        }
+        .customer-display .cell {
+            background: #ffffff;
+            border: 1px solid #cbd5e1;
+            border-radius: 14px;
+            padding: 10px 12px;
+            text-align: center;
+            color: #0f172a;
+            box-shadow: 0 4px 14px rgba(15,23,42,.06);
+        }
+        .customer-display .label {font-size: 12px; color:#64748b; font-weight:800;}
+        .customer-display .value {font-size: 20px; font-weight: 950; margin-top:3px;}
+        .customer-display .grand {background:#0f172a; color:#fff; border-color:#0f172a;}
+        .customer-display .grand .label {color:#cbd5e1;}
+        .customer-display .grand .value {font-size: 27px;}
         div[data-testid="stButton"] > button {
             border-radius: 14px;
             min-height: 46px;
@@ -2131,6 +2153,12 @@ def show_page():
         if st.session_state.get("pos_active_view") == "الكاشير":
             st.session_state["pos_active_view"] = "الكاشير السريع"
 
+        # ملخص الفاتورة الحي — يظهر أعلى الشاشة مثل Customer Display
+        cart_summary_items = st.session_state.get("cart", [])
+        cart_distinct_items = len(cart_summary_items)
+        cart_total_qty = sum(float(item.get("qty", 0) or 0) for item in cart_summary_items)
+        cart_total_value = sum(float(item.get("total", 0) or 0) for item in cart_summary_items)
+
         st.markdown("---")
         left_services, center_status, right_services = st.columns([1.15, 2.7, 1.15], gap="medium")
 
@@ -2147,13 +2175,18 @@ def show_page():
 
         with center_status:
             st.markdown(
-                f"""<div class="top-panel" style="text-align:center; border-radius:16px; padding:16px;">
+                f"""<div class="top-panel" style="text-align:center; border-radius:16px; padding:14px;">
                 <b style="font-size:18px;">🏪 {branch_name_display}</b><br>
                 <span>👤 {username} &nbsp; • &nbsp; 🕒 وردية {current_shift_num} &nbsp; • &nbsp; 🧾 فاتورة اليوم #{daily_inv_num}</span>
+                <div class="customer-display">
+                    <div class="cell"><div class="label">🧾 رقم الفاتورة</div><div class="value">#{daily_inv_num}</div></div>
+                    <div class="cell"><div class="label">📦 عدد الأصناف</div><div class="value">{cart_distinct_items}</div></div>
+                    <div class="cell"><div class="label">⚖️ إجمالي الكمية</div><div class="value">{cart_total_qty:,.3f}</div></div>
+                    <div class="cell grand"><div class="label">💰 إجمالي الفاتورة</div><div class="value">{cart_total_value:,.2f} د.ل</div></div>
+                </div>
                 </div>""",
                 unsafe_allow_html=True,
             )
-            st.caption("الخدمات موزعة على الجانبين حتى تظل منطقة البيع في المنتصف خفيفة وواضحة.")
 
         with left_services:
             st.markdown("#### 🧰 الخدمات")
@@ -2179,9 +2212,9 @@ def show_page():
             == "الكاشير السريع"
         ):
 
-            col_qty, col_bar, col_info = (
+            col_qty, col_bar = (
                 st.columns(
-                    [1, 2, 2]
+                    [1, 3]
                 )
             )
 
@@ -2206,19 +2239,6 @@ def show_page():
                     )
                 )
 
-            with col_info:
-
-                st.info(
-                    f"فاتورة اليوم: "
-                    f"#{daily_inv_num}\n\n"
-                    f"الوردية: "
-                    f"{current_shift_num}\n\n"
-                    f"الفرع: "
-                    f"{branch_name_display}\n\n"
-                    f"الكاشير: "
-                    f"{username}"
-                )
-
             st.markdown(
                 "### 🧾 محتويات "
                 "سلة المبيعات"
@@ -2230,31 +2250,9 @@ def show_page():
                 ]
             )
 
-            total_cart_qty = sum(
-                float(item["qty"])
-                for item
-                in cart_items_list
-            )
-
-            total_cart_val = sum(
-                float(item["total"])
-                for item
-                in cart_items_list
-            )
-
-            stat_c1, stat_c2 = (
-                st.columns(2)
-            )
-
-            stat_c1.metric(
-                "📦 إجمالي الكمية",
-                f"{total_cart_qty:,.2f}"
-            )
-
-            stat_c2.metric(
-                "💰 إجمالي الفاتورة",
-                f"{total_cart_val:,.2f} د.ل"
-            )
+            # الملخص ظاهر أعلى الشاشة بشكل دائم؛ لا نكرره هنا.
+            total_cart_qty = cart_total_qty
+            total_cart_val = cart_total_value
 
             st.markdown("---")
 
