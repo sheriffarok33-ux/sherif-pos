@@ -2,7 +2,7 @@ import os
 import re
 import streamlit as st
 from database import initialize_database, get_db_connection, get_remote_connection
-from offline_store import ensure_local_schema, offline_login, sync_reference_data, sync_pending_sales, sync_pending_operations, pending_count, get_local_connection
+from offline_store import ensure_local_schema, offline_login, sync_reference_data, sync_after_login, sync_pending_sales, sync_pending_operations, pending_count, get_local_connection
 from backup_manager import daily_backup
 
 # إعدادات الصفحة الأساسية
@@ -308,12 +308,16 @@ if not st.session_state["logged_in"]:
                         daily_backup(user["branch_id"])
                     except Exception:
                         pass
-                    try:
-                        sync_pending_sales(conn)
-                        sync_pending_operations(conn)
-                        sync_reference_data(conn)
-                    except Exception:
-                        pass
+                    # مزامنة الدخول يجب أن تُنزّل الفروع/المخزن الرئيسي تلقائياً.
+                    # لا نعتمد على زر المزامنة داخل شاشة المبيعات.
+                    login_sync = sync_after_login(conn)
+                    if not login_sync.get("download_ok"):
+                        st.session_state["_login_sync_warning"] = (
+                            "تم تسجيل الدخول، لكن تعذر تحديث بيانات الفروع محلياً: "
+                            + str(login_sync.get("download_error") or "خطأ غير معروف")
+                        )
+                    else:
+                        st.session_state.pop("_login_sync_warning", None)
                     st.session_state["logged_in"] = True
                     st.session_state["username"] = user["username"]
                     st.session_state["role"] = user["role"]

@@ -525,6 +525,72 @@ def pending_operations_count():
     try: return int(c.execute("SELECT COUNT(*) FROM sync_queue WHERE sync_status='pending'").fetchone()[0])
     finally: c.close()
 
+
+def sync_after_login(remote=None):
+    """
+    Login synchronization.
+    Upload local pending work first, then refresh reference data (especially branches)
+    so every screen sees the main warehouse without requiring the POS sync button.
+    """
+    from database import get_remote_connection
+    own = remote is None
+    r = remote or get_remote_connection()
+    upload_errors = []
+    sales_result = (0, 0)
+    ops_result = (0, 0)
+
+    try:
+        try:
+            sales_result = sync_pending_sales(r)
+        except Exception as e:
+            upload_errors.append(f"sales: {e}")
+            try: r.rollback()
+            except Exception: pass
+
+        try:
+            ops_result = sync_pending_operations(r)
+        except Exception as e:
+            upload_errors.append(f"operations: {e}")
+            try: r.rollback()
+            except Exception: pass
+
+        # A failed upload must not make branches/main warehouse disappear locally.
+        # Use the current connection first; if it was left unusable, retry download
+        # using a clean remote connection.
+        ok, err = sync_reference_data(r)
+        if not ok:
+            fresh = None
+            try:
+                fresh = get_remote_connection()
+                ok, err = sync_reference_data(fresh)
+            finally:
+                if fresh:
+                    try: fresh.close()
+                    except Exception: pass
+
+        # Verify that branches really arrived locally before declaring download OK.
+        if ok:
+            lc = get_local_connection(queue_writes=False)
+            try:
+                count = lc.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
+                if int(count or 0) == 0:
+                    ok, err = False, "لم يتم تنزيل بيانات الفروع إلى القاعدة المحلية."
+            finally:
+                lc.close()
+
+        return {
+            "sales": sales_result,
+            "operations": ops_result,
+            "download_ok": bool(ok),
+            "download_error": err,
+            "upload_errors": upload_errors,
+        }
+    finally:
+        if own:
+            try: r.close()
+            except Exception: pass
+
+
 def sync_now():
     from database import get_remote_connection
     remote=get_remote_connection()
