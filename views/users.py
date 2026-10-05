@@ -14,6 +14,39 @@ def due(salary,hire,end,y,m):
     days=max(0,(finish-start).days+1) if finish>=start else 0
     return round(float(salary or 0)*days/md,2),days,md
 
+
+def _ensure_local_hr_schema(conn):
+    """Upgrade old local HR tables in-place; keeps all existing employee records."""
+    emp_cols = {
+        "user_id":"INTEGER", "full_name":"TEXT", "address":"TEXT",
+        "emergency_name":"TEXT", "emergency_phone":"TEXT", "emergency_relation":"TEXT",
+        "monthly_salary":"REAL DEFAULT 0", "hire_date":"TEXT", "termination_date":"TEXT",
+        "employment_status":"TEXT DEFAULT 'active'", "notes":"TEXT", "updated_at":"TEXT"
+    }
+    tx_cols = {
+        "payroll_year":"INTEGER", "payroll_month":"INTEGER", "work_days":"INTEGER",
+        "month_days":"INTEGER", "base_salary":"REAL DEFAULT 0", "expense_id":"INTEGER",
+        "created_by":"INTEGER"
+    }
+    existing = {r["name"] for r in conn.execute("PRAGMA table_info(employees)").fetchall()}
+    for col, typ in emp_cols.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE employees ADD COLUMN {col} {typ}")
+    existing_tx = {r["name"] for r in conn.execute("PRAGMA table_info(employee_financial_transactions)").fetchall()}
+    for col, typ in tx_cols.items():
+        if col not in existing_tx:
+            conn.execute(f"ALTER TABLE employee_financial_transactions ADD COLUMN {col} {typ}")
+    # Map legacy fields into the current HR fields.
+    final_cols = {r["name"] for r in conn.execute("PRAGMA table_info(employees)").fetchall()}
+    if "employee_name" in final_cols:
+        conn.execute("UPDATE employees SET full_name=employee_name WHERE (full_name IS NULL OR TRIM(full_name)='') AND employee_name IS NOT NULL")
+    if "salary" in final_cols:
+        conn.execute("UPDATE employees SET monthly_salary=salary WHERE COALESCE(monthly_salary,0)=0 AND COALESCE(salary,0)<>0")
+    if "is_active" in final_cols:
+        conn.execute("UPDATE employees SET employment_status=CASE WHEN COALESCE(is_active,1)=1 THEN 'active' ELSE 'terminated' END WHERE employment_status IS NULL OR employment_status=''")
+    conn.execute("UPDATE employees SET hire_date=COALESCE(NULLIF(hire_date,''), substr(created_at,1,10), date('now')) WHERE hire_date IS NULL OR hire_date=''")
+    conn.commit()
+
 def employees(conn,active=False):
     w="WHERE e.employment_status='active'" if active else ""
     return conn.execute(f"""SELECT e.*,b.branch_name,u.username,u.role
@@ -75,6 +108,7 @@ def show_page():
     conn=None
     try:
         conn=get_db_connection()
+        _ensure_local_hr_schema(conn)
         bs=conn.execute("SELECT id,branch_name FROM branches ORDER BY id").fetchall()
         bm={b["branch_name"]:b["id"] for b in bs}; v=st.session_state.hr_view
 
