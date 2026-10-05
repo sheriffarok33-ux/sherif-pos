@@ -87,7 +87,7 @@ def ensure_local_schema():
         CREATE TABLE IF NOT EXISTS items(
           id INTEGER PRIMARY KEY, item_code TEXT, item_name TEXT, unit TEXT, quantity REAL DEFAULT 0,
           buy_price REAL DEFAULT 0, sale_price REAL DEFAULT 0, avg_cost REAL DEFAULT 0,
-          branch_id INTEGER, expiry_date TEXT, pieces_per_carton REAL DEFAULT 1, image_path TEXT);
+          branch_id INTEGER, expiry_date TEXT, pieces_per_carton REAL DEFAULT 1, image_path TEXT, scale_code TEXT);
         CREATE TABLE IF NOT EXISTS customers(
           id INTEGER PRIMARY KEY, customer_name TEXT, phone TEXT, total_purchases REAL DEFAULT 0,
           balance REAL DEFAULT 0, marketing_consent INTEGER DEFAULT 0);
@@ -179,7 +179,7 @@ def ensure_local_schema():
         # Lightweight migrations for the full desktop/local application.
         migrations = [
           ('branches','location','TEXT'), ('users','phone','TEXT'), ('users','allowed_branches',"TEXT DEFAULT 'ALL'"), ('users','custom_permissions',"TEXT DEFAULT ''"),
-          ('items','unit_type',"TEXT DEFAULT 'piece'"), ('items','no_expiry','INTEGER DEFAULT 0'), ('items','favorite_rank','INTEGER DEFAULT 0'),
+          ('items','unit_type',"TEXT DEFAULT 'piece'"), ('items','no_expiry','INTEGER DEFAULT 0'), ('items','favorite_rank','INTEGER DEFAULT 0'), ('items','scale_code','TEXT'),
           ('production_logs','production_type','TEXT'),
           ('production_logs','source_item_id','INTEGER'),
           ('production_logs','source_item_name','TEXT'),
@@ -358,7 +358,7 @@ def sync_reference_data(remote=None):
             settings = []
         _replace_table(local,'branches',branches,{'id','branch_name','branch_type','location','is_active'})
         _replace_table(local,'users',users,{'id','username','password','role','branch_id','is_active'})
-        _replace_table(local,'items',items,{'id','item_code','item_name','unit','quantity','buy_price','sale_price','avg_cost','branch_id','expiry_date','pieces_per_carton','image_path'})
+        _replace_table(local,'items',items,{'id','item_code','item_name','unit','quantity','buy_price','sale_price','avg_cost','branch_id','expiry_date','pieces_per_carton','image_path','scale_code'})
         _replace_table(local,'customers',customers,{'id','customer_name','phone','total_purchases','balance','marketing_consent'})
         _replace_table(local,'inventory_batches',batches,{'id','item_id','branch_id','quantity','remaining_quantity','received_date','expiry_date','unit_cost','source_type','created_at'})
         _replace_table(local,'app_settings',settings,{'setting_key','setting_value','updated_at'})
