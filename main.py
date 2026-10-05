@@ -324,6 +324,7 @@ if not st.session_state["logged_in"]:
                     st.session_state["user_id"] = user["id"]
                     st.session_state["branch_id"] = user["branch_id"]
                     st.session_state["connection_mode"] = "online"
+                    st.session_state["_reference_sync_done_this_login"] = False
                     st.session_state["page"] = "🏠 الرئيسية واللوحة"
                     st.rerun()
                 else:
@@ -352,6 +353,29 @@ if not st.session_state["logged_in"]:
                     conn.close()
 
     st.stop()
+
+
+# --- مزامنة مرجعية مؤكدة مرة واحدة بعد اكتمال تسجيل الدخول ---
+# بعض اتصالات السيرفر تنجح في التحقق من المستخدم ثم تصبح غير صالحة قبل تنزيل
+# البيانات المرجعية. لذلك نؤكد تنزيل الفروع/المخزن الرئيسي في أول rerun بعد الدخول.
+if st.session_state.get("logged_in") and st.session_state.get("connection_mode") == "online":
+    if not st.session_state.get("_reference_sync_done_this_login", False):
+        _ref_conn = None
+        try:
+            _ref_conn = get_remote_connection()
+            _ok, _err = sync_reference_data(_ref_conn)
+            if not _ok:
+                st.warning("⚠️ تم الدخول، لكن تعذر تحديث بيانات الفروع والمخزن الرئيسي: " + str(_err))
+            else:
+                st.session_state["_reference_sync_done_this_login"] = True
+        except Exception as _e:
+            st.warning("⚠️ تم الدخول، لكن تعذر تحديث بيانات الفروع والمخزن الرئيسي: " + str(_e))
+        finally:
+            if _ref_conn:
+                try:
+                    _ref_conn.close()
+                except Exception:
+                    pass
 
 
 # --- القائمة الجانبية الجديدة (أقسام رئيسية فقط) ---
