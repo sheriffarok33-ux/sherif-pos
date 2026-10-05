@@ -1,15 +1,40 @@
 from views.ui_common import back_button
 import streamlit as st
 import pandas as pd
-from datetime import date
+from datetime import date, datetime
 import calendar
 from io import BytesIO
 from database import get_db_connection, ensure_hr_schema
+
+
+def _as_date(value, default=None):
+    """Normalize SQLite/PostgreSQL/string HR dates to datetime.date."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return default
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except (ValueError, TypeError):
+        pass
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text[:10], fmt).date()
+        except (ValueError, TypeError):
+            continue
+    return default
 
 ROLES=["Admin","General_Supervisor","Branch_Supervisor","Cashier","Viewer"]
 
 def due(salary,hire,end,y,m):
     md=calendar.monthrange(y,m)[1]; a=date(y,m,1); z=date(y,m,md)
+    hire=_as_date(hire, a)
+    end=_as_date(end, None)
     start=max(hire,a); finish=min(end or z,z)
     days=max(0,(finish-start).days+1) if finish>=start else 0
     return round(float(salary or 0)*days/md,2),days,md
@@ -165,9 +190,9 @@ def show_page():
                 en=c2.text_input("اسم شخص مقرب",e["emergency_name"] or "")
                 ep=c2.text_input("هاتف الشخص المقرب",e["emergency_phone"] or "")
                 er=c2.text_input("صلة القرابة",e["emergency_relation"] or "")
-                hd=c2.date_input("تاريخ التعيين",e["hire_date"])
+                hd=c2.date_input("تاريخ التعيين",_as_date(e["hire_date"], date.today()))
                 ended=c2.checkbox("إنهاء خدمة",value=e["employment_status"]!="active")
-                ed=c2.date_input("تاريخ إنهاء العمل",e["termination_date"] or date.today(),disabled=not ended)
+                ed=c2.date_input("تاريخ إنهاء العمل",_as_date(e["termination_date"], date.today()),disabled=not ended)
                 notes=st.text_area("ملاحظات",e["notes"] or ""); ok=st.form_submit_button("💾 حفظ",type="primary")
             if ok:
                 if ended and ed<hd: st.error("تاريخ الإنهاء يسبق التعيين."); return
