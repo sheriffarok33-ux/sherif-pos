@@ -1112,10 +1112,10 @@ def checkout_payment_dialog(
 
 def _scale_settings(conn):
     defaults = {
-        "scale_enabled": "0", "scale_prefix": "20",
+        "scale_enabled": "1", "scale_prefix": "90",
         "scale_item_start": "2", "scale_item_length": "5",
         "scale_value_start": "7", "scale_value_length": "5",
-        "scale_value_mode": "weight", "scale_divisor": "1000",
+        "scale_value_mode": "price", "scale_divisor": "100",
     }
     try:
         rows = conn.execute(
@@ -1212,13 +1212,24 @@ def process_barcode_scan():
                 """
                 SELECT *
                 FROM items
-                WHERE (item_code = ? OR item_code = ?)
-                  AND branch_id = ?
-                ORDER BY CASE WHEN item_code = ? THEN 0 ELSE 1 END
+                WHERE branch_id = ?
+                  AND (scale_code = ? OR scale_code = ? OR item_code = ? OR item_code = ?)
+                ORDER BY CASE
+                    WHEN scale_code = ? THEN 0
+                    WHEN scale_code = ? THEN 1
+                    WHEN item_code = ? THEN 2
+                    ELSE 3 END
                 LIMIT 1
                 """,
-                (item_code, alt_item_code, b_id, item_code)
+                (b_id, item_code, alt_item_code, item_code, alt_item_code,
+                 item_code, alt_item_code, item_code)
             ).fetchone()
+
+            if not item:
+                raise ValueError(
+                    f"باركود ميزان صحيح، لكن كود الميزان {item_code} غير مربوط بأي صنف في هذا الفرع. "
+                    "اربطه من المخازن والأصناف ← كود الميزان / PLU."
+                )
 
             if item:
                 embedded_value = float(scale_data["value"])

@@ -21,14 +21,14 @@ DEFAULTS = {
     "company_address": "",
     "tax_number": "",
     "commercial_register": "",
-    "scale_enabled": "0",
-    "scale_prefix": "20",
+    "scale_enabled": "1",
+    "scale_prefix": "90",
     "scale_item_start": "2",
     "scale_item_length": "5",
     "scale_value_start": "7",
     "scale_value_length": "5",
-    "scale_value_mode": "weight",
-    "scale_divisor": "1000",
+    "scale_value_mode": "price",
+    "scale_divisor": "100",
 }
 
 
@@ -202,7 +202,7 @@ def show_page():
         st.caption("هذه الإعدادات خاصة بالأدمن فقط. اضبطها حسب صيغة الباركود التي يطبعها الميزان.")
         updated["scale_enabled"] = "1" if st.checkbox("تفعيل قراءة باركود الميزان", value=settings.get("scale_enabled", "0") == "1") else "0"
         a, b = st.columns(2)
-        updated["scale_prefix"] = a.text_input("بداية باركود الميزان (Prefix)", settings.get("scale_prefix", "20"), max_chars=6)
+        updated["scale_prefix"] = a.text_input("بداية باركود الميزان (Prefix)", settings.get("scale_prefix", "90"), max_chars=6)
         mode_labels = {"الباركود يحتوي الوزن": "weight", "الباركود يحتوي السعر الإجمالي": "price"}
         current_mode = "الباركود يحتوي السعر الإجمالي" if settings.get("scale_value_mode") == "price" else "الباركود يحتوي الوزن"
         mode_choice = b.selectbox("القيمة الموجودة داخل الباركود", list(mode_labels), index=list(mode_labels).index(current_mode))
@@ -213,8 +213,8 @@ def show_page():
         a, b = st.columns(2)
         updated["scale_value_start"] = str(a.number_input("موضع بداية الوزن/السعر (يبدأ من 0)", min_value=0, max_value=20, value=int(settings.get("scale_value_start", "7") or 7), step=1))
         updated["scale_value_length"] = str(b.number_input("عدد أرقام الوزن/السعر", min_value=1, max_value=12, value=int(settings.get("scale_value_length", "5") or 5), step=1))
-        updated["scale_divisor"] = str(st.number_input("معامل القسمة", min_value=1.0, value=float(settings.get("scale_divisor", "1000") or 1000), step=1.0, help="مثال: 250 جرام مخزنة كـ 00250 ومعامل 1000 = 0.250 كجم"))
-        st.info("مثال الإعداد الافتراضي: 20 + كود صنف 5 أرقام + وزن 5 أرقام. بعد الحصول على باركود حقيقي من الميزان نضبط هذه القيم بدقة.")
+        updated["scale_divisor"] = str(st.number_input("معامل القسمة", min_value=1.0, value=float(settings.get("scale_divisor", "100") or 100), step=1.0, help="مثال: 250 جرام مخزنة كـ 00250 ومعامل 1000 = 0.250 كجم"))
+        st.info("إعداد أبو زيد الحالي: 90 + كود صنف/PLU من 5 أرقام + السعر الإجمالي من 5 أرقام + رقم تحقق. السعر داخل الباركود يُقسم على 100.")
 
     else:
         st.subheader("🖼️ شعار النظام")

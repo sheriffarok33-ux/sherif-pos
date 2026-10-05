@@ -44,6 +44,8 @@ def ensure_inventory_columns():
             conn.execute("ALTER TABLE items ADD COLUMN unit_type TEXT DEFAULT 'piece'")
         if "pieces_per_carton" not in existing_columns:
             conn.execute("ALTER TABLE items ADD COLUMN pieces_per_carton INTEGER DEFAULT 1")
+        if "scale_code" not in existing_columns:
+            conn.execute("ALTER TABLE items ADD COLUMN scale_code TEXT")
         conn.execute(
             """
             UPDATE items
@@ -114,7 +116,8 @@ def get_branch_items_rows(branch_id):
             SELECT id, item_code, item_name, quantity, buy_price,
                    avg_cost, sale_price,
                    COALESCE(unit_type, 'piece') AS unit_type,
-                   COALESCE(pieces_per_carton, 1) AS pieces_per_carton
+                   COALESCE(pieces_per_carton, 1) AS pieces_per_carton,
+                   COALESCE(scale_code, '') AS scale_code
             FROM items
             WHERE branch_id = ?
             ORDER BY item_name ASC, item_code ASC
@@ -221,7 +224,8 @@ def add_stock_to_existing_item(
             """
             SELECT id, item_name, quantity, buy_price, avg_cost,
                    COALESCE(unit_type, 'piece') AS unit_type,
-                   COALESCE(pieces_per_carton, 1) AS pieces_per_carton
+                   COALESCE(pieces_per_carton, 1) AS pieces_per_carton,
+                   COALESCE(scale_code, '') AS scale_code
             FROM items
             WHERE id = ? AND branch_id = ?
             FOR UPDATE
@@ -478,6 +482,7 @@ def _update_items_from_editor(branch_id, original_rows, edited_df):
 
             item_code = str(row["كود الصنف"] or "").strip()
             item_name = str(row["اسم الصنف"] or "").strip()
+            scale_code = str(row.get("كود الميزان", "") or "").strip()
             unit_ar = str(row["الوحدة"] or "قطعة").strip()
             unit_type = "kg" if unit_ar == "كجم" else "piece"
             ppc = 1
@@ -518,6 +523,7 @@ def _update_items_from_editor(branch_id, original_rows, edited_df):
                 UPDATE items
                 SET item_code = ?,
                     item_name = ?,
+                    scale_code = ?,
                     quantity = ?,
                     buy_price = ?,
                     avg_cost = ?,
@@ -527,7 +533,7 @@ def _update_items_from_editor(branch_id, original_rows, edited_df):
                 WHERE id = ? AND branch_id = ?
                 """,
                 (
-                    item_code, item_name, new_qty, buy_price, avg_cost,
+                    item_code, item_name, scale_code, new_qty, buy_price, avg_cost,
                     sale_price, unit_type, ppc, item_id, branch_id
                 )
             )
@@ -630,6 +636,7 @@ def _editable_inventory_dataframe(rows):
             "id": int(row["id"]),
             "كود الصنف": row["item_code"] or "",
             "اسم الصنف": row["item_name"] or "",
+            "كود الميزان": row["scale_code"] or "",
             "الوحدة": "كجم" if (row["unit_type"] or "piece") == "kg" else "قطعة",
             "الكمية": float(row["quantity"] or 0),
             "سعر الشراء": float(row["buy_price"] or 0),
@@ -774,6 +781,7 @@ def show_page():
             disabled=["id"] if is_main_warehouse else ["id", "سعر البيع"],
             column_config={
                 "id": st.column_config.NumberColumn("ID", disabled=True),
+                "كود الميزان": st.column_config.TextColumn("كود الميزان / PLU", help="الكود الداخلي الذي يطبعه الميزان للصنف، مثل 14000"),
                 "الوحدة": st.column_config.SelectboxColumn(
                     "الوحدة", options=["قطعة", "كجم"], required=True
                 ),
