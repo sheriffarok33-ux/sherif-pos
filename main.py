@@ -391,45 +391,46 @@ MENU_GROUPS = {
         ("🏠 الرئيسية واللوحة", "🏠 لوحة التحكم", {}),
     ],
     "🛒 إدارة المبيعات": [
-        ("🛒 نقطة البيع (POS)", "1- فاتورة بيع", {}),
-        ("📊 التقارير والأرباح", "2- أرشيف وتقارير البيع X & Z", {"reports_entry_mode": "sales"}),
+        ("🛒 نقطة البيع (POS)", "1- فاتورة بيع", {"pos_active_view": "الكاشير"}),
+        ("🛒 نقطة البيع (POS)", "2- الأرشيف وإعادة الطباعة", {"pos_active_view": "الأرشيف"}),
     ],
-    "📥 إدارة المشتريات والموردين": [
+    "📥 إدارة المشتريات": [
         ("📥 المشتريات", "1- فاتورة مشتريات", {"purchase_quick_mode": "invoice"}),
         ("📥 المشتريات", "2- أرشيف وتقارير المشتريات", {"purchase_quick_mode": "reports"}),
-        ("👥 جهات التعامل", "3- الموردون وكشوف الحساب", {"parties_mode": "suppliers"}),
-        ("👥 جهات التعامل", "4- دفع لمورد", {"parties_mode": "supplier_payment"}),
     ],
     "📦 المخازن والأصناف": [
         ("📦 إدارة المخزن والفروع", "1- الأصناف وتعديل الكميات والأسعار", {"inventory_mode": "list"}),
-        ("📦 إدارة المخزن والفروع", "2- إضافة كمية", {"inventory_mode": "add"}),
-        ("📦 إدارة المخزن والفروع", "3- إضافة صنف جديد", {"inventory_mode": "new"}),
-        ("📦 إدارة المخزن والفروع", "4- الصلاحيات", {"inventory_mode": "expiry"}),
-        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "5- تالف / هالك", {"damage_returns_mode": "adjustment", "damage_adj_type": "🗑️ تلف / كسر (خسارة تشغيلية)"}),
-        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "6- مرتجعات مخزنية", {"damage_returns_mode": "return"}),
-        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "7- فائض مخزني", {"damage_returns_mode": "surplus"}),
-        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "8- سجل حركات المخزون", {"damage_returns_mode": "log"}),
-        ("📁 استيراد Excel", "9- استيراد الأصناف من Excel", {}),
+        ("📦 إدارة المخزن والفروع", "2- إضافة صنف جديد", {"inventory_mode": "new"}),
+        ("📦 إدارة المخزن والفروع", "3- الصلاحيات", {"inventory_mode": "expiry"}),
+        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "4- مرتجعات مخزنية", {"damage_returns_mode": "return"}),
+        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "5- سجل حركات المخزون", {"damage_returns_mode": "log"}),
+        ("📁 استيراد Excel", "6- استيراد الأصناف من Excel", {}),
     ],
     "🏭 التحميص والتصنيع": [
         ("🥜 التحميص والخلط", "1- خلط", {"production_screen_mode": "mix"}),
         ("🥜 التحميص والخلط", "2- تحميص", {"production_screen_mode": "roast"}),
         ("🥜 التحميص والخلط", "3- سجل الإنتاج", {"production_screen_mode": "log"}),
     ],
-    "👥 العملاء": [
+    "👥 العملاء والموردون": [
         ("👥 جهات التعامل", "1- العملاء وكشوف الحساب", {"parties_mode": "customers"}),
-        ("👥 جهات التعامل", "2- تحصيل من عميل", {"parties_mode": "customer_collection"}),
+        ("👥 جهات التعامل", "2- الموردون وكشوف الحساب", {"parties_mode": "suppliers"}),
         ("👥 جهات التعامل", "3- إضافة عميل أو مورد", {"parties_mode": "add"}),
-        ("👥 جهات التعامل", "4- أرشيف إيصالات القبض والدفع", {"parties_mode": "vouchers"}),
     ],
-    "💰 الإدارة المالية": [
+    "🧾 الإيصالات والمصروفات": [
+        ("👥 جهات التعامل", "1- سند صرف / دفع لمورد", {"parties_mode": "supplier_payment"}),
+        ("👥 جهات التعامل", "2- سند قبض", {"parties_mode": "customer_collection"}),
+        ("💰 المصروفات", "3- المصروفات العامة والخاصة", {"finance_screen_mode": "expense"}),
+        ("💰 المصروفات", "4- أرشيف المصروفات والإيرادات", {"finance_screen_mode": "archive"}),
+        ("👥 جهات التعامل", "5- أرشيف الإيصالات", {"parties_mode": "vouchers"}),
+    ],
+    "🏦 الخزينة وجميع التقارير": [
         ("🏦 خزينة الشركة", "1- خزينة الشركة وخزائن الفروع", {"parties_mode": "treasuries"}),
-        ("👥 جهات التعامل", "2- سند دفع", {"parties_mode": "supplier_payment"}),
-        ("👥 جهات التعامل", "3- سند قبض", {"parties_mode": "customer_collection"}),
-        ("👥 جهات التعامل", "4- أرشيف سندات القبض والدفع", {"parties_mode": "vouchers"}),
-        ("💰 المصروفات", "5- تسجيل مصروف", {"finance_screen_mode": "expense"}),
-        ("💰 المصروفات", "6- تسجيل إيراد آخر", {"finance_screen_mode": "revenue"}),
-        ("💰 المصروفات", "7- أرشيف المصروفات والإيرادات", {"finance_screen_mode": "archive"}),
+        ("📈 ملخص الخزينة والتقارير", "2- تكلفة وقيمة المخزون والربح والخسارة", {}),
+        ("🛒 نقطة البيع (POS)", "3- أرشيف وتقارير المبيعات", {"pos_active_view": "الأرشيف"}),
+        ("📥 المشتريات", "4- تقارير المشتريات", {"purchase_quick_mode": "reports"}),
+        ("➕ الفائض والتوالف والمرتجعات وتعديل السعر", "5- تقرير حركات المخزون", {"damage_returns_mode": "log"}),
+        ("🥜 التحميص والخلط", "6- تقرير الإنتاج", {"production_screen_mode": "log"}),
+        ("💰 المصروفات", "7- تقرير المصروفات والإيرادات", {"finance_screen_mode": "archive"}),
     ],
     "🔄 التحويلات وتزويد الفروع": [
         ("🔄 تزويد الفروع والأرشيف", "1- إنشاء فاتورة تزويد فرع", {"transfers_mode": "new"}),
@@ -587,8 +588,41 @@ if choice == "🏠 الرئيسية واللوحة":
         with col3: st.metric(label="📦 إجمالي المخزون", value=f"{total_stock:,.2f}")
         with col4: st.metric(label="👥 طاقم العمل", value=f"{users_count} موظف")
         st.markdown("---")
+
+        # مبيعات الفروع اليومية
+        conn = get_local_connection()
+        try:
+            daily_rows = conn.execute(
+                """SELECT b.branch_name, COALESCE(SUM(i.total_amount),0) AS total
+                   FROM branches b
+                   LEFT JOIN invoices i ON i.branch_id=b.id AND date(i.created_at)=date('now','localtime')
+                   GROUP BY b.id, b.branch_name ORDER BY b.id"""
+            ).fetchall()
+        finally:
+            conn.close()
+        st.markdown("### 💵 مبيعات الفروع اليوم")
+        if daily_rows:
+            daily_total = sum(float(r["total"] or 0) for r in daily_rows)
+            cols = st.columns(min(4, max(1, len(daily_rows))))
+            for idx, row in enumerate(daily_rows):
+                cols[idx % len(cols)].metric(row["branch_name"], f"{float(row['total'] or 0):,.2f} د.ل")
+            st.metric("💰 إجمالي مبيعات اليوم", f"{daily_total:,.2f} د.ل")
+        else:
+            st.info("لا توجد مبيعات مسجلة اليوم.")
+        st.markdown("---")
     else:
-        st.info("🛒 تم إعداد الشاشة بنجاح. يمكنك الانتقال مباشرة عبر القائمة الجانبية إلى قسم (نقطة البيع POS) لبدء تسجيل الفواتير وخدمة الزبائن.")
+        # مستخدم الفرع يرى مبيعات فرعه اليومية فقط.
+        conn = get_local_connection()
+        try:
+            bid = st.session_state.get("branch_id")
+            today_sales = conn.execute(
+                "SELECT COALESCE(SUM(total_amount),0) FROM invoices WHERE branch_id=? AND date(created_at)=date('now','localtime')",
+                (bid,)
+            ).fetchone()[0] if bid is not None else 0
+        finally:
+            conn.close()
+        st.metric("💵 مبيعات فرعك اليوم", f"{float(today_sales or 0):,.2f} د.ل")
+        st.info("🛒 استخدم القائمة الجانبية للوصول إلى العمليات المصرح بها.")
 
 elif choice == "🛒 نقطة البيع (POS)":
     try:
@@ -684,3 +718,10 @@ elif choice == "📊 التقارير والأرباح":
         reports.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة التقارير والأرباح غير موجود.")
+elif choice == "📈 ملخص الخزينة والتقارير":
+    try:
+        from views import treasury_reports
+        treasury_reports.show_page()
+    except ImportError as e:
+        st.warning("⚠️ ملف شاشة ملخص الخزينة والتقارير غير موجود.")
+        st.code(str(e))
