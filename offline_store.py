@@ -159,6 +159,18 @@ def ensure_local_schema():
             ON financial_vouchers(voucher_type, created_at);
         CREATE INDEX IF NOT EXISTS idx_treasury_movements_treasury_date
             ON treasury_movements(treasury_id, created_at);
+        CREATE TABLE IF NOT EXISTS shift_closures(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER NOT NULL, shift_date TEXT NOT NULL,
+            shift_number INTEGER NOT NULL, gross_sales REAL DEFAULT 0, net_sales REAL DEFAULT 0,
+            cash_amount REAL DEFAULT 0, card_amount REAL DEFAULT 0, transfer_amount REAL DEFAULT 0,
+            credit_amount REAL DEFAULT 0, other_amount REAL DEFAULT 0, status TEXT DEFAULT 'closed',
+            closed_by INTEGER, closed_at TEXT DEFAULT CURRENT_TIMESTAMP, notes TEXT,
+            UNIQUE(branch_id, shift_date, shift_number));
+        CREATE TABLE IF NOT EXISTS shift_settlement_adjustments(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, closure_id INTEGER, branch_id INTEGER NOT NULL,
+            shift_date TEXT NOT NULL, shift_number INTEGER, cash_amount REAL DEFAULT 0, card_amount REAL DEFAULT 0,
+            transfer_amount REAL DEFAULT 0, credit_amount REAL DEFAULT 0, other_amount REAL DEFAULT 0,
+            reason TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 
         CREATE TABLE IF NOT EXISTS local_meta(key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS sync_queue(id INTEGER PRIMARY KEY AUTOINCREMENT, operation_uuid TEXT NOT NULL UNIQUE, transaction_uuid TEXT, device_id TEXT, sequence_no INTEGER DEFAULT 0, sql_text TEXT NOT NULL, params_json TEXT NOT NULL DEFAULT '[]', created_at TEXT DEFAULT CURRENT_TIMESTAMP, sync_status TEXT NOT NULL DEFAULT 'pending', sync_error TEXT);
@@ -182,6 +194,11 @@ def ensure_local_schema():
           ('employees','emergency_phone','TEXT'),
           ('employees','emergency_relation','TEXT'),
           ('employees','monthly_salary','REAL DEFAULT 0'),
+          ('treasury_movements','branch_id','INTEGER'),
+          ('treasury_movements','payment_method','TEXT'),
+          ('treasury_movements','movement_date','TEXT'),
+          ('treasury_movements','source_type','TEXT'),
+          ('treasury_movements','source_ref','TEXT'),
           ('employees','hire_date','TEXT'),
           ('employees','termination_date','TEXT'),
           ('employees','employment_status',"TEXT DEFAULT 'active'"),
@@ -501,16 +518,26 @@ def _ensure_remote_finance_schema(remote):
     """)
     remote.execute("""
         CREATE TABLE IF NOT EXISTS treasury_movements(
-            id BIGSERIAL PRIMARY KEY,
-            treasury_id BIGINT NOT NULL,
-            movement_type TEXT NOT NULL,
-            amount DOUBLE PRECISION NOT NULL,
-            voucher_no TEXT,
-            description TEXT,
-            user_id BIGINT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            id BIGSERIAL PRIMARY KEY, treasury_id BIGINT NOT NULL, movement_type TEXT NOT NULL,
+            amount DOUBLE PRECISION NOT NULL, voucher_no TEXT, description TEXT, user_id BIGINT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, branch_id BIGINT, payment_method TEXT,
+            movement_date TEXT, source_type TEXT, source_ref TEXT
         )
     """)
+    for col, typ in [("branch_id","BIGINT"),("payment_method","TEXT"),("movement_date","TEXT"),("source_type","TEXT"),("source_ref","TEXT")]:
+        try: remote.execute(f"ALTER TABLE treasury_movements ADD COLUMN IF NOT EXISTS {col} {typ}")
+        except Exception: pass
+    remote.execute("""CREATE TABLE IF NOT EXISTS shift_closures(
+        id BIGSERIAL PRIMARY KEY, branch_id BIGINT NOT NULL, shift_date TEXT NOT NULL, shift_number INTEGER NOT NULL,
+        gross_sales DOUBLE PRECISION DEFAULT 0, net_sales DOUBLE PRECISION DEFAULT 0, cash_amount DOUBLE PRECISION DEFAULT 0,
+        card_amount DOUBLE PRECISION DEFAULT 0, transfer_amount DOUBLE PRECISION DEFAULT 0, credit_amount DOUBLE PRECISION DEFAULT 0,
+        other_amount DOUBLE PRECISION DEFAULT 0, status TEXT DEFAULT 'closed', closed_by BIGINT, closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        notes TEXT, UNIQUE(branch_id,shift_date,shift_number))""")
+    remote.execute("""CREATE TABLE IF NOT EXISTS shift_settlement_adjustments(
+        id BIGSERIAL PRIMARY KEY, closure_id BIGINT, branch_id BIGINT NOT NULL, shift_date TEXT NOT NULL, shift_number INTEGER,
+        cash_amount DOUBLE PRECISION DEFAULT 0, card_amount DOUBLE PRECISION DEFAULT 0, transfer_amount DOUBLE PRECISION DEFAULT 0,
+        credit_amount DOUBLE PRECISION DEFAULT 0, other_amount DOUBLE PRECISION DEFAULT 0, reason TEXT, created_by BIGINT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
     remote.commit()
 
 def _ensure_remote_operation_receipts(remote):
