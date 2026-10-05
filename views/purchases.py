@@ -641,7 +641,7 @@ def post_purchase_invoice(
                 document_number,
                 grand_total,
                 payment_type,
-                " | ".join(details),
+                "\n".join(details),
                 datetime.now().date()
             )
         )
@@ -793,6 +793,14 @@ def show_purchase_reports(branches, suppliers_data):
         column_config={"الإجمالي": st.column_config.NumberColumn("الإجمالي", format="%.2f د.ل")}
     )
 
+    def _purchase_items_lines(value):
+        text = str(value or "").strip()
+        if not text:
+            return []
+        # يدعم الفواتير القديمة المخزنة بعلامة | والجديدة المخزنة كسطور منفصلة
+        text = text.replace(" | ", "\n")
+        return [line.strip() for line in text.splitlines() if line.strip()]
+
     st.markdown("#### 🔎 تفاصيل الفواتير")
     for r in rows:
         with st.expander(
@@ -802,10 +810,25 @@ def show_purchase_reports(branches, suppliers_data):
             st.write(f"**التاريخ:** {r['invoice_date']}")
             st.write(f"**الفرع / المخزن:** {r['branch_name'] or '-'}")
             st.write(f"**طريقة الدفع:** {r['payment_type'] or '-'}")
-            st.write(f"**تفاصيل الأصناف:** {r['items_details'] or '-'}")
+            st.markdown("**تفاصيل الأصناف:**")
+            _lines = _purchase_items_lines(r['items_details'])
+            if _lines:
+                _items_html = "".join(
+                    f"<div style='direction:rtl;text-align:right;padding:7px 10px;border-bottom:1px solid #e5e7eb'>"
+                    f"{html.escape(line)}</div>" for line in _lines
+                )
+                st.markdown(
+                    f"<div dir='rtl' style='text-align:right;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden'>{_items_html}</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.write("-")
+            _print_items_html = "".join(
+                f"<tr><td style='text-align:right;direction:rtl'>{html.escape(line)}</td></tr>" for line in _lines
+            ) or "<tr><td style='text-align:right'>-</td></tr>"
             invoice_html = f"""
             <html dir='rtl'><head><meta charset='utf-8'><style>
-            body{{font-family:Arial;padding:24px;direction:rtl}} table{{width:100%;border-collapse:collapse}}
+            body{{font-family:Arial;padding:24px;direction:rtl;text-align:right}} table{{width:100%;border-collapse:collapse;direction:rtl}}
             td{{border:1px solid #999;padding:8px}} .no-print{{margin-top:18px}}
             @media print{{.no-print{{display:none}}}}
             </style></head><body>
@@ -818,8 +841,10 @@ def show_purchase_reports(branches, suppliers_data):
             <tr><td><b>الفرع / المخزن</b></td><td>{html.escape(str(r['branch_name'] or '-'))}</td></tr>
             <tr><td><b>طريقة الدفع</b></td><td>{html.escape(str(r['payment_type'] or '-'))}</td></tr>
             <tr><td><b>الإجمالي</b></td><td>{float(r['total_cost'] or 0):,.2f} د.ل</td></tr>
-            <tr><td><b>الأصناف</b></td><td>{html.escape(str(r['items_details'] or '-')).replace(chr(10),'<br>')}</td></tr>
-            </table><div class='no-print'><button onclick='window.print()'>🖨️ طباعة</button></div>
+            </table>
+            <h3 style='text-align:right'>الأصناف</h3>
+            <table style='direction:rtl;text-align:right'>{_print_items_html}</table>
+            <div class='no-print'><button onclick='window.print()'>🖨️ طباعة</button></div>
             </body></html>"""
             pc1, pc2 = st.columns(2)
             preview_key = f"purchase_preview_{r['id']}"
