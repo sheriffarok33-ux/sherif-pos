@@ -15,6 +15,20 @@ DEFAULTS = {
     "font_weight": "900",
     "logo_data": "",
     "login_bg_data": "",
+    "company_name": "",
+    "trade_name": "",
+    "company_phone": "",
+    "company_address": "",
+    "tax_number": "",
+    "commercial_register": "",
+    "scale_enabled": "0",
+    "scale_prefix": "20",
+    "scale_item_start": "2",
+    "scale_item_length": "5",
+    "scale_value_start": "7",
+    "scale_value_length": "5",
+    "scale_value_mode": "weight",
+    "scale_divisor": "1000",
 }
 
 
@@ -88,7 +102,7 @@ def show_page():
     if "appearance_section" not in st.session_state:
         st.session_state["appearance_section"] = "colors"
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4, c5 = st.columns(5)
     if c1.button("🎨 الألوان", use_container_width=True):
         st.session_state["appearance_section"] = "colors"
         st.rerun()
@@ -97,6 +111,12 @@ def show_page():
         st.rerun()
     if c3.button("🖼️ الشعار والخلفية", use_container_width=True):
         st.session_state["appearance_section"] = "images"
+        st.rerun()
+    if c4.button("🏢 بيانات المنشأة", use_container_width=True):
+        st.session_state["appearance_section"] = "company"
+        st.rerun()
+    if c5.button("⚖️ إعدادات الميزان", use_container_width=True):
+        st.session_state["appearance_section"] = "scale"
         st.rerun()
 
     st.markdown("---")
@@ -165,6 +185,37 @@ def show_page():
 
         st.info("يتم تطبيق حجم وسمك الخط على البرنامج والقوائم والأزرار.")
 
+    elif st.session_state["appearance_section"] == "company":
+        st.subheader("🏢 بيانات المنشأة")
+        a, b = st.columns(2)
+        updated["company_name"] = a.text_input("اسم الشركة / المجموعة", settings.get("company_name", ""))
+        updated["trade_name"] = b.text_input("الاسم التجاري", settings.get("trade_name", ""))
+        a, b = st.columns(2)
+        updated["company_phone"] = a.text_input("الهاتف", settings.get("company_phone", ""))
+        updated["company_address"] = b.text_input("العنوان", settings.get("company_address", ""))
+        a, b = st.columns(2)
+        updated["tax_number"] = a.text_input("الرقم الضريبي", settings.get("tax_number", ""))
+        updated["commercial_register"] = b.text_input("السجل التجاري", settings.get("commercial_register", ""))
+
+    elif st.session_state["appearance_section"] == "scale":
+        st.subheader("⚖️ إعدادات باركود الميزان")
+        st.caption("هذه الإعدادات خاصة بالأدمن فقط. اضبطها حسب صيغة الباركود التي يطبعها الميزان.")
+        updated["scale_enabled"] = "1" if st.checkbox("تفعيل قراءة باركود الميزان", value=settings.get("scale_enabled", "0") == "1") else "0"
+        a, b = st.columns(2)
+        updated["scale_prefix"] = a.text_input("بداية باركود الميزان (Prefix)", settings.get("scale_prefix", "20"), max_chars=6)
+        mode_labels = {"الباركود يحتوي الوزن": "weight", "الباركود يحتوي السعر الإجمالي": "price"}
+        current_mode = "الباركود يحتوي السعر الإجمالي" if settings.get("scale_value_mode") == "price" else "الباركود يحتوي الوزن"
+        mode_choice = b.selectbox("القيمة الموجودة داخل الباركود", list(mode_labels), index=list(mode_labels).index(current_mode))
+        updated["scale_value_mode"] = mode_labels[mode_choice]
+        a, b = st.columns(2)
+        updated["scale_item_start"] = str(a.number_input("موضع بداية كود الصنف (يبدأ من 0)", min_value=0, max_value=20, value=int(settings.get("scale_item_start", "2") or 2), step=1))
+        updated["scale_item_length"] = str(b.number_input("عدد أرقام كود الصنف", min_value=1, max_value=12, value=int(settings.get("scale_item_length", "5") or 5), step=1))
+        a, b = st.columns(2)
+        updated["scale_value_start"] = str(a.number_input("موضع بداية الوزن/السعر (يبدأ من 0)", min_value=0, max_value=20, value=int(settings.get("scale_value_start", "7") or 7), step=1))
+        updated["scale_value_length"] = str(b.number_input("عدد أرقام الوزن/السعر", min_value=1, max_value=12, value=int(settings.get("scale_value_length", "5") or 5), step=1))
+        updated["scale_divisor"] = str(st.number_input("معامل القسمة", min_value=1.0, value=float(settings.get("scale_divisor", "1000") or 1000), step=1.0, help="مثال: 250 جرام مخزنة كـ 00250 ومعامل 1000 = 0.250 كجم"))
+        st.info("مثال الإعداد الافتراضي: 20 + كود صنف 5 أرقام + وزن 5 أرقام. بعد الحصول على باركود حقيقي من الميزان نضبط هذه القيم بدقة.")
+
     else:
         st.subheader("🖼️ شعار النظام")
         if settings.get("logo_data"):
@@ -206,9 +257,9 @@ def show_page():
     st.markdown("---")
     s1, s2 = st.columns(2)
 
-    if s1.button("💾 حفظ المظهر", type="primary", use_container_width=True):
+    if s1.button("💾 حفظ الإعدادات", type="primary", use_container_width=True):
         _save_settings(updated)
-        st.success("✅ تم حفظ إعدادات المظهر.")
+        st.success("✅ تم حفظ الإعدادات.")
         st.rerun()
 
     if s2.button("♻️ استعادة الشكل الافتراضي", use_container_width=True):

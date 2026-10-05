@@ -614,6 +614,8 @@ def checkout_payment_dialog(
         [
             "كاش (نقدي)",
             "شبكة / بطاقة",
+            "تحويل مصرفي",
+            "دفع آخر",
             "آجل (على الحساب)"
         ]
     )
@@ -1105,6 +1107,59 @@ def checkout_payment_dialog(
 
 
 # ============================================================
+# معالجة باركود الميزان
+# ============================================================
+
+def _scale_settings(conn):
+    defaults = {
+        "scale_enabled": "0", "scale_prefix": "20",
+        "scale_item_start": "2", "scale_item_length": "5",
+        "scale_value_start": "7", "scale_value_length": "5",
+        "scale_value_mode": "weight", "scale_divisor": "1000",
+    }
+    try:
+        rows = conn.execute(
+            "SELECT setting_key, setting_value FROM app_settings WHERE setting_key LIKE 'scale_%'"
+        ).fetchall()
+        for row in rows:
+            defaults[row["setting_key"]] = str(row["setting_value"] or "")
+    except Exception:
+        pass
+    return defaults
+
+
+def _parse_scale_barcode(conn, code):
+    cfg = _scale_settings(conn)
+    if cfg.get("scale_enabled") != "1":
+        return None
+    prefix = cfg.get("scale_prefix", "")
+    if prefix and not code.startswith(prefix):
+        return None
+    try:
+        item_start = int(cfg.get("scale_item_start", 2))
+        item_len = int(cfg.get("scale_item_length", 5))
+        value_start = int(cfg.get("scale_value_start", 7))
+        value_len = int(cfg.get("scale_value_length", 5))
+        divisor = float(cfg.get("scale_divisor", 1000) or 1000)
+        if divisor <= 0:
+            raise ValueError("معامل قسمة باركود الميزان يجب أن يكون أكبر من صفر")
+        required_len = max(item_start + item_len, value_start + value_len)
+        if len(code) < required_len:
+            raise ValueError("باركود الميزان أقصر من الصيغة المحددة في الإعدادات")
+        item_code = code[item_start:item_start + item_len]
+        raw_value = code[value_start:value_start + value_len]
+        if not raw_value.isdigit():
+            raise ValueError("جزء الوزن/السعر في باركود الميزان غير رقمي")
+        return {
+            "item_code": item_code,
+            "value": float(raw_value) / divisor,
+            "mode": cfg.get("scale_value_mode", "weight"),
+        }
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"تعذر فك باركود الميزان: {exc}")
+
+
+# ============================================================
 # معالجة الباركود
 # ============================================================
 
@@ -1146,40 +1201,37 @@ def process_barcode_scan():
         item = None
 
         # ====================================================
-        # باركود الوزن
+        # باركود الميزان - الصيغة يحددها الأدمن من الإعدادات
         # ====================================================
 
-        if (
-            code.startswith("20")
-            and len(code) >= 12
-        ):
-
-            item_code = code[2:7]
-
-            try:
-                weight_value = (
-                    float(code[7:12])
-                    / 1000.0
-                )
-
-            except ValueError:
-                weight_value = qty_to_add
-
+        scale_data = _parse_scale_barcode(conn, code)
+        if scale_data:
+            item_code = scale_data["item_code"]
+            alt_item_code = item_code.lstrip("0") or "0"
             item = conn.execute(
                 """
                 SELECT *
                 FROM items
-                WHERE item_code = ?
+                WHERE (item_code = ? OR item_code = ?)
                   AND branch_id = ?
+                ORDER BY CASE WHEN item_code = ? THEN 0 ELSE 1 END
+                LIMIT 1
                 """,
-                (
-                    item_code,
-                    b_id
-                )
+                (item_code, alt_item_code, b_id, item_code)
             ).fetchone()
 
             if item:
-                qty_to_add = weight_value
+                embedded_value = float(scale_data["value"])
+                if scale_data["mode"] == "price":
+                    sale_price = float(item["sale_price"] or 0)
+                    if sale_price <= 0:
+                        raise ValueError("لا يمكن حساب كمية صنف الميزان لأن سعر البيع صفر")
+                    qty_to_add = embedded_value / sale_price
+                else:
+                    qty_to_add = embedded_value
+
+                if qty_to_add <= 0:
+                    raise ValueError("الوزن الناتج من باركود الميزان يجب أن يكون أكبر من صفر")
 
         # ====================================================
         # باركود عادي
@@ -1373,6 +1425,8 @@ def summarize_invoice_rows(rows):
     payment_totals = {
         "كاش (نقدي)": 0.0,
         "شبكة / بطاقة": 0.0,
+        "تحويل مصرفي": 0.0,
+        "دفع آخر": 0.0,
         "آجل (على الحساب)": 0.0
     }
     manual_item_lines = 0
@@ -1415,6 +1469,8 @@ def summarize_invoice_rows(rows):
         "invoice_count": len(rows),
         "cash_total": payment_totals["كاش (نقدي)"],
         "card_total": payment_totals["شبكة / بطاقة"],
+        "transfer_total": payment_totals["تحويل مصرفي"],
+        "other_total": payment_totals["دفع آخر"],
         "credit_total": payment_totals["آجل (على الحساب)"],
         "manual_item_lines": manual_item_lines,
         "manual_item_qty": manual_item_qty,
@@ -1544,6 +1600,8 @@ def build_shift_report_html(
         <p class="left">إجمالي الخصومات: <b>{summary["discount_total"]:,.2f} د.ل</b></p>
         <p class="left">إجمالي النقدي: <b>{summary.get("cash_total", 0):,.2f} د.ل</b></p>
         <p class="left">إجمالي البطاقة: <b>{summary.get("card_total", 0):,.2f} د.ل</b></p>
+        <p class="left">إجمالي التحويل: <b>{summary.get("transfer_total", 0):,.2f} د.ل</b></p>
+        <p class="left">إجمالي طرق الدفع الأخرى: <b>{summary.get("other_total", 0):,.2f} د.ل</b></p>
         <p class="left">إجمالي الآجل: <b>{summary.get("credit_total", 0):,.2f} د.ل</b></p>
         <p class="left">المدفوع من حسابات الموردين: <b>{supplier_payments_total:,.2f} د.ل</b></p>
         <p class="left">الأصناف المضافة يدوياً: <b>{summary.get("manual_item_lines", 0)}</b> حركة /
@@ -1573,6 +1631,42 @@ def get_shift_supplier_payments_total(conn, branch_id, shift_num, report_date):
         return float(row["total"] or 0) if row else 0.0
     except Exception:
         return 0.0
+
+
+def _ensure_shift_finance_schema(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS shift_closures(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER NOT NULL, shift_date TEXT NOT NULL, shift_number INTEGER NOT NULL,
+        gross_sales REAL DEFAULT 0, net_sales REAL DEFAULT 0, cash_amount REAL DEFAULT 0, card_amount REAL DEFAULT 0,
+        transfer_amount REAL DEFAULT 0, credit_amount REAL DEFAULT 0, other_amount REAL DEFAULT 0, status TEXT DEFAULT 'closed',
+        closed_by INTEGER, closed_at TEXT DEFAULT CURRENT_TIMESTAMP, notes TEXT, UNIQUE(branch_id, shift_date, shift_number))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS treasuries(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, treasury_name TEXT NOT NULL UNIQUE, treasury_type TEXT NOT NULL DEFAULT 'branch',
+        branch_id INTEGER, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS treasury_movements(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, treasury_id INTEGER NOT NULL, movement_type TEXT NOT NULL, amount REAL NOT NULL,
+        voucher_no TEXT, description TEXT, user_id INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+    cols={r['name'] for r in conn.execute('PRAGMA table_info(treasury_movements)').fetchall()}
+    for col,typ in [('branch_id','INTEGER'),('payment_method','TEXT'),('movement_date','TEXT'),('source_type','TEXT'),('source_ref','TEXT')]:
+        if col not in cols: conn.execute(f'ALTER TABLE treasury_movements ADD COLUMN {col} {typ}')
+
+def _post_shift_close_to_treasury(conn, branch_id, branch_name, shift_date, shift_num, summary, user_id):
+    _ensure_shift_finance_schema(conn)
+    existing=conn.execute('SELECT id FROM shift_closures WHERE branch_id=? AND shift_date=? AND shift_number=?',(branch_id,shift_date,int(shift_num))).fetchone()
+    if existing: return existing['id']
+    cur=conn.execute("""INSERT INTO shift_closures(branch_id,shift_date,shift_number,gross_sales,net_sales,cash_amount,card_amount,transfer_amount,credit_amount,other_amount,closed_by,notes)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(branch_id,shift_date,int(shift_num),summary['gross_total'],summary['net_total'],summary['cash_total'],summary['card_total'],summary['transfer_total'],summary['credit_total'],summary['other_total'],user_id,'إغلاق وردية تلقائي'))
+    closure_id=cur.lastrowid
+    tname=f'خزينة فرع {branch_name}'
+    tr=conn.execute("SELECT id FROM treasuries WHERE branch_id=? AND treasury_type='branch' LIMIT 1",(branch_id,)).fetchone()
+    if not tr:
+        cur=conn.execute("INSERT INTO treasuries(treasury_name,treasury_type,branch_id) VALUES(?,'branch',?)",(tname,branch_id)); tid=cur.lastrowid
+    else: tid=tr['id']
+    ref=f'SHIFT-{branch_id}-{shift_date}-{int(shift_num)}'
+    for method,amount in [('كاش',summary['cash_total']),('بطاقة',summary['card_total']),('تحويل',summary['transfer_total']),('أخرى',summary['other_total'])]:
+        if float(amount)>0:
+            conn.execute("""INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id,branch_id,payment_method,movement_date,source_type,source_ref)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(tid,'ترحيل وردية',float(amount),ref,f'ترحيل وردية فرع {branch_name} - {shift_date} - وردية {shift_num}',user_id,branch_id,method,shift_date,'shift_close',str(closure_id)))
+    return closure_id
 
 
 # ============================================================
@@ -2454,10 +2548,14 @@ def show_page():
                                 """,
                                 (b_id, today_date, str(current_shift_num))
                             )
+                            _post_shift_close_to_treasury(
+                                conn, b_id, branch_name_display, today_date, current_shift_num, z_summary,
+                                st.session_state.get("user_id")
+                            )
                             conn.commit()
                             st.success(
                                 "✅ تم إغلاق الوردية "
-                                "وحفظها في أرشيف إغلاق الوردية."
+                                "وحفظها في الأرشيف وترحيل المقبوضات تلقائياً إلى خزينة الفرع."
                             )
                             st.rerun()
 

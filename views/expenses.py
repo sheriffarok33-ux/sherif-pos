@@ -649,6 +649,80 @@ def _finance_undo_dialog():
 # الصفحة الرئيسية
 # ============================================================
 
+
+def _ensure_settlement_schema(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS shift_closures(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER NOT NULL, shift_date TEXT NOT NULL, shift_number INTEGER NOT NULL,
+        gross_sales REAL DEFAULT 0, net_sales REAL DEFAULT 0, cash_amount REAL DEFAULT 0, card_amount REAL DEFAULT 0,
+        transfer_amount REAL DEFAULT 0, credit_amount REAL DEFAULT 0, other_amount REAL DEFAULT 0, status TEXT DEFAULT 'closed',
+        closed_by INTEGER, closed_at TEXT DEFAULT CURRENT_TIMESTAMP, notes TEXT, UNIQUE(branch_id, shift_date, shift_number))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS shift_settlement_adjustments(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, closure_id INTEGER, branch_id INTEGER NOT NULL, shift_date TEXT NOT NULL, shift_number INTEGER,
+        cash_amount REAL DEFAULT 0, card_amount REAL DEFAULT 0, transfer_amount REAL DEFAULT 0, credit_amount REAL DEFAULT 0,
+        other_amount REAL DEFAULT 0, reason TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS treasuries(id INTEGER PRIMARY KEY AUTOINCREMENT,treasury_name TEXT NOT NULL UNIQUE,treasury_type TEXT NOT NULL DEFAULT 'branch',branch_id INTEGER,is_active INTEGER NOT NULL DEFAULT 1,created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS treasury_movements(id INTEGER PRIMARY KEY AUTOINCREMENT,treasury_id INTEGER NOT NULL,movement_type TEXT NOT NULL,amount REAL NOT NULL,voucher_no TEXT,description TEXT,user_id INTEGER,created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+    cols={r['name'] for r in conn.execute('PRAGMA table_info(treasury_movements)').fetchall()}
+    for col,typ in [('branch_id','INTEGER'),('payment_method','TEXT'),('movement_date','TEXT'),('source_type','TEXT'),('source_ref','TEXT')]:
+        if col not in cols: conn.execute(f'ALTER TABLE treasury_movements ADD COLUMN {col} {typ}')
+    conn.commit()
+
+def _branch_treasury(conn, branch_id, branch_name):
+    row=conn.execute("SELECT id FROM treasuries WHERE branch_id=? AND treasury_type='branch' LIMIT 1",(branch_id,)).fetchone()
+    if row: return row['id']
+    cur=conn.execute("INSERT INTO treasuries(treasury_name,treasury_type,branch_id) VALUES(?,'branch',?)",(f'خزينة فرع {branch_name}',branch_id))
+    return cur.lastrowid
+
+def _show_shift_settlement(branches):
+    role=st.session_state.get('role','')
+    if role not in ('Admin','General_Supervisor'):
+        st.warning('🔒 تسوية الورديات والأيام السابقة متاحة للمدير أو الأدمن فقط.')
+        return
+    conn=get_db_connection()
+    try:
+        _ensure_settlement_schema(conn)
+        st.subheader('🧮 مراجعة وتسوية ترحيل الورديات')
+        closures=conn.execute("""SELECT sc.*,b.branch_name FROM shift_closures sc JOIN branches b ON b.id=sc.branch_id ORDER BY sc.shift_date DESC,sc.id DESC LIMIT 180""").fetchall()
+        if closures:
+            labels={f"{r['shift_date']} | {r['branch_name']} | وردية {r['shift_number']} | {float(r['net_sales'] or 0):,.2f}":r for r in closures}
+            row=labels[st.selectbox('اختر وردية مغلقة:',list(labels),key='settlement_closure')]
+            st.caption('التعديل هنا يصحح توزيع طرق التحصيل ولا يغيّر فواتير البيع الأصلية. الآجل لا يدخل الخزينة.')
+            c1,c2,c3=st.columns(3)
+            cash=c1.number_input('كاش',min_value=0.0,value=float(row['cash_amount'] or 0),step=1.0,key='set_cash')
+            card=c2.number_input('بطاقة',min_value=0.0,value=float(row['card_amount'] or 0),step=1.0,key='set_card')
+            transfer=c3.number_input('تحويل',min_value=0.0,value=float(row['transfer_amount'] or 0),step=1.0,key='set_transfer')
+            c4,c5=st.columns(2)
+            credit=c4.number_input('آجل',min_value=0.0,value=float(row['credit_amount'] or 0),step=1.0,key='set_credit')
+            other=c5.number_input('دفع آخر',min_value=0.0,value=float(row['other_amount'] or 0),step=1.0,key='set_other')
+            reason=st.text_input('سبب التسوية:',key='set_reason')
+            total=float(cash+card+transfer+credit+other)
+            st.metric('إجمالي التوزيع',f'{total:,.2f} د.ل',delta=f'{total-float(row["net_sales"] or 0):,.2f} عن صافي المبيعات')
+            if st.button('✅ حفظ تسوية الوردية',type='primary',use_container_width=True,key='save_shift_settlement'):
+                if not reason.strip(): st.warning('اكتب سبب التسوية.')
+                elif abs(total-float(row['net_sales'] or 0))>0.01: st.error('إجمالي طرق الدفع يجب أن يساوي صافي مبيعات الوردية.')
+                else:
+                    tid=_branch_treasury(conn,row['branch_id'],row['branch_name']); ref=str(row['id']); uid=st.session_state.get('user_id')
+                    conn.execute("UPDATE treasury_movements SET amount=0, description=COALESCE(description,'') || ' [تم استبدالها بتسوية]' WHERE source_type='shift_close' AND source_ref=?",(ref,))
+                    for method,amount in [('كاش',cash),('بطاقة',card),('تحويل',transfer),('أخرى',other)]:
+                        if amount>0: conn.execute("""INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id,branch_id,payment_method,movement_date,source_type,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(tid,'تسوية وردية',float(amount),f'ADJ-{ref}',reason,uid,row['branch_id'],method,row['shift_date'],'shift_adjustment',ref))
+                    conn.execute("UPDATE shift_closures SET cash_amount=?,card_amount=?,transfer_amount=?,credit_amount=?,other_amount=?,notes=? WHERE id=?",(cash,card,transfer,credit,other,reason,row['id']))
+                    conn.execute("INSERT INTO shift_settlement_adjustments(closure_id,branch_id,shift_date,shift_number,cash_amount,card_amount,transfer_amount,credit_amount,other_amount,reason,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(row['id'],row['branch_id'],row['shift_date'],row['shift_number'],cash,card,transfer,credit,other,reason,uid))
+                    conn.commit(); st.success('تم حفظ التسوية وتحديث ترحيل الخزينة مع الاحتفاظ بسجل التعديل.'); st.rerun()
+        else: st.info('لا توجد ورديات مغلقة مسجلة بالنظام الجديد حتى الآن.')
+        st.markdown('---'); st.subheader('➕ إضافة حركة مالية ليوم سابق')
+        bmap={b['branch_name']:b['id'] for b in branches}; bc1,bc2=st.columns(2)
+        bn=bc1.selectbox('الفرع:',list(bmap),key='hist_branch'); d=bc2.date_input('التاريخ:',key='hist_date')
+        hc1,hc2=st.columns(2); method=hc1.selectbox('نوع دخول المال:',['كاش','بطاقة','تحويل','أخرى'],key='hist_method'); amount=hc2.number_input('المبلغ:',min_value=0.0,step=1.0,key='hist_amount')
+        source=st.selectbox('مصدر الحركة:',['مبيعات سابقة','إيراد آخر','تحصيل دين'],key='hist_source'); note=st.text_input('البيان / السبب:',key='hist_note')
+        if st.button('💾 إضافة الحركة السابقة',type='primary',use_container_width=True,key='save_hist_money'):
+            if amount<=0 or not note.strip(): st.warning('أدخل مبلغاً وبياناً واضحاً.')
+            else:
+                bid=bmap[bn]; tid=_branch_treasury(conn,bid,bn); uid=st.session_state.get('user_id'); ref=f'MAN-{bid}-{d}-{datetime.now().strftime("%H%M%S")}'
+                conn.execute("""INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id,branch_id,payment_method,movement_date,source_type,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(tid,'إضافة يوم سابق',float(amount),ref,f'{source}: {note}',uid,bid,method,str(d),'manual_historical',ref))
+                if source=='إيراد آخر': conn.execute("INSERT INTO revenues(branch_id,revenue_source,amount,notes,description,revenue_date) VALUES(?,?,?,?,?,?)",(bid,'إيراد يوم سابق',float(amount),note,note,str(d)))
+                conn.commit(); st.success('تمت إضافة الحركة السابقة للخزينة وتسجيل مصدرها.'); st.rerun()
+    finally: conn.close()
+
 def show_page():
     back_button(key="back_expenses")
 
@@ -720,7 +794,7 @@ def show_page():
         st.session_state["finance_screen_mode"] = "expense"
 
     if not st.session_state.get("finance_entry_lock"):
-        finance_modes = {"💸 مصروف جديد":"expense", "💵 إيراد آخر":"revenue", "📋 الأرشيف والتقارير":"archive"}
+        finance_modes = {"💸 مصروف جديد":"expense", "💵 إيراد آخر":"revenue", "🧮 تسوية الورديات":"settlement", "📋 الأرشيف والتقارير":"archive"}
         current_label = next((k for k,v in finance_modes.items() if v == st.session_state["finance_screen_mode"]), list(finance_modes)[0])
         selected_label = st.selectbox("اختر العملية:", list(finance_modes), index=list(finance_modes).index(current_label), key="finance_action_dropdown")
         selected_value = finance_modes[selected_label]
@@ -731,6 +805,7 @@ def show_page():
     selected_mode = (
         '➕ تسجيل مصروف جديد' if st.session_state["finance_screen_mode"] == "expense"
         else '💵 تسجيل إيراد جديد' if st.session_state["finance_screen_mode"] == "revenue"
+        else '🧮 تسوية وإغلاق الورديات' if st.session_state["finance_screen_mode"] == "settlement"
         else '📋 أرشيف المصروفات وتقارير الفروع (تصدير Excel)'
     )
 
@@ -1011,7 +1086,14 @@ def show_page():
                 st.rerun()
 
     # ========================================================
-    # 3 - الأرشيف والتقارير
+    # 3 - تسوية الورديات والحركات السابقة
+    # ========================================================
+
+    elif selected_mode.startswith("🧮"):
+        _show_shift_settlement(branches)
+
+    # ========================================================
+    # 4 - الأرشيف والتقارير
     # ========================================================
 
     elif selected_mode.startswith("📋"):

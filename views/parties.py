@@ -184,17 +184,16 @@ def show_page():
     if st.session_state.get("parties_success_pending"):
         _parties_success_dialog()
 
-    st.header("👥 الموردون والعملاء والحسابات")
-    st.info("الإضافة، التعديل، الحذف، السداد والتحصيل والتصدير من شاشة واحدة.")
+    st.header("👥 جهات التعامل والحسابات")
+    st.info("الجهة الواحدة يمكن أن تبيع لنا وتشتري منا؛ ويظهر صافي حسابها تلقائياً كدائن أو مدين.")
 
     if "parties_mode" not in st.session_state:
-        st.session_state["parties_mode"] = "suppliers"
+        st.session_state["parties_mode"] = "accounts"
 
     if not st.session_state.get("parties_entry_lock"):
         party_modes = {
-            "🚛 الموردون": "suppliers",
-            "🤝 العملاء": "customers",
-            "➕ إضافة جهة": "add",
+            "📒 كشف حساب الدائن والمدين": "accounts",
+            "➕ إضافة مورد / جهة تعامل": "add",
         }
         current_label = next((k for k,v in party_modes.items() if v == st.session_state["parties_mode"]), list(party_modes)[0])
         selected_label = st.selectbox("اختر العملية:", list(party_modes), index=list(party_modes).index(current_label), key="parties_action_dropdown")
@@ -210,45 +209,56 @@ def show_page():
         mode = st.session_state["parties_mode"]
 
         if mode == "add":
-            if "party_add_type" not in st.session_state:
-                st.session_state["party_add_type"] = "supplier"
-
-            t1, t2 = st.columns(2)
-            if t1.button("🚛 مورد جديد", use_container_width=True):
-                st.session_state["party_add_type"] = "supplier"
-                st.rerun()
-            if t2.button("🤝 عميل آجل جديد", use_container_width=True):
-                st.session_state["party_add_type"] = "customer"
-                st.rerun()
-
-            kind = st.session_state["party_add_type"]
+            st.subheader("➕ إضافة مورد / جهة تعامل")
+            st.caption("سيتم إنشاء الجهة مرة واحدة للاستخدام في الشراء والبيع الآجل معاً.")
             with st.form("party_add_form", clear_on_submit=True):
                 c1, c2 = st.columns(2)
-                name = c1.text_input("الاسم:")
+                name = c1.text_input("اسم الجهة / المورد:")
                 phone = c2.text_input("رقم الهاتف:")
-                submit = st.form_submit_button("💾 حفظ", type="primary", use_container_width=True)
-
+                submit = st.form_submit_button("💾 حفظ الجهة", type="primary", use_container_width=True)
             if submit:
                 if not name.strip():
-                    st.warning("أدخل الاسم.")
+                    st.warning("أدخل اسم الجهة.")
                 else:
                     try:
-                        if kind == "supplier":
-                            conn.execute(
-                                "INSERT INTO suppliers (supplier_name, phone, balance) VALUES (?, ?, 0.0)",
-                                (name.strip(), phone.strip())
-                            )
-                        else:
-                            conn.execute(
-                                "INSERT INTO customers (customer_name, phone, total_purchases, balance) VALUES (?, ?, 0.0, 0.0)",
-                                (name.strip(), phone.strip())
-                            )
+                        nm, ph = name.strip(), phone.strip()
+                        sup = conn.execute("SELECT id FROM suppliers WHERE supplier_name=? LIMIT 1", (nm,)).fetchone()
+                        cus = conn.execute("SELECT id FROM customers WHERE customer_name=? LIMIT 1", (nm,)).fetchone()
+                        if not sup:
+                            conn.execute("INSERT INTO suppliers (supplier_name, phone, balance) VALUES (?, ?, 0.0)", (nm, ph))
+                        if not cus:
+                            conn.execute("INSERT INTO customers (customer_name, phone, total_purchases, balance) VALUES (?, ?, 0.0, 0.0)", (nm, ph))
                         conn.commit()
-                        _parties_done("تم الحفظ بنجاح.")
+                        _parties_done("تم حفظ الجهة، وأصبحت متاحة في الشراء والبيع الآجل.")
                     except Exception as e:
-                        conn.rollback()
-                        st.error("تعذر الحفظ؛ قد يكون الاسم أو الهاتف مسجلاً.")
-                        st.code(str(e))
+                        conn.rollback(); st.error("تعذر حفظ الجهة."); st.code(str(e))
+
+        elif mode == "accounts":
+            st.subheader("📒 كشف حساب الجهات — دائن / مدين")
+            suppliers = conn.execute("SELECT supplier_name AS name, phone, balance FROM suppliers").fetchall()
+            customers = conn.execute("SELECT customer_name AS name, phone, balance FROM customers").fetchall()
+            merged = {}
+            for r in suppliers:
+                key=(str(r["name"] or "").strip(), str(r["phone"] or "").strip())
+                merged.setdefault(key,{"name":key[0],"phone":key[1],"supplier":0.0,"customer":0.0})["supplier"] += float(r["balance"] or 0)
+            for r in customers:
+                key=(str(r["name"] or "").strip(), str(r["phone"] or "").strip())
+                # match by name if phone differs/blank for legacy records
+                found=next((k for k in merged if k[0]==key[0]), key)
+                merged.setdefault(found,{"name":found[0],"phone":found[1] or key[1],"supplier":0.0,"customer":0.0})["customer"] += float(r["balance"] or 0)
+            data=[]
+            for v in merged.values():
+                net=v["supplier"]-v["customer"]
+                data.append({"الجهة":v["name"],"الهاتف":v["phone"],"له علينا (مشتريات آجل)":v["supplier"],"عليه لنا (مبيعات آجل)":v["customer"],"صافي الحساب":abs(net),"الحالة":"دائن - له علينا" if net>0 else "مدين - عليه لنا" if net<0 else "مسفّر"})
+            if data:
+                df=pd.DataFrame(data).sort_values(["الحالة","الجهة"])
+                st.dataframe(df, hide_index=True, use_container_width=True)
+                c1,c2,c3=st.columns(3)
+                c1.metric("إجمالي الدائنين", f"{sum(max(v['supplier']-v['customer'],0) for v in merged.values()):,.2f} د.ل")
+                c2.metric("إجمالي المدينين", f"{sum(max(v['customer']-v['supplier'],0) for v in merged.values()):,.2f} د.ل")
+                c3.download_button("📥 تصدير كشف الحساب", _excel_bytes(df,"Party Accounts"), "party_accounts.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            else:
+                st.info("لا توجد جهات تعامل مسجلة.")
 
         elif mode == "suppliers":
             rows = conn.execute(
