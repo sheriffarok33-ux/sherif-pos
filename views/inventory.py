@@ -487,8 +487,15 @@ def _update_items_from_editor(branch_id, original_rows, edited_df):
             unit_type = "kg" if unit_ar == "كجم" else "piece"
             ppc = 1
             new_qty = float(row["الكمية"] or 0)
-            buy_price = float(row["سعر الشراء"] or 0)
-            avg_cost = float(row["متوسط التكلفة"] or 0)
+            # الشراء ومتوسط التكلفة قيم محاسبية: لا تقبل التعديل اليدوي من شاشة المخزون.
+            buy_price = float(old["buy_price"] or 0)
+            avg_cost = float(old["avg_cost"] or 0)
+            if not is_main_warehouse:
+                # بيانات تعريف الصنف مركزية؛ الفرع يعدل كميته فقط.
+                item_code = str(old["item_code"] or "").strip()
+                item_name = str(old["item_name"] or "").strip()
+                scale_code = str(old["scale_code"] or "").strip()
+                unit_type = str(old["unit_type"] or "piece")
             requested_sale_price = float(row["سعر البيع"] or 0)
             sale_price = requested_sale_price if is_main_warehouse else float(old["sale_price"] or 0)
 
@@ -538,12 +545,17 @@ def _update_items_from_editor(branch_id, original_rows, edited_df):
                 )
             )
 
-            # سعر البيع موحد على مستوى الشركة: لا يعدل إلا من المخزن الرئيسي،
-            # وأي تعديل منه يعمم تلقائياً على نفس كود الصنف في جميع الفروع.
-            if is_main_warehouse and abs(sale_price - float(old["sale_price"] or 0)) > 1e-9:
+            # بيانات تعريف الصنف مركزية: أي تعديل من المخزن الرئيسي يعمم على كل الفروع.
+            # نطابق بالكود القديم حتى تغيير كود الصنف نفسه ينتشر بصورة صحيحة.
+            if is_main_warehouse:
+                old_code = str(old["item_code"] or "").strip()
                 conn.execute(
-                    "UPDATE items SET sale_price=? WHERE item_code=?",
-                    (sale_price, item_code)
+                    """UPDATE items
+                       SET item_code=?, item_name=?, scale_code=?, sale_price=?,
+                           unit_type=?, pieces_per_carton=?
+                       WHERE item_code=? AND NOT (id=? AND branch_id=?)""",
+                    (item_code, item_name, scale_code, sale_price, unit_type, ppc,
+                     old_code, item_id, branch_id)
                 )
 
             if abs(delta) > 1e-9:
@@ -769,8 +781,10 @@ def show_page():
             "اضغط Enter بعد تحرير الخلية، ثم اضغط «حفظ كل التعديلات»."
         )
 
-        if not is_main_warehouse:
-            st.info("🔒 سعر البيع مركزي ويُعدّل من المخزن الرئيسي فقط، ثم يُعمم تلقائياً على جميع الفروع.")
+        if is_main_warehouse:
+            st.info("🔒 سعر الشراء ومتوسط التكلفة للعرض فقط. بيانات الصنف وسعر البيع تُعدّل من المخزن الرئيسي وتُعمم تلقائياً على جميع الفروع.")
+        else:
+            st.info("🔒 في الفروع يمكن تعديل الكمية فقط. بيانات الصنف والأسعار مركزية من المخزن الرئيسي.")
 
         edited_df = st.data_editor(
             original_df,
@@ -778,7 +792,11 @@ def show_page():
             hide_index=True,
             num_rows="fixed",
             key=f"inventory_editor_{branch_id}",
-            disabled=["id"] if is_main_warehouse else ["id", "سعر البيع"],
+            disabled=(
+                ["id", "سعر الشراء", "متوسط التكلفة"]
+                if is_main_warehouse
+                else ["id", "كود الصنف", "اسم الصنف", "كود الميزان", "الوحدة", "سعر الشراء", "متوسط التكلفة", "سعر البيع"]
+            ),
             column_config={
                 "id": st.column_config.NumberColumn("ID", disabled=True),
                 "كود الميزان": st.column_config.TextColumn("كود الميزان / PLU", help="الكود الداخلي الذي يطبعه الميزان للصنف، مثل 14000"),

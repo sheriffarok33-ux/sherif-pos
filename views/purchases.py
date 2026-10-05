@@ -4,6 +4,31 @@ import streamlit as st
 import html
 from datetime import datetime, date
 from database import get_db_connection
+from offline_store import get_device_id
+
+
+def _ensure_purchase_document_schema(conn):
+    try:
+        conn.execute("ALTER TABLE purchases ADD COLUMN document_number TEXT")
+    except Exception:
+        pass
+
+def _next_purchase_document_number(conn, branch_id):
+    """رقم نظام ثابت وآمن نسبياً بين الأجهزة: فرع + بصمة جهاز + تسلسل محلي."""
+    _ensure_purchase_document_schema(conn)
+    device_tag = get_device_id().replace("-", "")[:4].upper()
+    prefix = f"PUR-{int(branch_id):02d}-{device_tag}-"
+    rows = conn.execute(
+        "SELECT document_number FROM purchases WHERE document_number LIKE ?",
+        (prefix + "%",)
+    ).fetchall()
+    seq = 0
+    for r in rows:
+        try:
+            seq = max(seq, int(str(r["document_number"]).rsplit("-", 1)[-1]))
+        except Exception:
+            pass
+    return f"{prefix}{seq + 1:06d}"
 
 
 # ============================================================
@@ -324,6 +349,7 @@ def post_purchase_invoice(
     supplier_id,
     supplier_name,
     invoice_number,
+    document_number,
     payment_type,
     purchase_cart
 ):
@@ -332,14 +358,10 @@ def post_purchase_invoice(
 
     try:
 
-        invoice_number = (
-            invoice_number.strip()
-        )
-
-        if not invoice_number:
-            raise ValueError(
-                "يرجى إدخال رقم فاتورة المورد."
-            )
+        invoice_number = (invoice_number or "").strip()
+        document_number = (document_number or "").strip()
+        if not document_number:
+            raise ValueError("تعذر إنشاء رقم مستند المشتريات.")
 
         if not purchase_cart:
             raise ValueError(
@@ -388,26 +410,22 @@ def post_purchase_invoice(
         # لنفس المورد
         # ====================================================
 
-        duplicate_invoice = conn.execute(
-            """
-            SELECT id
-            FROM purchases
-            WHERE supplier_id = ?
-              AND invoice_number = ?
-            LIMIT 1
-            """,
-            (
-                supplier_id,
-                invoice_number
-            )
-        ).fetchone()
-
+        duplicate_invoice = None
+        if invoice_number:
+            duplicate_invoice = conn.execute(
+                """SELECT id FROM purchases
+                   WHERE supplier_id=? AND invoice_number=? LIMIT 1""",
+                (supplier_id, invoice_number)
+            ).fetchone()
         if duplicate_invoice:
-            raise ValueError(
-                f"فاتورة المورد رقم "
-                f"({invoice_number}) "
-                "مسجلة مسبقاً لهذا المورد."
-            )
+            raise ValueError(f"فاتورة المورد رقم ({invoice_number}) مسجلة مسبقاً لهذا المورد.")
+
+        duplicate_document = conn.execute(
+            "SELECT id FROM purchases WHERE document_number=? LIMIT 1",
+            (document_number,)
+        ).fetchone()
+        if duplicate_document:
+            raise ValueError(f"رقم المستند ({document_number}) مستخدم مسبقاً.")
 
         details = []
 
@@ -563,7 +581,7 @@ def post_purchase_invoice(
                         unit_cost,
                         source_type
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         item_id,
@@ -607,18 +625,20 @@ def post_purchase_invoice(
                 supplier_id,
                 supplier_name,
                 invoice_number,
+                document_number,
                 total_cost,
                 payment_type,
                 items_details,
                 invoice_date
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 branch_id,
                 supplier_id,
                 supplier_name,
                 invoice_number,
+                document_number,
                 grand_total,
                 payment_type,
                 " | ".join(details),
@@ -655,7 +675,7 @@ def post_purchase_invoice(
         # تظهر نافذة تأكيد، والتنظيف يتم عند ضغط "موافق".
         st.session_state["purchase_success_pending"] = True
         st.session_state["purchase_success_message"] = (
-            f"تم ترحيل فاتورة المشتريات بنجاح. "
+            f"تم ترحيل فاتورة المشتريات {document_number} بنجاح. "
             f"إجمالي الفاتورة: {grand_total:,.2f} د.ل"
         )
         st.rerun()
@@ -729,7 +749,7 @@ def show_purchase_reports(branches, suppliers_data):
         conn = get_db_connection()
         rows = conn.execute(
             f"""
-            SELECT p.id, p.invoice_number, p.invoice_date, p.supplier_name,
+            SELECT p.id, p.invoice_number, COALESCE(p.document_number, '') AS document_number, p.invoice_date, p.supplier_name,
                    COALESCE(br.branch_name, '') AS branch_name,
                    p.payment_type, COALESCE(p.total_cost, 0) AS total_cost,
                    COALESCE(p.items_details, '') AS items_details
@@ -759,7 +779,8 @@ def show_purchase_reports(branches, suppliers_data):
         return
 
     table_rows = [{
-        "رقم الفاتورة": r["invoice_number"],
+        "رقم المستند": r["document_number"] or f"PUR-OLD-{r['id']}",
+        "رقم فاتورة المورد": r["invoice_number"] or "-",
         "التاريخ": r["invoice_date"],
         "المورد": r["supplier_name"],
         "الفرع / المخزن": r["branch_name"],
@@ -775,7 +796,7 @@ def show_purchase_reports(branches, suppliers_data):
     st.markdown("#### 🔎 تفاصيل الفواتير")
     for r in rows:
         with st.expander(
-            f"فاتورة {r['invoice_number']} — {r['supplier_name']} — "
+            f"فاتورة {r['document_number'] or ('PUR-OLD-' + str(r['id']))} — {r['supplier_name']} — "
             f"{float(r['total_cost'] or 0):,.2f} د.ل"
         ):
             st.write(f"**التاريخ:** {r['invoice_date']}")
@@ -790,7 +811,8 @@ def show_purchase_reports(branches, suppliers_data):
             </style></head><body>
             <h2 style='text-align:center'>فاتورة مشتريات</h2>
             <table>
-            <tr><td><b>رقم الفاتورة</b></td><td>{html.escape(str(r['invoice_number'] or '-'))}</td></tr>
+            <tr><td><b>رقم مستند النظام</b></td><td>{html.escape(str(r['document_number'] or ('PUR-OLD-' + str(r['id']))))}</td></tr>
+            <tr><td><b>رقم فاتورة المورد</b></td><td>{html.escape(str(r['invoice_number'] or '-'))}</td></tr>
             <tr><td><b>التاريخ</b></td><td>{html.escape(str(r['invoice_date'] or '-'))}</td></tr>
             <tr><td><b>المورد</b></td><td>{html.escape(str(r['supplier_name'] or '-'))}</td></tr>
             <tr><td><b>الفرع / المخزن</b></td><td>{html.escape(str(r['branch_name'] or '-'))}</td></tr>
@@ -838,6 +860,9 @@ def _purchase_success_dialog():
             st.session_state.pop(key, None)
         st.session_state.pop("purchase_success_pending", None)
         st.session_state.pop("purchase_success_message", None)
+        for _k in list(st.session_state.keys()):
+            if str(_k).startswith("purchase_document_number_"):
+                st.session_state.pop(_k, None)
         st.rerun()
 
 
@@ -1074,7 +1099,7 @@ def show_page():
     )
 
     inv_num = col_h3.text_input(
-        "🧾 رقم فاتورة المورد:"
+        "🧾 رقم فاتورة المورد (اختياري):"
     )
 
     payment_type = col_h4.selectbox(
@@ -1092,6 +1117,17 @@ def show_page():
     selected_supplier_id = (
         supplier_dict[ps]
     )
+
+    # رقم مستند النظام ينشأ تلقائياً ويظل ثابتاً طوال الفاتورة المفتوحة.
+    doc_key = f"purchase_document_number_{selected_branch_id}"
+    if not st.session_state.get(doc_key):
+        _doc_conn = get_db_connection()
+        try:
+            st.session_state[doc_key] = _next_purchase_document_number(_doc_conn, selected_branch_id)
+        finally:
+            _doc_conn.close()
+    document_number = st.session_state[doc_key]
+    st.text_input("🔒 رقم مستند النظام", value=document_number, disabled=True, key=f"purchase_doc_display_{selected_branch_id}")
 
     # ========================================================
     # رصيد المورد
@@ -1471,79 +1507,38 @@ def show_page():
             "فاتورة الشراء الحالية"
         )
 
-        for index, purchase_item in enumerate(
-            st.session_state[
-                "purch_cart"
-            ]
-        ):
-
-            (
-                p_col1,
-                p_col2,
-                p_col3,
-                p_col4,
-                p_col5
-            ) = st.columns(
-                [2, 1, 1, 1, 0.6]
-            )
-
-            expiry_display = (
-                purchase_item.get("expiry_date")
-                or "بدون انتهاء"
-            )
-
-            p_col1.write(
-                f"🏷️ "
-                f"{purchase_item['name']} "
-                f"({purchase_item['code']}) "
-                f"\n📅 {expiry_display}"
-            )
-
-            p_col2.write(
-                f"كمية: "
-                f"{purchase_item['qty']:,.2f}"
-            )
-
-            p_col3.write(
-                f"سعر: "
-                f"{purchase_item['price']:,.2f} "
-                "د.ل"
-            )
-
-            p_col4.write(
-                f"إجمالي: "
-                f"{purchase_item['total']:,.2f} "
-                "د.ل"
-            )
-
-            if p_col5.button(
-                "🗑️",
-                key=(
-                    f"del_purch_item_"
-                    f"{index}"
-                ),
-                help="حذف الصنف"
-            ):
-
-                st.session_state[
-                    "purch_cart"
-                ].pop(index)
-
-                if not st.session_state[
-                    "purch_cart"
-                ]:
-
-                    st.session_state.pop(
-                        "purch_cart_branch_id",
-                        None
-                    )
-
-                    st.session_state.pop(
-                        "purch_cart_supplier_id",
-                        None
-                    )
-
-                st.rerun()
+        cart_rows = []
+        for index, purchase_item in enumerate(st.session_state["purch_cart"], start=1):
+            cart_rows.append({
+                "#": index,
+                "كود الصنف": purchase_item["code"],
+                "الصنف": purchase_item["name"],
+                "الكمية": float(purchase_item["qty"]),
+                "سعر الشراء": float(purchase_item["price"]),
+                "الإجمالي": float(purchase_item["total"]),
+                "الصلاحية": purchase_item.get("expiry_date") or "—",
+            })
+        st.dataframe(
+            cart_rows, use_container_width=True, hide_index=True,
+            column_config={
+                "الكمية": st.column_config.NumberColumn("الكمية", format="%.3f"),
+                "سعر الشراء": st.column_config.NumberColumn("سعر الشراء", format="%.2f د.ل"),
+                "الإجمالي": st.column_config.NumberColumn("الإجمالي", format="%.2f د.ل"),
+            }
+        )
+        d1, d2 = st.columns([3, 1])
+        delete_index = d1.selectbox(
+            "حذف سطر من الفاتورة",
+            list(range(len(st.session_state["purch_cart"]))),
+            format_func=lambda i: f"{i+1} - {st.session_state['purch_cart'][i]['name']}",
+            key="purchase_delete_line"
+        )
+        if d2.button("🗑️ حذف السطر", use_container_width=True):
+            st.session_state["purch_cart"].pop(delete_index)
+            if not st.session_state["purch_cart"]:
+                st.session_state.pop("purch_cart_branch_id", None)
+                st.session_state.pop("purch_cart_supplier_id", None)
+            st.rerun()
 
         st.markdown("---")
 
@@ -1609,12 +1604,14 @@ def show_page():
                     "supplier_id": selected_supplier_id,
                     "supplier_name": ps,
                     "invoice_number": inv_num,
+                    "document_number": document_number,
                     "payment_type": payment_type,
                     "purchase_cart": list(st.session_state["purch_cart"]),
                 },
                 "summary": [
                     ("العملية", "اعتماد فاتورة مشتريات"),
-                    ("رقم الفاتورة", inv_num),
+                    ("رقم مستند النظام", document_number),
+                    ("رقم فاتورة المورد", inv_num or "-"),
                     ("المورد", ps),
                     ("طريقة الدفع", payment_type),
                     ("عدد الأصناف", str(len(st.session_state["purch_cart"]))),
