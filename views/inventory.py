@@ -98,7 +98,7 @@ def get_branches():
     try:
         conn = get_db_connection()
         return conn.execute(
-            "SELECT id, branch_name FROM branches ORDER BY id ASC"
+            "SELECT id, branch_name, branch_type FROM branches ORDER BY id ASC"
         ).fetchall()
     finally:
         if conn:
@@ -314,6 +314,21 @@ def create_new_inventory_item(
             raise ValueError("الأسعار لا يمكن أن تكون سالبة.")
 
         conn = get_db_connection()
+        branch_row = conn.execute("SELECT branch_name, branch_type FROM branches WHERE id=?", (branch_id,)).fetchone()
+        is_main_warehouse = bool(branch_row) and (
+            str(branch_row["branch_type"] or "").strip() == "مخزن"
+            or "رئيس" in str(branch_row["branch_name"] or "")
+        )
+        if not is_main_warehouse:
+            main_item = conn.execute(
+                """SELECT i.sale_price FROM items i JOIN branches b ON b.id=i.branch_id
+                   WHERE i.item_code=? AND (b.branch_type='مخزن' OR b.branch_name LIKE '%رئيس%')
+                   ORDER BY i.id LIMIT 1""", (item_code,)
+            ).fetchone()
+            if not main_item:
+                raise ValueError("يجب تعريف الصنف وسعره أولاً في المخزن الرئيسي قبل إضافته إلى أي فرع.")
+            sale_price = float(main_item["sale_price"] or 0)
+
         duplicate = conn.execute(
             """
             SELECT id
@@ -449,6 +464,11 @@ def _update_items_from_editor(branch_id, original_rows, edited_df):
     try:
         original = {int(r["id"]): r for r in original_rows}
         conn = get_db_connection()
+        branch_row = conn.execute("SELECT branch_name, branch_type FROM branches WHERE id=?", (branch_id,)).fetchone()
+        is_main_warehouse = bool(branch_row) and (
+            str(branch_row["branch_type"] or "").strip() == "مخزن"
+            or "رئيس" in str(branch_row["branch_name"] or "")
+        )
 
         for _, row in edited_df.iterrows():
             item_id = int(row["id"])
@@ -464,7 +484,8 @@ def _update_items_from_editor(branch_id, original_rows, edited_df):
             new_qty = float(row["الكمية"] or 0)
             buy_price = float(row["سعر الشراء"] or 0)
             avg_cost = float(row["متوسط التكلفة"] or 0)
-            sale_price = float(row["سعر البيع"] or 0)
+            requested_sale_price = float(row["سعر البيع"] or 0)
+            sale_price = requested_sale_price if is_main_warehouse else float(old["sale_price"] or 0)
 
             if not item_code or not item_name:
                 raise ValueError("كود الصنف واسم الصنف لا يمكن أن يكونا فارغين.")
@@ -510,6 +531,14 @@ def _update_items_from_editor(branch_id, original_rows, edited_df):
                     sale_price, unit_type, ppc, item_id, branch_id
                 )
             )
+
+            # سعر البيع موحد على مستوى الشركة: لا يعدل إلا من المخزن الرئيسي،
+            # وأي تعديل منه يعمم تلقائياً على نفس كود الصنف في جميع الفروع.
+            if is_main_warehouse and abs(sale_price - float(old["sale_price"] or 0)) > 1e-9:
+                conn.execute(
+                    "UPDATE items SET sale_price=? WHERE item_code=?",
+                    (sale_price, item_code)
+                )
 
             if abs(delta) > 1e-9:
                 conn.execute(
@@ -682,12 +711,14 @@ def show_page():
         return
 
     b_dict = {b["branch_name"]: b["id"] for b in branches}
+    b_type = {b["branch_name"]: (b["branch_type"] if "branch_type" in b.keys() else "") for b in branches}
     selected_branch = st.selectbox(
         "🏢 اختر المخزن أو الفرع:",
         list(b_dict.keys()),
         key="inventory_branch"
     )
     branch_id = b_dict[selected_branch]
+    is_main_warehouse = (str(b_type.get(selected_branch) or "").strip() == "مخزن" or "رئيس" in selected_branch)
 
     try:
         existing_items = get_branch_items_rows(branch_id)
@@ -702,7 +733,6 @@ def show_page():
     if not st.session_state.get("inventory_entry_lock"):
         mode_labels = {
             "📋 الأصناف والتعديل": "list",
-            "📦 إضافة كمية": "add",
             "➕ صنف جديد": "new",
             "📅 الصلاحيات": "expiry",
         }
@@ -732,13 +762,16 @@ def show_page():
             "اضغط Enter بعد تحرير الخلية، ثم اضغط «حفظ كل التعديلات»."
         )
 
+        if not is_main_warehouse:
+            st.info("🔒 سعر البيع مركزي ويُعدّل من المخزن الرئيسي فقط، ثم يُعمم تلقائياً على جميع الفروع.")
+
         edited_df = st.data_editor(
             original_df,
             use_container_width=True,
             hide_index=True,
             num_rows="fixed",
             key=f"inventory_editor_{branch_id}",
-            disabled=["id"],
+            disabled=["id"] if is_main_warehouse else ["id", "سعر البيع"],
             column_config={
                 "id": st.column_config.NumberColumn("ID", disabled=True),
                 "الوحدة": st.column_config.SelectboxColumn(
@@ -968,10 +1001,14 @@ def show_page():
             ppc = 1
             sale_label = "سعر بيع الكيلو (د.ل):"
 
-        sale_price = st.number_input(
-            sale_label, min_value=0.0, value=0.0,
-            step=0.5, format="%.2f", key="new_btn_sale_price"
-        )
+        if is_main_warehouse:
+            sale_price = st.number_input(
+                sale_label, min_value=0.0, value=0.0,
+                step=0.5, format="%.2f", key="new_btn_sale_price"
+            )
+        else:
+            sale_price = 0.0
+            st.info("🔒 سعر البيع سيُسحب تلقائياً من نفس كود الصنف في المخزن الرئيسي.")
 
         if "new_has_expiry" not in st.session_state:
             st.session_state["new_has_expiry"] = False

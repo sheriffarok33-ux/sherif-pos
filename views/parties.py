@@ -195,10 +195,6 @@ def show_page():
             "🚛 الموردون": "suppliers",
             "🤝 العملاء": "customers",
             "➕ إضافة جهة": "add",
-            "💳 سند دفع لمورد": "supplier_payment",
-            "💵 سند قبض من عميل": "customer_collection",
-            "🧾 أرشيف السندات": "vouchers",
-            "🏦 خزينة الشركة وخزائن الفروع": "treasuries",
         }
         current_label = next((k for k,v in party_modes.items() if v == st.session_state["parties_mode"]), list(party_modes)[0])
         selected_label = st.selectbox("اختر العملية:", list(party_modes), index=list(party_modes).index(current_label), key="parties_action_dropdown")

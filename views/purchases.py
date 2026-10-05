@@ -1,6 +1,7 @@
 from views.ui_common import back_button
 from views.ui_common import item_alerts
 import streamlit as st
+import html
 from datetime import datetime, date
 from database import get_db_connection
 
@@ -781,6 +782,31 @@ def show_purchase_reports(branches, suppliers_data):
             st.write(f"**الفرع / المخزن:** {r['branch_name'] or '-'}")
             st.write(f"**طريقة الدفع:** {r['payment_type'] or '-'}")
             st.write(f"**تفاصيل الأصناف:** {r['items_details'] or '-'}")
+            invoice_html = f"""
+            <html dir='rtl'><head><meta charset='utf-8'><style>
+            body{{font-family:Arial;padding:24px;direction:rtl}} table{{width:100%;border-collapse:collapse}}
+            td{{border:1px solid #999;padding:8px}} .no-print{{margin-top:18px}}
+            @media print{{.no-print{{display:none}}}}
+            </style></head><body>
+            <h2 style='text-align:center'>فاتورة مشتريات</h2>
+            <table>
+            <tr><td><b>رقم الفاتورة</b></td><td>{html.escape(str(r['invoice_number'] or '-'))}</td></tr>
+            <tr><td><b>التاريخ</b></td><td>{html.escape(str(r['invoice_date'] or '-'))}</td></tr>
+            <tr><td><b>المورد</b></td><td>{html.escape(str(r['supplier_name'] or '-'))}</td></tr>
+            <tr><td><b>الفرع / المخزن</b></td><td>{html.escape(str(r['branch_name'] or '-'))}</td></tr>
+            <tr><td><b>طريقة الدفع</b></td><td>{html.escape(str(r['payment_type'] or '-'))}</td></tr>
+            <tr><td><b>الإجمالي</b></td><td>{float(r['total_cost'] or 0):,.2f} د.ل</td></tr>
+            <tr><td><b>الأصناف</b></td><td>{html.escape(str(r['items_details'] or '-')).replace(chr(10),'<br>')}</td></tr>
+            </table><div class='no-print'><button onclick='window.print()'>🖨️ طباعة</button></div>
+            </body></html>"""
+            pc1, pc2 = st.columns(2)
+            preview_key = f"purchase_preview_{r['id']}"
+            if pc1.button("👁️ معاينة", key=f"preview_purchase_{r['id']}", use_container_width=True):
+                st.session_state[preview_key] = not st.session_state.get(preview_key, False)
+            if pc2.button("🖨️ طباعة", key=f"print_purchase_{r['id']}", use_container_width=True):
+                st.session_state[preview_key] = True
+            if st.session_state.get(preview_key):
+                st.components.v1.html(invoice_html, height=520, scrolling=True)
 
 
 # ============================================================
@@ -918,7 +944,7 @@ def show_page():
         if "purchase_quick_mode" not in st.session_state:
             st.session_state["purchase_quick_mode"] = "invoice"
     
-        purchase_modes = {"🛒 فاتورة مشتريات":"invoice", "📊 الأرشيف والتقارير":"reports", "➕ إضافة مورد":"supplier", "➕ إضافة زبون آجل":"customer"}
+        purchase_modes = {"🛒 فاتورة مشتريات":"invoice", "📊 الأرشيف والتقارير":"reports"}
         current_label = next((k for k,v in purchase_modes.items() if v == st.session_state["purchase_quick_mode"]), list(purchase_modes)[0])
         selected_label = st.selectbox("اختر العملية:", list(purchase_modes), index=list(purchase_modes).index(current_label), key="purchase_action_dropdown")
         selected_value = purchase_modes[selected_label]
@@ -1098,72 +1124,6 @@ def show_page():
             f"ℹ️ حساب المورد ({ps}) "
             "رصيده صفر."
         )
-
-    # ========================================================
-    # استعراض أرصدة الزبائن
-    # ========================================================
-
-    st.markdown("#### 👁️ استعراض مديونية الزبائن الآجلين")
-    with st.container(border=True):
-
-        if customers_data:
-
-            customer_dict = {
-                (
-                    f"{c['customer_name']} "
-                    f"({c['phone'] or '-'})"
-                ): c
-
-                for c in customers_data
-            }
-
-            selected_customer_label = (
-                st.selectbox(
-                    "اختر الزبون:",
-                    list(
-                        customer_dict.keys()
-                    ),
-                    key="check_cust_balance_box"
-                )
-            )
-
-            selected_customer = (
-                customer_dict[
-                    selected_customer_label
-                ]
-            )
-
-            customer_balance = float(
-                selected_customer[
-                    "balance"
-                ] or 0
-            )
-
-            if customer_balance > 0:
-
-                st.warning(
-                    f"مديونية الزبون: "
-                    f"{customer_balance:,.2f} د.ل"
-                )
-
-            elif customer_balance < 0:
-
-                st.success(
-                    f"رصيد لصالح الزبون: "
-                    f"{abs(customer_balance):,.2f} د.ل"
-                )
-
-            else:
-
-                st.info(
-                    "رصيد الزبون صفر."
-                )
-
-        else:
-
-            st.info(
-                "لا توجد زبائن آجلين."
-            )
 
     # ========================================================
     # سلة المشتريات
