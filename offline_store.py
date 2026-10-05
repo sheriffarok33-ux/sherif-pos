@@ -109,7 +109,7 @@ def ensure_local_schema():
           id INTEGER PRIMARY KEY, from_branch_id INTEGER, to_branch_id INTEGER, items_details TEXT,
           transfer_date TEXT, status TEXT, created_by TEXT, received_by TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS suppliers(id INTEGER PRIMARY KEY, supplier_name TEXT, phone TEXT, balance REAL DEFAULT 0);
-        CREATE TABLE IF NOT EXISTS purchases(id INTEGER PRIMARY KEY, branch_id INTEGER, supplier_id INTEGER, supplier_name TEXT, invoice_number TEXT, total_cost REAL DEFAULT 0, payment_type TEXT, items_details TEXT, invoice_date TEXT);
+        CREATE TABLE IF NOT EXISTS purchases(id INTEGER PRIMARY KEY, branch_id INTEGER, supplier_id INTEGER, supplier_name TEXT, invoice_number TEXT, document_number TEXT, total_cost REAL DEFAULT 0, payment_type TEXT, items_details TEXT, invoice_date TEXT);
         CREATE TABLE IF NOT EXISTS expenses(id INTEGER PRIMARY KEY, branch_id INTEGER, amount REAL DEFAULT 0, description TEXT, is_general_store INTEGER DEFAULT 0, expense_date TEXT);
         CREATE TABLE IF NOT EXISTS revenues(id INTEGER PRIMARY KEY, branch_id INTEGER, revenue_source TEXT, amount REAL DEFAULT 0, notes TEXT, description TEXT, revenue_date TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS stock_adjustments(id INTEGER PRIMARY KEY, branch_id INTEGER, item_id INTEGER, item_name TEXT, quantity REAL, adjustment_type TEXT, loss_or_gain_value REAL DEFAULT 0, notes TEXT, created_at TEXT);
@@ -179,6 +179,7 @@ def ensure_local_schema():
         # Lightweight migrations for the full desktop/local application.
         migrations = [
           ('branches','location','TEXT'), ('users','phone','TEXT'), ('users','allowed_branches',"TEXT DEFAULT 'ALL'"), ('users','custom_permissions',"TEXT DEFAULT ''"),
+          ('purchases','document_number','TEXT'),
           ('items','unit_type',"TEXT DEFAULT 'piece'"), ('items','no_expiry','INTEGER DEFAULT 0'), ('items','favorite_rank','INTEGER DEFAULT 0'), ('items','scale_code','TEXT'),
           ('production_logs','production_type','TEXT'),
           ('production_logs','source_item_id','INTEGER'),
@@ -495,6 +496,10 @@ def _ensure_remote_finance_schema(remote):
     # would restore the old server value.
     try:
         remote.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS scale_code TEXT")
+    except Exception:
+        pass
+    try:
+        remote.execute("ALTER TABLE purchases ADD COLUMN IF NOT EXISTS document_number TEXT")
     except Exception:
         pass
     remote.execute("""

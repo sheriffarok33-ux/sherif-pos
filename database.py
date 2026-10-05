@@ -1066,6 +1066,8 @@ def initialize_database():
 
                 invoice_number TEXT,
 
+                document_number TEXT,
+
                 total_cost DOUBLE PRECISION,
 
                 payment_type TEXT
