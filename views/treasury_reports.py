@@ -52,7 +52,9 @@ def show_page():
         p2.metric("إيرادات أخرى", f"{revenues:,.2f} د.ل")
         p3.metric("المصروفات", f"{expenses:,.2f} د.ل")
         p4.metric("النتيجة التشغيلية قبل تكلفة البضاعة المباعة", f"{result:,.2f} د.ل")
-        st.warning("حتى لا نعطي رقم ربح محاسبي مضلل: قاعدة البيانات الحالية لا تحفظ تكلفة البضاعة المباعة لكل فاتورة بشكل كامل. لذلك التقرير يعرض النتيجة قبل COGS إلى أن نربط التكلفة التاريخية بالفواتير.")
+        if st.session_state.get("role") == "Super_Admin":
+            with st.expander("🛠️ ملاحظة فنية — Super Admin فقط"):
+                st.warning("حساب تكلفة البضاعة المباعة التاريخية لكل فاتورة لم يكتمل بعد؛ لذلك لا تعتمد النتيجة الحالية كصافي ربح محاسبي نهائي.")
 
         report_html = f"""<html dir='rtl'><head><meta charset='utf-8'><style>body{{font-family:Arial;padding:25px;direction:rtl}} table{{width:100%;border-collapse:collapse}}td{{border:1px solid #999;padding:9px}}@media print{{.no-print{{display:none}}}}</style></head><body><h2 style='text-align:center'>ملخص الخزينة والتقارير</h2><p>الفترة: {start} إلى {end} — {selected}</p><table><tr><td>تكلفة المخزون</td><td>{stock_cost:,.2f} د.ل</td></tr><tr><td>قيمة المخزون بسعر البيع</td><td>{stock_sale:,.2f} د.ل</td></tr><tr><td>المبيعات</td><td>{sales:,.2f} د.ل</td></tr><tr><td>إيرادات أخرى</td><td>{revenues:,.2f} د.ل</td></tr><tr><td>المصروفات</td><td>{expenses:,.2f} د.ل</td></tr><tr><td>النتيجة قبل تكلفة البضاعة المباعة</td><td>{result:,.2f} د.ل</td></tr></table><div class='no-print'><button onclick='window.print()'>🖨️ طباعة</button></div></body></html>"""
         q1,q2=st.columns(2)

@@ -90,8 +90,9 @@ def _file_to_data_uri(uploaded):
 def show_page():
     back_button(key="back_appearance")
 
-    if st.session_state.get("role") != "Admin":
-        st.error("⛔ تخصيص المظهر متاح للمدير فقط.")
+    current_role = st.session_state.get("role", "")
+    if current_role not in ("Super_Admin", "Admin"):
+        st.error("⛔ تخصيص المظهر متاح للإدارة فقط.")
         return
 
     st.title("🎨 تخصيص مظهر النظام")
@@ -102,20 +103,25 @@ def show_page():
     if "appearance_section" not in st.session_state:
         st.session_state["appearance_section"] = "colors"
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    if c1.button("🎨 الألوان", use_container_width=True):
+    nav_cols = st.columns(5 if current_role == "Super_Admin" else 4)
+    if nav_cols[0].button("🎨 الألوان", use_container_width=True):
         st.session_state["appearance_section"] = "colors"
         st.rerun()
-    if c2.button("🔤 الخط", use_container_width=True):
+    if nav_cols[1].button("🔤 الخط", use_container_width=True):
         st.session_state["appearance_section"] = "font"
         st.rerun()
-    if c3.button("🖼️ الشعار والخلفية", use_container_width=True):
+    if nav_cols[2].button("🖼️ الشعار والخلفية", use_container_width=True):
         st.session_state["appearance_section"] = "images"
         st.rerun()
-    if c4.button("🏢 بيانات المنشأة", use_container_width=True):
-        st.session_state["appearance_section"] = "company"
-        st.rerun()
-    if c5.button("⚖️ إعدادات الميزان", use_container_width=True):
+    next_idx = 3
+    if current_role == "Super_Admin":
+        if nav_cols[3].button("🏢 هوية المنشأة والترخيص", use_container_width=True):
+            st.session_state["appearance_section"] = "company"
+            st.rerun()
+        next_idx = 4
+    elif st.session_state.get("appearance_section") == "company":
+        st.session_state["appearance_section"] = "colors"
+    if nav_cols[next_idx].button("⚖️ إعدادات الميزان", use_container_width=True):
         st.session_state["appearance_section"] = "scale"
         st.rerun()
 
@@ -185,8 +191,9 @@ def show_page():
 
         st.info("يتم تطبيق حجم وسمك الخط على البرنامج والقوائم والأزرار.")
 
-    elif st.session_state["appearance_section"] == "company":
-        st.subheader("🏢 بيانات المنشأة")
+    elif st.session_state["appearance_section"] == "company" and current_role == "Super_Admin":
+        st.subheader("🏢 هوية المنشأة — Super Admin فقط")
+        st.caption("هذه البيانات محمية ولا يمكن للـ Admin أو أي فئة تشغيلية تغييرها.")
         a, b = st.columns(2)
         updated["company_name"] = a.text_input("اسم الشركة / المجموعة", settings.get("company_name", ""))
         updated["trade_name"] = b.text_input("الاسم التجاري", settings.get("trade_name", ""))

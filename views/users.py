@@ -29,7 +29,7 @@ def _as_date(value, default=None):
             continue
     return default
 
-ROLES=["Admin","General_Supervisor","Branch_Supervisor","Cashier","Viewer"]
+ROLES=["Super_Admin","Admin","Manager","Supervisor","Cashier"]
 
 def due(salary,hire,end,y,m):
     md=calendar.monthrange(y,m)[1]; a=date(y,m,1); z=date(y,m,md)
@@ -118,7 +118,7 @@ def show_page():
     st.header("👥 إدارة الموظفين والمستخدمين — HR مصغرة")
     st.info("الراتب والسلفة يُحمّلان تلقائياً على مصروفات الفرع المسجل عليه الموظف.")
     role=st.session_state.get("role","")
-    if role not in ("Admin","General_Supervisor"):
+    if role not in ("Super_Admin","Admin","Manager","General_Supervisor"):
         st.warning("🔒 هذه الشاشة متاحة للإدارة فقط."); return
     if "hr_view" not in st.session_state: st.session_state.hr_view="list"
     nav=[("list","👥 الموظفون"),("add","➕ إضافة موظف"),("edit","✏️ تعديل/إنهاء"),
@@ -258,7 +258,7 @@ def show_page():
             allbm={"🌐 كافة الفروع":None}; allbm.update(bm)
             with st.form("new_user"):
                 c1,c2=st.columns(2); un=c1.text_input("اسم المستخدم"); pw=c2.text_input("كلمة المرور",type="password")
-                ph=c1.text_input("الهاتف"); roles=ROLES if role=="Admin" else ROLES[1:]
+                ph=c1.text_input("الهاتف"); roles=ROLES if role=="Super_Admin" else ["Manager","Supervisor","Cashier"]
                 rr=c2.selectbox("الصلاحية",roles); bn=st.selectbox("الفرع",list(allbm))
                 ok=st.form_submit_button("➕ إنشاء حساب",type="primary")
             if ok:
@@ -275,13 +275,17 @@ def show_page():
                 st.markdown("---")
                 labels={f"#{r['id']} - {r['username']} - {r['role']}":r for r in rs}
                 selected=labels[st.selectbox("اختر حساباً للتعديل أو الحذف", list(labels), key="hr_account_pick")]
-                if role == "Admin":
+                can_edit_selected = role == "Super_Admin" or (role == "Admin" and selected["role"] != "Super_Admin")
+                if not can_edit_selected and selected["role"] == "Super_Admin":
+                    st.info("🔒 حساب Super Admin محمي ولا يمكن تعديله أو حذفه من هذه الفئة.")
+                if can_edit_selected:
+                    editable_roles = ROLES if role == "Super_Admin" else ["Admin","Manager","Supervisor","Cashier"]
                     with st.form("edit_user_account"):
                         c1,c2=st.columns(2)
                         eu=c1.text_input("اسم المستخدم", selected["username"])
                         eph=c1.text_input("الهاتف", selected["phone"] or "")
                         epw=c2.text_input("كلمة مرور جديدة (اتركها فارغة للإبقاء على الحالية)", type="password")
-                        erole=c2.selectbox("الصلاحية", ROLES, index=ROLES.index(selected["role"]) if selected["role"] in ROLES else 0)
+                        erole=c2.selectbox("الصلاحية", editable_roles, index=editable_roles.index(selected["role"]) if selected["role"] in editable_roles else 0)
                         branch_names=list(allbm)
                         current_branch=selected["branch_name"] if selected["branch_name"] in allbm else "🌐 كافة الفروع"
                         ebn=st.selectbox("الفرع", branch_names, index=branch_names.index(current_branch))
@@ -289,9 +293,9 @@ def show_page():
                     if save:
                         duplicate=conn.execute("SELECT id FROM users WHERE LOWER(TRIM(username))=LOWER(TRIM(?)) AND id<>? LIMIT 1", (eu.strip(), selected["id"])).fetchone()
                         if duplicate: st.error("❌ اسم المستخدم مستخدم بالفعل."); return
-                        if selected["id"] == st.session_state.get("user_id") and erole != "Admin" and selected["role"] == "Admin":
-                            admins=conn.execute("SELECT COUNT(*) FROM users WHERE role='Admin' AND is_active=1").fetchone()[0]
-                            if admins <= 1: st.error("❌ لا يمكن إزالة صلاحية آخر Admin نشط."); return
+                        if selected["role"] == "Super_Admin" and erole != "Super_Admin":
+                            supers=conn.execute("SELECT COUNT(*) FROM users WHERE role='Super_Admin' AND is_active=1").fetchone()[0]
+                            if supers <= 1: st.error("❌ لا يمكن إزالة صلاحية آخر Super Admin نشط."); return
                         if epw:
                             conn.execute("UPDATE users SET username=?,phone=?,password=?,role=?,branch_id=? WHERE id=?", (eu.strip(),eph,epw,erole,allbm[ebn],selected["id"]))
                         else:
@@ -302,9 +306,11 @@ def show_page():
                     if st.button("🗑️ حذف حساب الدخول", type="secondary", use_container_width=True, disabled=not confirm):
                         if selected["id"] == st.session_state.get("user_id"):
                             st.error("❌ لا يمكنك حذف حسابك أثناء تسجيل الدخول."); return
-                        if selected["role"] == "Admin":
-                            admins=conn.execute("SELECT COUNT(*) FROM users WHERE role='Admin' AND is_active=1").fetchone()[0]
-                            if admins <= 1: st.error("❌ لا يمكن حذف آخر Admin نشط."); return
+                        if selected["role"] == "Super_Admin":
+                            if role != "Super_Admin":
+                                st.error("❌ لا يمكن إلا لـ Super Admin حذف حساب من نفس الفئة."); return
+                            supers=conn.execute("SELECT COUNT(*) FROM users WHERE role='Super_Admin' AND is_active=1").fetchone()[0]
+                            if supers <= 1: st.error("❌ لا يمكن حذف آخر Super Admin نشط."); return
                         conn.execute("DELETE FROM users WHERE id=?", (selected["id"],))
                         conn.commit(); st.success("✅ تم حذف حساب الدخول. ملف الموظف -إن كان مرتبطاً- سيبقى محفوظاً بدون حساب دخول."); st.rerun()
     except Exception as ex:
