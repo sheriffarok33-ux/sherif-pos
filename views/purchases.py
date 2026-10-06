@@ -5,6 +5,7 @@ import html
 from datetime import datetime, date
 from database import get_db_connection
 from offline_store import get_device_id
+from views.documents import ensure_document_schema, register_document
 
 
 def _ensure_purchase_document_schema(conn):
@@ -12,6 +13,7 @@ def _ensure_purchase_document_schema(conn):
         conn.execute("ALTER TABLE purchases ADD COLUMN document_number TEXT")
     except Exception:
         pass
+    ensure_document_schema(conn)
 
 def _next_purchase_document_number(conn, branch_id):
     """رقم نظام ثابت وآمن نسبياً بين الأجهزة: فرع + بصمة جهاز + تسلسل محلي."""
@@ -646,6 +648,21 @@ def post_purchase_invoice(
             )
         )
 
+        purchase_row = conn.execute("SELECT id FROM purchases WHERE document_number=? LIMIT 1", (document_number,)).fetchone()
+        purchase_id = purchase_row["id"]
+        conn.execute("DELETE FROM purchase_items WHERE purchase_id=?", (purchase_id,))
+        for purchase_item in purchase_cart:
+            conn.execute("""INSERT INTO purchase_items
+                (purchase_id,item_id,item_code,item_name,quantity,unit,unit_price,line_total,expiry_date)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
+                (purchase_id, purchase_item.get("id"), purchase_item.get("code"), purchase_item.get("name"),
+                 float(purchase_item.get("qty") or 0), purchase_item.get("unit") or "",
+                 float(purchase_item.get("price") or 0), float(purchase_item.get("total") or 0),
+                 purchase_item.get("expiry_date")))
+        register_document(conn, document_number, "فاتورة مشتريات", "purchases", purchase_id,
+                          invoice_number or None, branch_id, supplier_name, grand_total,
+                          datetime.now().date().isoformat(), st.session_state.get("user_id"))
+
         # ====================================================
         # لو الفاتورة آجل
         # نضيفها إلى رصيد المورد
@@ -811,7 +828,21 @@ def show_purchase_reports(branches, suppliers_data):
             st.write(f"**الفرع / المخزن:** {r['branch_name'] or '-'}")
             st.write(f"**طريقة الدفع:** {r['payment_type'] or '-'}")
             st.markdown("**تفاصيل الأصناف:**")
-            _lines = _purchase_items_lines(r['items_details'])
+            _detail_conn = get_db_connection()
+            try:
+                ensure_document_schema(_detail_conn)
+                _item_rows = _detail_conn.execute("SELECT item_code,item_name,quantity,unit,unit_price,line_total,expiry_date FROM purchase_items WHERE purchase_id=? ORDER BY id", (r["id"],)).fetchall()
+            finally:
+                _detail_conn.close()
+            if _item_rows:
+                st.dataframe([{
+                    "كود الصنف": x["item_code"] or "", "الصنف": x["item_name"],
+                    "الكمية": float(x["quantity"] or 0), "الوحدة": x["unit"] or "",
+                    "سعر الشراء": float(x["unit_price"] or 0), "الإجمالي": float(x["line_total"] or 0),
+                    "الصلاحية": x["expiry_date"] or "—"} for x in _item_rows], use_container_width=True, hide_index=True)
+                _lines = []
+            else:
+                _lines = _purchase_items_lines(r['items_details'])
             if _lines:
                 _items_html = "".join(
                     f"<div style='direction:rtl;text-align:right;padding:7px 10px;border-bottom:1px solid #e5e7eb'>"
@@ -823,9 +854,14 @@ def show_purchase_reports(branches, suppliers_data):
                 )
             else:
                 st.write("-")
-            _print_items_html = "".join(
-                f"<tr><td style='text-align:right;direction:rtl'>{html.escape(line)}</td></tr>" for line in _lines
-            ) or "<tr><td style='text-align:right'>-</td></tr>"
+            if _item_rows:
+                _print_items_html = "".join(
+                    f"<tr><td>{html.escape(str(x['item_code'] or ''))}</td><td>{html.escape(str(x['item_name']))}</td><td>{float(x['quantity'] or 0):,.3f}</td><td>{html.escape(str(x['unit'] or ''))}</td><td>{float(x['unit_price'] or 0):,.2f}</td><td>{float(x['line_total'] or 0):,.2f}</td><td>{html.escape(str(x['expiry_date'] or '-'))}</td></tr>"
+                    for x in _item_rows)
+                _print_items_head = "<tr><th>الكود</th><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>سعر الشراء</th><th>الإجمالي</th><th>الصلاحية</th></tr>"
+            else:
+                _print_items_html = "".join(f"<tr><td>{html.escape(line)}</td></tr>" for line in _lines) or "<tr><td>-</td></tr>"
+                _print_items_head = "<tr><th>تفاصيل الصنف</th></tr>"
             invoice_html = f"""
             <html dir='rtl'><head><meta charset='utf-8'><style>
             body{{font-family:Arial;padding:24px;direction:rtl;text-align:right}} table{{width:100%;border-collapse:collapse;direction:rtl}}
@@ -843,7 +879,7 @@ def show_purchase_reports(branches, suppliers_data):
             <tr><td><b>الإجمالي</b></td><td>{float(r['total_cost'] or 0):,.2f} د.ل</td></tr>
             </table>
             <h3 style='text-align:right'>الأصناف</h3>
-            <table style='direction:rtl;text-align:right'>{_print_items_html}</table>
+            <table style='direction:rtl;text-align:right'><thead>{_print_items_head}</thead><tbody>{_print_items_html}</tbody></table>
             <div class='no-print'><button onclick='window.print()'>🖨️ طباعة</button></div>
             </body></html>"""
             pc1, pc2 = st.columns(2)

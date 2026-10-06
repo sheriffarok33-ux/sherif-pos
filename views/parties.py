@@ -4,6 +4,7 @@ import pandas as pd
 import io
 from datetime import datetime
 from database import get_db_connection
+from views.documents import ensure_document_schema, register_document
 
 
 def _excel_bytes(df, sheet_name):
@@ -100,6 +101,10 @@ def _save_voucher(conn, voucher_type, party_type, party_id, party_name,
                     branch_id, user_id, float(amount), notes, treasury_id, treasury_name
                 )
             )
+            row = conn.execute("SELECT id,created_at FROM financial_vouchers WHERE voucher_no=?", (voucher_no,)).fetchone()
+            register_document(conn, voucher_no, "سند صرف" if voucher_type == "دفع" else "سند قبض",
+                              "financial_vouchers", row["id"], None, branch_id, party_name, amount,
+                              row["created_at"], user_id)
             return voucher_no
         except Exception as exc:
             if "UNIQUE" not in str(exc).upper():
