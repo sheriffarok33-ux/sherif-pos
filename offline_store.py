@@ -110,6 +110,10 @@ def ensure_local_schema():
           transfer_date TEXT, status TEXT, created_by TEXT, received_by TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS suppliers(id INTEGER PRIMARY KEY, supplier_name TEXT, phone TEXT, balance REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS purchases(id INTEGER PRIMARY KEY, branch_id INTEGER, supplier_id INTEGER, supplier_name TEXT, invoice_number TEXT, document_number TEXT, total_cost REAL DEFAULT 0, payment_type TEXT, items_details TEXT, invoice_date TEXT);
+        CREATE TABLE IF NOT EXISTS purchase_items(id INTEGER PRIMARY KEY AUTOINCREMENT, purchase_id INTEGER NOT NULL, item_id INTEGER, item_code TEXT, item_name TEXT NOT NULL, quantity REAL DEFAULT 0, unit TEXT, unit_price REAL DEFAULT 0, line_total REAL DEFAULT 0, expiry_date TEXT);
+        CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchase_id);
+        CREATE TABLE IF NOT EXISTS document_registry(id INTEGER PRIMARY KEY AUTOINCREMENT, document_number TEXT NOT NULL UNIQUE, document_type TEXT NOT NULL, source_table TEXT, source_id INTEGER, external_number TEXT, branch_id INTEGER, party_name TEXT, amount REAL DEFAULT 0, document_date TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE INDEX IF NOT EXISTS idx_document_registry_type_date ON document_registry(document_type,document_date);
         CREATE TABLE IF NOT EXISTS expenses(id INTEGER PRIMARY KEY, branch_id INTEGER, amount REAL DEFAULT 0, description TEXT, is_general_store INTEGER DEFAULT 0, expense_date TEXT);
         CREATE TABLE IF NOT EXISTS revenues(id INTEGER PRIMARY KEY, branch_id INTEGER, revenue_source TEXT, amount REAL DEFAULT 0, notes TEXT, description TEXT, revenue_date TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS stock_adjustments(id INTEGER PRIMARY KEY, branch_id INTEGER, item_id INTEGER, item_name TEXT, quantity REAL, adjustment_type TEXT, loss_or_gain_value REAL DEFAULT 0, notes TEXT, created_at TEXT);
@@ -366,7 +370,9 @@ def sync_reference_data(remote=None):
         # Download the rest of the ERP reference/history tables once at login.
         extra_tables = {
           'suppliers': {'id','supplier_name','phone','balance'},
-          'purchases': {'id','branch_id','supplier_id','supplier_name','invoice_number','total_cost','payment_type','items_details','invoice_date'},
+          'purchases': {'id','branch_id','supplier_id','supplier_name','invoice_number','document_number','total_cost','payment_type','items_details','invoice_date'},
+          'purchase_items': {'id','purchase_id','item_id','item_code','item_name','quantity','unit','unit_price','line_total','expiry_date'},
+          'document_registry': {'id','document_number','document_type','source_table','source_id','external_number','branch_id','party_name','amount','document_date','created_by','created_at'},
           'expenses': {'id','branch_id','amount','description','is_general_store','expense_date'},
           'revenues': {'id','branch_id','revenue_source','amount','notes','description','revenue_date','created_at'},
           'stock_adjustments': {'id','branch_id','item_id','item_name','quantity','adjustment_type','loss_or_gain_value','notes','created_at'},

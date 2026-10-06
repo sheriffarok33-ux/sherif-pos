@@ -1085,6 +1085,32 @@ def initialize_database():
         )
 
         # ====================================================
+        # بنود المشتريات وفهرس المستندات
+        # ====================================================
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS purchase_items(
+                id SERIAL PRIMARY KEY, purchase_id INTEGER NOT NULL, item_id INTEGER, item_code TEXT,
+                item_name TEXT NOT NULL, quantity DOUBLE PRECISION DEFAULT 0, unit TEXT,
+                unit_price DOUBLE PRECISION DEFAULT 0, line_total DOUBLE PRECISION DEFAULT 0, expiry_date TEXT
+            )
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchase_id)")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS document_registry(
+                id SERIAL PRIMARY KEY, document_number TEXT NOT NULL UNIQUE, document_type TEXT NOT NULL,
+                source_table TEXT, source_id INTEGER, external_number TEXT, branch_id INTEGER, party_name TEXT,
+                amount DOUBLE PRECISION DEFAULT 0, document_date TEXT, created_by INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_document_registry_type_date ON document_registry(document_type, document_date)")
+
+        # ====================================================
         # تحويلات الفروع
         # ====================================================
 

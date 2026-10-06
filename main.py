@@ -425,6 +425,7 @@ MENU_GROUPS = {
         ("👥 جهات التعامل", "7- أرشيف الإيصالات", {"parties_mode": "vouchers"}),
     ],
     "🏦 الخزينة وجميع التقارير": [
+        ("🔎 البحث عن مستند", "0- البحث عن مستند برقم النظام", {}),
         ("🏦 خزينة الشركة", "1- خزينة الشركة وخزائن الفروع", {"parties_mode": "treasuries"}),
         ("📈 ملخص الخزينة والتقارير", "2- تكلفة وقيمة المخزون والربح والخسارة", {}),
         ("🛒 نقطة البيع (POS)", "3- أرشيف وتقارير المبيعات", {"pos_active_view": "الأرشيف"}),
@@ -634,6 +635,13 @@ elif choice == "🛒 نقطة البيع (POS)":
         pos.show_page()
     except ImportError as e:
         st.error("❌ تعذر تحميل شاشة نقطة البيع بسبب ملف أو مكتبة مفقودة.")
+        st.code(str(e))
+elif choice == "🔎 البحث عن مستند":
+    try:
+        from views import documents
+        documents.show_page()
+    except ImportError as e:
+        st.warning("⚠️ شاشة البحث عن المستندات غير متاحة.")
         st.code(str(e))
 elif choice == "🤖 المساعد الذكي AI":
     try:
