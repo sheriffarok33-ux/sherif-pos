@@ -262,12 +262,18 @@ def set_page(page_name, remember=True):
 
 def check_user_permission(menu_name):
     role = st.session_state.get("role", "")
-    if menu_name in ["🧹 تهيئة النظام لأول تشغيل", "🎨 تخصيص المظهر"]:
-        return role == "Admin"
-    if role in ["Admin", "General_Supervisor"]: return True
+    # الفئات الرسمية: Super_Admin > Admin > Manager > Supervisor > Cashier.
+    # الأسماء القديمة مدعومة مؤقتاً حتى لا تتعطل الحسابات الموجودة قبل الترقية.
+    if role == "Super_Admin":
+        return True
+    if menu_name == "🧹 تهيئة النظام لأول تشغيل":
+        return role == "Super_Admin"
+    if menu_name == "🎨 تخصيص المظهر":
+        return role in ["Super_Admin", "Admin"]
+    if role == "Admin": return True
+    if role in ["Manager", "General_Supervisor"]: return True
+    if role in ["Supervisor", "Branch_Supervisor"]: return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع", "📊 التقارير والأرباح"]
     if role == "Cashier": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)"]
-    if role == "Viewer": return menu_name in ["🏠 الرئيسية واللوحة", "📊 التقارير والأرباح"]
-    if role == "Branch_Supervisor": return menu_name in ["🏠 الرئيسية واللوحة", "🛒 نقطة البيع (POS)", "📦 إدارة المخزن والفروع"]
     return False
 
 # --- بوابة الدخول ---
@@ -571,7 +577,7 @@ if choice == "🏠 الرئيسية واللوحة":
         </div>
     """, unsafe_allow_html=True)
 
-    if role in ["Admin", "General_Supervisor"]:
+    if role in ["Super_Admin", "Admin", "Manager", "General_Supervisor"]:
         # Dashboard is local-first; central data is refreshed at login only.
         conn = get_local_connection()
         total_sales_res = conn.execute("SELECT SUM(total_amount) FROM invoices").fetchone()

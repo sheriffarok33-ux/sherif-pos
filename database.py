@@ -1719,16 +1719,15 @@ def initialize_database():
         # ====================================================
 
         default_roles = {
-            "Admin":
-                ",".join(
-                    DEFAULT_MENUS
-                ),
-
-            "General_Supervisor":
-                ",".join(
-                    DEFAULT_MENUS
-                ),
-
+            "Super_Admin": ",".join(DEFAULT_MENUS),
+            "Admin": ",".join(DEFAULT_MENUS),
+            "Manager": ",".join(DEFAULT_MENUS),
+            "Supervisor": (
+                "🏠 الرئيسية واللوحة,"
+                "🛒 نقطة البيع (POS),"
+                "📦 إدارة المخزن والفروع,"
+                "📊 التقارير والأرباح"
+            ),
             "Cashier":
                 (
                     "🏠 الرئيسية واللوحة,"
@@ -1811,6 +1810,18 @@ def initialize_database():
                         branch_type
                     )
                 )
+
+        # ====================================================
+        # Super Admin: ترقية آمنة لأول نسخة قديمة
+        # إذا لم يوجد Super Admin، تتم ترقية أقدم Admin نشط بدلاً من إنشاء باب خلفي جديد.
+        # ====================================================
+        cursor.execute("SELECT COUNT(*) FROM users WHERE role='Super_Admin' AND is_active=1")
+        super_count = cursor.fetchone()[0]
+        if super_count == 0:
+            cursor.execute("SELECT id FROM users WHERE role='Admin' AND is_active=1 ORDER BY id LIMIT 1")
+            first_admin = cursor.fetchone()
+            if first_admin:
+                cursor.execute("UPDATE users SET role='Super_Admin' WHERE id=?", (first_admin[0],))
 
         # ====================================================
         # Admin الافتراضي

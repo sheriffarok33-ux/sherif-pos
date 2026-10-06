@@ -246,6 +246,16 @@ def ensure_local_schema():
         for col, typ in [('treasury_id','INTEGER'), ('treasury_name','TEXT')]:
             try: c.execute(f'ALTER TABLE financial_vouchers ADD COLUMN {col} {typ}')
             except Exception: pass
+        # Upgrade legacy role model without creating a hidden/backdoor account.
+        # The oldest active Admin becomes the first Super Admin only when none exists.
+        try:
+            super_row = c.execute("SELECT id FROM users WHERE role='Super_Admin' AND is_active=1 LIMIT 1").fetchone()
+            if not super_row:
+                first_admin = c.execute("SELECT id FROM users WHERE role='Admin' AND is_active=1 ORDER BY id LIMIT 1").fetchone()
+                if first_admin:
+                    c.execute("UPDATE users SET role='Super_Admin' WHERE id=?", (first_admin['id'],))
+        except Exception:
+            pass
         # Upgrade legacy HR rows without deleting old employee data.
         try:
             c.execute("UPDATE employees SET full_name=employee_name WHERE (full_name IS NULL OR TRIM(full_name)='') AND employee_name IS NOT NULL")
