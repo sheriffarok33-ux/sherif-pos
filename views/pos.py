@@ -446,14 +446,33 @@ def _pos_success_dialog():
             "تم إصدار الفاتورة بنجاح."
         )
     )
-    st.info("تم حفظ الفاتورة، ويمكن الآن بدء فاتورة جديدة.")
+    st.info("تم حفظ الفاتورة. اضغط «موافق» للانتقال مباشرة إلى بيع جديد.")
+
+    # الطباعة/التحميل اختياريان؛ لا يعطلان دورة البيع السريعة.
+    inv = st.session_state.get("last_invoice")
+    if inv:
+        html_file_content = build_invoice_print_html(inv)
+        st.components.v1.html(
+            html_file_content,
+            height=330,
+            scrolling=True
+        )
+        st.download_button(
+            "📥 تحميل الفاتورة (HTML)",
+            data=html_file_content.encode("utf-8"),
+            file_name=f"Invoice_{inv['inv_id']}.html",
+            mime="text/html",
+            use_container_width=True,
+            key="pos_success_download_invoice"
+        )
+
     if st.button(
         "موافق",
         type="primary",
         use_container_width=True,
         key="pos_success_ok"
     ):
-        # تنظيف بيانات العملية السابقة فقط بعد تأكيد المستخدم.
+        # تنظيف بيانات العملية السابقة وبدء فاتورة جديدة فوراً.
         st.session_state["cart"] = []
         for key in [
             "pos_customer_name",
@@ -467,6 +486,11 @@ def _pos_success_dialog():
             st.session_state.pop(key, None)
         st.session_state.pop("pos_success_pending", None)
         st.session_state.pop("pos_success_message", None)
+        # لا نعرض آخر فاتورة داخل شاشة الكاشير بعد الضغط على موافق؛
+        # تظل الفاتورة محفوظة في الأرشيف ويمكن إعادة طباعتها لاحقاً.
+        st.session_state["last_invoice"] = None
+        # بعد إعادة الرسم سنعيد المؤشر مباشرة إلى حقل الباركود.
+        st.session_state["pos_focus_barcode"] = True
         st.rerun()
 
 
@@ -2242,6 +2266,34 @@ def show_page():
                         process_barcode_scan
                     )
                 )
+
+                # بعد إنهاء الفاتورة والضغط على «موافق» نعيد الـFocus
+                # تلقائياً إلى حقل الباركود ليستقبل السكانر مباشرة.
+                if st.session_state.pop("pos_focus_barcode", False):
+                    st.components.v1.html(
+                        """
+                        <script>
+                        (function focusBarcode(attempt) {
+                            const doc = window.parent.document;
+                            const inputs = Array.from(doc.querySelectorAll('input'));
+                            const target = inputs.find((el) => {
+                                const aria = el.getAttribute('aria-label') || '';
+                                return aria.includes('مسح الباركود');
+                            });
+                            if (target) {
+                                target.focus();
+                                target.select();
+                                return;
+                            }
+                            if (attempt < 12) {
+                                setTimeout(() => focusBarcode(attempt + 1), 80);
+                            }
+                        })(0);
+                        </script>
+                        """,
+                        height=0,
+                        width=0
+                    )
 
             st.markdown(
                 "### 🧾 محتويات "
