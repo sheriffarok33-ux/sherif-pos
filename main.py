@@ -426,7 +426,7 @@ MENU_GROUPS = {
     ],
     "🏦 الخزينة وجميع التقارير": [
         ("🔎 البحث عن مستند", "0- البحث عن مستند برقم النظام", {}),
-        ("🏦 خزينة الشركة", "1- خزينة الشركة وخزائن الفروع", {"parties_mode": "treasuries"}),
+        ("🏦 الخزينة الرئيسية", "1- الخزينة الرئيسية", {"parties_mode": "treasuries"}),
         ("📈 ملخص الخزينة والتقارير", "2- تكلفة وقيمة المخزون والربح والخسارة", {}),
         ("🛒 نقطة البيع (POS)", "3- أرشيف وتقارير المبيعات", {"pos_active_view": "الأرشيف"}),
         ("📥 المشتريات", "4- تقارير المشتريات", {"purchase_quick_mode": "reports"}),
@@ -680,10 +680,10 @@ elif choice == "💰 المصروفات":
         expenses.show_page()
     except ImportError:
         st.warning("⚠️ ملف شاشة المصروفات غير موجود.")
-elif choice in ["👥 جهات التعامل", "🏦 خزينة الشركة"]:
+elif choice in ["👥 جهات التعامل", "🏦 الخزينة الرئيسية"]:
     try:
         from views import parties
-        if choice == "🏦 خزينة الشركة":
+        if choice == "🏦 الخزينة الرئيسية":
             st.session_state["parties_mode"] = "treasuries"
             st.session_state["parties_entry_lock"] = True
         parties.show_page()

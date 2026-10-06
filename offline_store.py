@@ -235,9 +235,12 @@ def ensure_local_schema():
             c.execute("UPDATE sync_queue SET device_id=? WHERE device_id IS NULL OR device_id=''",(did,))
         except Exception: pass
         try:
-            c.execute("INSERT OR IGNORE INTO treasuries(treasury_name,treasury_type,branch_id) VALUES('خزينة الشركة','company',NULL)")
-            for b in c.execute("SELECT id, branch_name FROM branches").fetchall():
-                c.execute("INSERT OR IGNORE INTO treasuries(treasury_name,treasury_type,branch_id) VALUES(?, 'branch', ?)", (f"خزينة فرع {b['branch_name']}", b['id']))
+            row=c.execute("SELECT id FROM treasuries WHERE treasury_type='company' ORDER BY id LIMIT 1").fetchone()
+            if row:
+                c.execute("UPDATE treasuries SET treasury_name='الخزينة الرئيسية',branch_id=NULL,is_active=1 WHERE id=?",(row['id'],))
+            else:
+                c.execute("INSERT OR IGNORE INTO treasuries(treasury_name,treasury_type,branch_id,is_active) VALUES('الخزينة الرئيسية','company',NULL,1)")
+            c.execute("UPDATE treasuries SET is_active=0 WHERE treasury_type='branch'")
         except Exception:
             pass
         for col, typ in [('treasury_id','INTEGER'), ('treasury_name','TEXT')]:
