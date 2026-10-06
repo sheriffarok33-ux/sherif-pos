@@ -667,10 +667,14 @@ def _ensure_settlement_schema(conn):
         if col not in cols: conn.execute(f'ALTER TABLE treasury_movements ADD COLUMN {col} {typ}')
     conn.commit()
 
-def _branch_treasury(conn, branch_id, branch_name):
-    row=conn.execute("SELECT id FROM treasuries WHERE branch_id=? AND treasury_type='branch' LIMIT 1",(branch_id,)).fetchone()
-    if row: return row['id']
-    cur=conn.execute("INSERT INTO treasuries(treasury_name,treasury_type,branch_id) VALUES(?,'branch',?)",(f'خزينة فرع {branch_name}',branch_id))
+def _main_treasury(conn):
+    row=conn.execute("SELECT id FROM treasuries WHERE treasury_type='company' ORDER BY id LIMIT 1").fetchone()
+    if row:
+        conn.execute("UPDATE treasuries SET treasury_name='الخزينة الرئيسية', branch_id=NULL, is_active=1 WHERE id=?",(row['id'],))
+        conn.execute("UPDATE treasuries SET is_active=0 WHERE treasury_type='branch'")
+        return row['id']
+    cur=conn.execute("INSERT INTO treasuries(treasury_name,treasury_type,branch_id,is_active) VALUES('الخزينة الرئيسية','company',NULL,1)")
+    conn.execute("UPDATE treasuries SET is_active=0 WHERE treasury_type='branch'")
     return cur.lastrowid
 
 def _show_shift_settlement(branches):
@@ -701,13 +705,13 @@ def _show_shift_settlement(branches):
                 if not reason.strip(): st.warning('اكتب سبب التسوية.')
                 elif abs(total-float(row['net_sales'] or 0))>0.01: st.error('إجمالي طرق الدفع يجب أن يساوي صافي مبيعات الوردية.')
                 else:
-                    tid=_branch_treasury(conn,row['branch_id'],row['branch_name']); ref=str(row['id']); uid=st.session_state.get('user_id')
+                    tid=_main_treasury(conn); ref=str(row['id']); uid=st.session_state.get('user_id')
                     conn.execute("UPDATE treasury_movements SET amount=0, description=COALESCE(description,'') || ' [تم استبدالها بتسوية]' WHERE source_type='shift_close' AND source_ref=?",(ref,))
                     for method,amount in [('كاش',cash),('بطاقة',card),('تحويل',transfer),('أخرى',other)]:
                         if amount>0: conn.execute("""INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id,branch_id,payment_method,movement_date,source_type,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(tid,'تسوية وردية',float(amount),f'ADJ-{ref}',reason,uid,row['branch_id'],method,row['shift_date'],'shift_adjustment',ref))
                     conn.execute("UPDATE shift_closures SET cash_amount=?,card_amount=?,transfer_amount=?,credit_amount=?,other_amount=?,notes=? WHERE id=?",(cash,card,transfer,credit,other,reason,row['id']))
                     conn.execute("INSERT INTO shift_settlement_adjustments(closure_id,branch_id,shift_date,shift_number,cash_amount,card_amount,transfer_amount,credit_amount,other_amount,reason,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(row['id'],row['branch_id'],row['shift_date'],row['shift_number'],cash,card,transfer,credit,other,reason,uid))
-                    conn.commit(); st.success('تم حفظ التسوية وتحديث ترحيل الخزينة مع الاحتفاظ بسجل التعديل.'); st.rerun()
+                    conn.commit(); st.success('تم حفظ التسوية وتحديث الترحيل إلى الخزينة الرئيسية مع الاحتفاظ باسم الفرع وسجل التعديل.'); st.rerun()
         else: st.info('لا توجد ورديات مغلقة مسجلة بالنظام الجديد حتى الآن.')
         st.markdown('---'); st.subheader('➕ إضافة حركة مالية ليوم سابق')
         bmap={b['branch_name']:b['id'] for b in branches}; bc1,bc2=st.columns(2)
@@ -717,10 +721,10 @@ def _show_shift_settlement(branches):
         if st.button('💾 إضافة الحركة السابقة',type='primary',use_container_width=True,key='save_hist_money'):
             if amount<=0 or not note.strip(): st.warning('أدخل مبلغاً وبياناً واضحاً.')
             else:
-                bid=bmap[bn]; tid=_branch_treasury(conn,bid,bn); uid=st.session_state.get('user_id'); ref=f'MAN-{bid}-{d}-{datetime.now().strftime("%H%M%S")}'
+                bid=bmap[bn]; tid=_main_treasury(conn); uid=st.session_state.get('user_id'); ref=f'MAN-{bid}-{d}-{datetime.now().strftime("%H%M%S")}'
                 conn.execute("""INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id,branch_id,payment_method,movement_date,source_type,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(tid,'إضافة يوم سابق',float(amount),ref,f'{source}: {note}',uid,bid,method,str(d),'manual_historical',ref))
                 if source=='إيراد آخر': conn.execute("INSERT INTO revenues(branch_id,revenue_source,amount,notes,description,revenue_date) VALUES(?,?,?,?,?,?)",(bid,'إيراد يوم سابق',float(amount),note,note,str(d)))
-                conn.commit(); st.success('تمت إضافة الحركة السابقة للخزينة وتسجيل مصدرها.'); st.rerun()
+                conn.commit(); st.success('تمت إضافة الحركة السابقة إلى الخزينة الرئيسية مع تسجيل الفرع المصدر.'); st.rerun()
     finally: conn.close()
 
 def show_page():

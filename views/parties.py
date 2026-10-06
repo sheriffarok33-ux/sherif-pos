@@ -135,7 +135,7 @@ def _ensure_treasury_schema(conn):
         CREATE TABLE IF NOT EXISTS treasuries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             treasury_name TEXT NOT NULL UNIQUE,
-            treasury_type TEXT NOT NULL DEFAULT 'branch',
+            treasury_type TEXT NOT NULL DEFAULT 'company',
             branch_id INTEGER,
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -153,16 +153,19 @@ def _ensure_treasury_schema(conn):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    exists = conn.execute("SELECT id FROM treasuries WHERE treasury_name='خزينة الشركة' LIMIT 1").fetchone()
-    if not exists:
-        conn.execute("INSERT INTO treasuries(treasury_name,treasury_type,branch_id) VALUES('خزينة الشركة','company',NULL)")
-    branches=conn.execute("SELECT id, branch_name FROM branches ORDER BY branch_name").fetchall()
-    for b in branches:
-        treasury_name = f"خزينة فرع {b['branch_name']}"
-        exists = conn.execute("SELECT id FROM treasuries WHERE treasury_name=? LIMIT 1", (treasury_name,)).fetchone()
-        if not exists:
-            conn.execute("INSERT INTO treasuries(treasury_name,treasury_type,branch_id) VALUES(?, 'branch', ?)", (treasury_name, b["id"]))
+    # أبو زيد يعمل بخزينة مركزية واحدة فقط في المخزن الرئيسي.
+    # لا نحذف خزائن الفروع القديمة حفاظاً على التاريخ، بل نعطلها من الاستخدام الجديد.
+    row = conn.execute("SELECT id FROM treasuries WHERE treasury_type='company' ORDER BY id LIMIT 1").fetchone()
+    if row:
+        conn.execute("UPDATE treasuries SET treasury_name='الخزينة الرئيسية', branch_id=NULL, is_active=1 WHERE id=?", (row['id'],))
+    else:
+        conn.execute("INSERT OR IGNORE INTO treasuries(treasury_name,treasury_type,branch_id,is_active) VALUES('الخزينة الرئيسية','company',NULL,1)")
+    conn.execute("UPDATE treasuries SET is_active=0 WHERE treasury_type='branch'")
     conn.commit()
+
+def _main_treasury(conn):
+    _ensure_treasury_schema(conn)
+    return conn.execute("SELECT id,treasury_name,treasury_type,branch_id FROM treasuries WHERE treasury_type='company' AND is_active=1 ORDER BY id LIMIT 1").fetchone()
 
 def _voucher_html(voucher_no, voucher_type, party_type, party_name, amount, notes, treasury_name, created_at=None):
     title = "سند دفع" if voucher_type == "دفع" else "سند قبض"
@@ -179,7 +182,7 @@ def _voucher_html(voucher_no, voucher_type, party_type, party_name, amount, note
 
 def _treasury_options(conn):
     _ensure_treasury_schema(conn)
-    rows=conn.execute("SELECT id,treasury_name,treasury_type,branch_id FROM treasuries WHERE is_active=1 ORDER BY CASE WHEN treasury_type='company' THEN 0 ELSE 1 END, treasury_name").fetchall()
+    rows=conn.execute("SELECT id,treasury_name,treasury_type,branch_id FROM treasuries WHERE is_active=1 AND treasury_type='company' ORDER BY id").fetchall()
     return {r["treasury_name"]: r for r in rows}
 
 
@@ -382,7 +385,7 @@ def show_page():
                     if amount<=0: st.warning("أدخل مبلغًا أكبر من صفر.")
                     else:
                         user_id=st.session_state.get("user_id")
-                        branch_id=treasury["branch_id"]
+                        branch_id=st.session_state.get("branch_id")
                         conn.execute("UPDATE suppliers SET balance=balance-? WHERE id=?",(amount,supplier["id"]))
                         if branch_id:
                             conn.execute("""INSERT INTO supplier_payments(supplier_id,branch_id,user_id,amount,shift_number,notes) VALUES(?,?,?,?,?,?)""",(supplier["id"],branch_id,user_id,float(amount),_current_shift_number(),notes))
@@ -407,7 +410,7 @@ def show_page():
                 if st.button("✅ تسجيل سند القبض",type="primary",use_container_width=True):
                     if amount<=0: st.warning("أدخل مبلغًا أكبر من صفر.")
                     else:
-                        user_id=st.session_state.get("user_id"); branch_id=treasury["branch_id"]
+                        user_id=st.session_state.get("user_id"); branch_id=st.session_state.get("branch_id")
                         conn.execute("UPDATE customers SET balance=balance-? WHERE id=?",(amount,customer["id"]))
                         voucher_no=_save_voucher(conn,"قبض","عميل",customer["id"],customer["customer_name"],branch_id,user_id,amount,notes,treasury["id"],treasury["treasury_name"])
                         conn.execute("""INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id) VALUES(?,?,?,?,?,?)""",(treasury["id"],"قبض",float(amount),voucher_no,notes,user_id))
@@ -418,36 +421,26 @@ def show_page():
                         _parties_done(f"تم تسجيل سند القبض {voucher_no} في {treasury['treasury_name']}.")
 
         elif mode == "treasuries":
-            st.subheader("🏦 خزينة الشركة وخزائن الفروع")
+            st.subheader("🏦 الخزينة الرئيسية")
+            st.caption("خزينة مركزية واحدة بالمخزن الرئيسي. حركات الفروع تُرحّل إليها مع الاحتفاظ باسم الفرع وطريقة الدفع كمصدر للحركة.")
             treasuries=_treasury_options(conn)
-            # balances
-            data=[]
-            for name,t in treasuries.items():
+            if not treasuries:
+                st.warning("تعذر تهيئة الخزينة الرئيسية.")
+            else:
+                name,t=next(iter(treasuries.items()))
                 bal=conn.execute("SELECT COALESCE(SUM(amount),0) AS balance FROM treasury_movements WHERE treasury_id=?",(t["id"],)).fetchone()["balance"]
-                data.append({"الخزينة":name,"الرصيد الحالي":float(bal or 0)})
-            st.dataframe(pd.DataFrame(data),hide_index=True,use_container_width=True)
-            st.markdown("#### 🔁 تحويل بين الخزائن")
-            names=list(treasuries)
-            c1,c2,c3=st.columns(3)
-            src_name=c1.selectbox("من خزينة:",names,key="treasury_from")
-            dst_names=[n for n in names if n!=src_name]
-            dst_name=c2.selectbox("إلى خزينة:",dst_names,key="treasury_to")
-            transfer_amount=c3.number_input("المبلغ:",min_value=0.0,step=10.0,key="treasury_transfer_amount")
-            transfer_notes=st.text_input("البيان:",value="تحويل بين الخزائن",key="treasury_transfer_notes")
-            if st.button("🔁 تنفيذ التحويل بين الخزائن",type="primary",use_container_width=True):
-                if transfer_amount<=0: st.warning("أدخل مبلغًا أكبر من صفر.")
+                st.metric("الرصيد الحالي للخزينة الرئيسية", f"{float(bal or 0):,.2f} د.ل")
+                st.markdown("#### 📒 آخر حركات الخزينة")
+                mov=conn.execute("""SELECT tm.created_at,tm.movement_type,tm.amount,tm.voucher_no,tm.description,
+                    tm.branch_id,tm.payment_method,b.branch_name
+                    FROM treasury_movements tm
+                    LEFT JOIN branches b ON b.id=tm.branch_id
+                    WHERE tm.treasury_id=?
+                    ORDER BY datetime(tm.created_at) DESC,tm.id DESC LIMIT 200""",(t["id"],)).fetchall()
+                if mov:
+                    st.dataframe(pd.DataFrame([{"التاريخ":r["created_at"],"الفرع المصدر":r["branch_name"] or "المخزن الرئيسي","طريقة الدفع":r["payment_method"] or "-","الحركة":r["movement_type"],"المبلغ":float(r["amount"] or 0),"المرجع":r["voucher_no"] or "","البيان":r["description"] or ""} for r in mov]),hide_index=True,use_container_width=True)
                 else:
-                    src=treasuries[src_name]; dst=treasuries[dst_name]; user_id=st.session_state.get("user_id")
-                    ref=f"TR-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                    conn.execute("INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id) VALUES(?,?,?,?,?,?)",(src["id"],"تحويل صادر",-float(transfer_amount),ref,transfer_notes,user_id))
-                    conn.execute("INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id) VALUES(?,?,?,?,?,?)",(dst["id"],"تحويل وارد",float(transfer_amount),ref,transfer_notes,user_id))
-                    conn.commit()
-                    _parties_done(f"تم تحويل {float(transfer_amount):,.2f} د.ل من {src_name} إلى {dst_name}. رقم الحركة: {ref}")
-            st.markdown("#### 📒 آخر حركات الخزائن")
-            mov=conn.execute("""SELECT tm.created_at,t.treasury_name,tm.movement_type,tm.amount,tm.voucher_no,tm.description FROM treasury_movements tm JOIN treasuries t ON t.id=tm.treasury_id ORDER BY datetime(tm.created_at) DESC,tm.id DESC LIMIT 200""").fetchall()
-            if mov:
-                st.dataframe(pd.DataFrame([{"التاريخ":r["created_at"],"الخزينة":r["treasury_name"],"الحركة":r["movement_type"],"المبلغ":float(r["amount"] or 0),"المرجع":r["voucher_no"] or "","البيان":r["description"] or ""} for r in mov]),hide_index=True,use_container_width=True)
-            else: st.info("لا توجد حركات خزينة حتى الآن.")
+                    st.info("لا توجد حركات خزينة حتى الآن.")
 
         elif mode == "vouchers":
             st.subheader("🧾 أرشيف إيصالات الدفع والقبض")

@@ -1667,11 +1667,15 @@ def _post_shift_close_to_treasury(conn, branch_id, branch_name, shift_date, shif
     cur=conn.execute("""INSERT INTO shift_closures(branch_id,shift_date,shift_number,gross_sales,net_sales,cash_amount,card_amount,transfer_amount,credit_amount,other_amount,closed_by,notes)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(branch_id,shift_date,int(shift_num),summary['gross_total'],summary['net_total'],summary['cash_total'],summary['card_total'],summary['transfer_total'],summary['credit_total'],summary['other_total'],user_id,'إغلاق وردية تلقائي'))
     closure_id=cur.lastrowid
-    tname=f'خزينة فرع {branch_name}'
-    tr=conn.execute("SELECT id FROM treasuries WHERE branch_id=? AND treasury_type='branch' LIMIT 1",(branch_id,)).fetchone()
-    if not tr:
-        cur=conn.execute("INSERT INTO treasuries(treasury_name,treasury_type,branch_id) VALUES(?,'branch',?)",(tname,branch_id)); tid=cur.lastrowid
-    else: tid=tr['id']
+    # كل الفروع ترحّل إلى خزينة مركزية واحدة في المخزن الرئيسي،
+    # مع الاحتفاظ بالفرع المصدر داخل حركة الخزينة.
+    tr=conn.execute("SELECT id FROM treasuries WHERE treasury_type='company' ORDER BY id LIMIT 1").fetchone()
+    if tr:
+        tid=tr['id']
+        conn.execute("UPDATE treasuries SET treasury_name='الخزينة الرئيسية', branch_id=NULL, is_active=1 WHERE id=?",(tid,))
+    else:
+        cur=conn.execute("INSERT INTO treasuries(treasury_name,treasury_type,branch_id,is_active) VALUES('الخزينة الرئيسية','company',NULL,1)"); tid=cur.lastrowid
+    conn.execute("UPDATE treasuries SET is_active=0 WHERE treasury_type='branch'")
     ref=f'SHIFT-{branch_id}-{shift_date}-{int(shift_num)}'
     for method,amount in [('كاش',summary['cash_total']),('بطاقة',summary['card_total']),('تحويل',summary['transfer_total']),('أخرى',summary['other_total'])]:
         if float(amount)>0:
