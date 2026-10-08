@@ -2207,7 +2207,7 @@ def show_page():
                 <b style="font-size:18px;">🏪 {branch_name_display}</b><br>
                 <span>👤 {username} &nbsp; • &nbsp; 🕒 وردية {current_shift_num} &nbsp; • &nbsp; 🧾 فاتورة اليوم #{daily_inv_num}</span>
                 <div class="customer-display">
-                    <div class="cell"><div class="label">🧾 رقم الفاتورة</div><div class="value">#{daily_inv_num}</div></div>
+                    <div class="cell"><div class="label">🧾 رقم الفاتورة</div><div class="value">{daily_inv_num}</div></div>
                     <div class="cell"><div class="label">📦 عدد الأصناف</div><div class="value">{cart_distinct_items}</div></div>
                     <div class="cell"><div class="label">⚖️ إجمالي الكمية</div><div class="value">{cart_total_qty:,.3f}</div></div>
                     <div class="cell grand"><div class="label">💰 إجمالي الفاتورة</div><div class="value">{cart_total_value:,.2f} د.ل</div></div>
