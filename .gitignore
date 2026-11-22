@@ -36,3 +36,10 @@ dist/
 .updates/
 *.spec
 *.tmp
+
+# Additional SQLite sidecars and database exports
+*.sqlite3-*
+*.sql
+*.dump
+*.bak
+*.backup
