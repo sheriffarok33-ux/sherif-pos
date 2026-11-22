@@ -29,6 +29,15 @@ def installed_release(root,component):
     if value.get('component')!=component:raise ValueError('Wrong installed component')
     return release_metadata(value,component)
 
+def installed_source_release(root):
+    """Read a source deployment's declared component without weakening validation."""
+    path=Path(root)/'APP_VERSION.json'
+    if not path.is_file():raise ValueError('Installed release metadata is missing')
+    value=json.loads(path.read_text(encoding='utf-8-sig'))
+    component=value.get('component')
+    if component not in ('windows','server'):raise ValueError('Invalid release component')
+    return installed_release(root,component)
+
 def display_update_number(value):
     if value.get('release_seq') in (59,60,61,63,64,65,66,68):return 5
     return 4 if value.get('release_seq') in (53,54,55,56,58) else update_number(value)

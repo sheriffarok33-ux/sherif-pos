@@ -746,15 +746,16 @@ def _auth_runtime_key():
 
 
 def _current_auth_release():
-    from release_info import installed_release
-    return installed_release(Path(__file__).resolve().parent,'windows' if os.name=='nt' else 'server')['release_seq']
+    from release_info import installed_release, installed_source_release
+    root=Path(__file__).resolve().parent
+    release=installed_release(root,'windows') if os.name=='nt' else installed_source_release(root)
+    return release['release_seq']
 
 
 def _auth_hash(token):
     # Same existing sessions table; old unbound cookies are not trusted on upgrade.
     window_id=str(st.session_state.get('_auth_window_id',''))
-    from release_info import installed_release
-    release=installed_release(Path(__file__).resolve().parent,'windows' if os.name=='nt' else 'server')['release_seq']
+    release=_current_auth_release()
     return hashlib.sha256(('abuzaid-window-v2:'+str(release)+':'+_auth_runtime_key()+':'+window_id+':'+token).encode('ascii')).hexdigest()
 
 
