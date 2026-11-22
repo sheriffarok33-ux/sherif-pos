@@ -1,3 +1,9 @@
+from views.test_branch_policy import assert_transfer_environment
+_PAGE_ERROR_UI_REVISION = 61
+from views.page_guard import show_operation_error
+from views.number_format import excel_literal_text
+from views.number_format import decimal_display
+from views.ui_feedback import ui_field, ui_form, ui_submit, notify_success, reset_page_fields
 from views.ui_common import back_button
 import streamlit as st
 import pandas as pd
@@ -187,6 +193,7 @@ def to_excel(df):
             index=False,
             sheet_name="Transfers_Archive"
         )
+        excel_literal_text(writer)
 
     return output.getvalue()
 
@@ -288,6 +295,7 @@ def execute_transfer(
 
     try:
 
+        assert_transfer_environment(warehouse_id, target_branch_id)
         if not transfer_cart:
             raise ValueError(
                 "فاتورة التزويد فارغة."
@@ -431,9 +439,9 @@ def execute_transfer(
                     f"الكمية غير كافية من "
                     f"({warehouse_item['item_name']}). "
                     f"المتاح "
-                    f"{available_qty:,.2f} "
+                    f"{decimal_display(available_qty, 2)} "
                     f"والمطلوب "
-                    f"{required_qty:,.2f}."
+                    f"{decimal_display(required_qty, 2)}."
                 )
 
             cart_item[
@@ -634,7 +642,7 @@ def execute_transfer(
                 (
                     f"▪ {source['item_name']} "
                     f"[{source['item_code']}] "
-                    f"(الكمية: {qty:,.2f})"
+                    f"(الكمية: {decimal_display(qty, 2)})"
                 )
             )
 
@@ -730,7 +738,7 @@ def execute_transfer(
             "فاتورة التزويد."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/reports.py:737')
 
     finally:
 
@@ -882,7 +890,7 @@ def load_transfer_archive(
 # الصفحة
 # ============================================================
 
-@st.dialog("✅ تمت العملية بنجاح")
+@st.dialog("✅ تمت العملية بنجاح", dismissible=False)
 def _transfer_success_dialog():
     st.success(
         st.session_state.get(
@@ -898,6 +906,7 @@ def _transfer_success_dialog():
         key="transfer_success_ok"
     ):
         # لا يتم تنظيف العملية إلا بعد تأكيد المستخدم.
+        reset_page_fields()
         st.session_state["transfer_cart"] = []
         for key in [
             "transfer_target_branch",
@@ -914,6 +923,7 @@ def show_page():
 
     if st.session_state.get("transfer_success_pending"):
         _transfer_success_dialog()
+        st.stop()
 
 
     st.markdown(
@@ -976,7 +986,7 @@ def show_page():
             "❌ تعذر تحميل بيانات الفروع."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/reports.py:985')
 
         return
 
@@ -1064,7 +1074,7 @@ def show_page():
         c1, c2 = st.columns(2)
 
         target_branch_name = (
-            c1.selectbox(
+            ui_field(c1.selectbox, "reports:1067", 
                 "اختر الفرع المستهدف:",
                 list(
                     branch_dict.keys()
@@ -1079,7 +1089,7 @@ def show_page():
         )
 
         transfer_notes = (
-            c2.text_input(
+            ui_field(c2.text_input, "reports:1082", 
                 "ملاحظات الفاتورة:",
                 value=""
             )
@@ -1152,7 +1162,7 @@ def show_page():
                 "❌ تعذر تحميل أصناف المخزن."
             )
 
-            st.code(str(e))
+            show_operation_error(e, announce=False, context='views/reports.py:1161')
 
             return
 
@@ -1171,16 +1181,16 @@ def show_page():
                     f"[{item['item_code']}] "
                     f"{item['item_name']} "
                     f"| المتوفر: "
-                    f"{float(item['quantity'] or 0):,.2f}"
+                    f"{decimal_display(float(item['quantity'] or 0), 2)}"
                 )
 
                 item_options[
                     label
                 ] = item
 
-            with st.form(
+            with ui_form(
                 "add_transfer_item",
-                clear_on_submit=True
+                clear_on_submit=False
             ):
 
                 ci1, ci2 = st.columns(
@@ -1188,7 +1198,7 @@ def show_page():
                 )
 
                 selected_label = (
-                    ci1.selectbox(
+                    ui_field(ci1.selectbox, "reports:1191", 
                         "اختر الصنف:",
                         list(
                             item_options.keys()
@@ -1209,7 +1219,7 @@ def show_page():
                 )
 
                 transfer_qty = (
-                    ci2.number_input(
+                    ui_field(ci2.number_input, "reports:1212", 
                         "الكمية:",
                         min_value=0.01,
                         max_value=max_qty,
@@ -1222,7 +1232,7 @@ def show_page():
                 )
 
                 add_btn = (
-                    st.form_submit_button(
+                    ui_submit(
                         "➕ إضافة للسلة",
                         type="primary"
                     )
@@ -1263,7 +1273,7 @@ def show_page():
                             f"⚠️ إجمالي الكمية "
                             f"المطلوبة أكبر من "
                             f"المتوفر "
-                            f"({max_qty:,.2f})."
+                            f"({decimal_display(max_qty, 2)})."
                         )
 
                     else:
@@ -1352,7 +1362,7 @@ def show_page():
 
                 c2.write(
                     f"الكمية: "
-                    f"{cart_item['qty']:,.2f}"
+                    f"{decimal_display(cart_item['qty'], 2)}"
                 )
 
                 if c3.button(
@@ -1380,7 +1390,7 @@ def show_page():
 
             st.metric(
                 "📦 إجمالي الوحدات المحولة",
-                f"{total_units:,.2f}"
+                f"{decimal_display(total_units, 2)}"
             )
 
             pending_dup = st.session_state.get("pending_duplicate_transfer")
@@ -1487,7 +1497,7 @@ def show_page():
                         f"آخر عملية متاحة: فاتورة #{last_op['transfer_log_id']} "
                         f"بتاريخ {last_op['created_at']}. التراجع سيعيد أرصدة المخزن والفرع عكس العملية بالكامل."
                     )
-                    confirm_undo = st.checkbox(
+                    confirm_undo = ui_field(st.checkbox, "reports:1490", 
                         "أؤكد أنني أريد التراجع عن آخر عملية تزويد",
                         key="confirm_undo_last_transfer"
                     )
@@ -1500,14 +1510,14 @@ def show_page():
                     ):
                         ok, message = undo_last_transfer(username)
                         if ok:
-                            st.success("✅ " + message)
+                            notify_success("✅ " + message)
                             st.rerun()
                         else:
                             st.error("❌ " + message)
 
         fc1, fc2 = st.columns(2)
 
-        from_date = fc1.date_input(
+        from_date = ui_field(fc1.date_input, "reports:1510", 
             "📅 من تاريخ:",
             value=(
                 date.today()
@@ -1516,7 +1526,7 @@ def show_page():
             key="transfer_from_date"
         )
 
-        to_date = fc2.date_input(
+        to_date = ui_field(fc2.date_input, "reports:1519", 
             "📅 إلى تاريخ:",
             value=date.today(),
             key="transfer_to_date"
@@ -1529,7 +1539,7 @@ def show_page():
             )
         )
 
-        archive_branch = st.selectbox(
+        archive_branch = ui_field(st.selectbox, "reports:1532", 
             "🏢 فلترة حسب الفرع المستلم:",
             archive_branch_options,
             key="transfer_archive_branch"
@@ -1571,7 +1581,7 @@ def show_page():
                 "أرشيف التزويد."
             )
 
-            st.code(str(e))
+            show_operation_error(e, announce=False, context='views/reports.py:1580')
 
             return
 
@@ -1590,7 +1600,7 @@ def show_page():
         )
         mc1, mc2, mc3 = st.columns(3)
         mc1.metric("عدد فواتير التزويد", f"{len(logs_df):,}")
-        mc2.metric("إجمالي قيمة التحويلات", f"{total_transfer_value:,.2f} د.ل")
+        mc2.metric("إجمالي قيمة التحويلات", f"{decimal_display(total_transfer_value, 2)} د.ل")
         mc3.metric("الفترة", f"{from_date} ← {to_date}")
 
         st.markdown(
@@ -1655,7 +1665,7 @@ def show_page():
                 "تعذر إنشاء ملف Excel."
             )
 
-            st.code(str(e))
+            show_operation_error(e, announce=False, context='views/reports.py:1664')
 
         # ====================================================
         # إعادة الطباعة
@@ -1688,7 +1698,7 @@ def show_page():
             ] = row
 
         selected_invoice_label = (
-            st.selectbox(
+            ui_field(st.selectbox, "reports:1691", 
                 "🔍 اختر الفاتورة:",
                 [
                     "-- اختر الفاتورة --"
@@ -1843,13 +1853,51 @@ def show_page():
                         size: 80mm auto;
                         margin: 3mm;
                     }}
+                    html, body {{
+                        direction: rtl !important;
+                        text-align: right;
+                        box-sizing: border-box;
+                    }}
+                    body {{
+                        width: 100%;
+                        max-width: 74mm !important;
+                        margin: 0 auto !important;
+                        padding: 3mm !important;
+                        overflow-wrap: anywhere;
+                    }}
+                    table {{
+                        width: 100% !important;
+                        border-collapse: collapse !important;
+                        direction: rtl !important;
+                        table-layout: fixed;
+                    }}
+                    table tr {{
+                        display: table-row !important;
+                        break-inside: avoid;
+                        page-break-inside: avoid;
+                    }}
+                    table th, table td {{
+                        display: table-cell !important;
+                        text-align: right !important;
+                        vertical-align: top;
+                        padding: 5px 3px;
+                        border-bottom: 1px dashed #bbb;
+                        white-space: normal !important;
+                    }}
+                    table th:first-child, table td:first-child {{ width: 70%; }}
+                    table th:last-child, table td:last-child {{
+                        width: 30%;
+                        text-align: left !important;
+                        direction: ltr;
+                    }}
                     @media print {{
-                        .no-print {{
-                            display: none !important;
-                        }}
-                        body {{
+                        .no-print {{ display: none !important; }}
+                        html, body {{
                             border: none !important;
                             padding: 0 !important;
+                            margin: 0 !important;
+                            width: 100% !important;
+                            max-width: none !important;
                         }}
                     }}
                 </style>
@@ -1866,7 +1914,7 @@ def show_page():
             ">
 
                 <h2>
-                    مجموعة أبو زيد التجارية
+                    SHERIF
                 </h2>
 
                 <p style="

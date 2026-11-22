@@ -1,3 +1,8 @@
+_PAGE_ERROR_UI_REVISION = 60
+from views.page_guard import show_operation_error
+from views.number_format import excel_literal_text
+from views.number_format import decimal_display
+from views.ui_feedback import ui_field, ui_form, ui_submit, notify_success, reset_page_fields
 from views.ui_common import back_button
 from views.ui_common import item_alerts
 import streamlit as st
@@ -58,9 +63,117 @@ def get_main_store_data():
             conn.close()
 
 
+# تعميم سعر بيع الصنف الناتج على جميع الفروع بنفس كود الصنف.
+# لا نغيّر الكميات أو التكاليف في الفروع.
+def _propagate_sale_price(conn, target_item_id, store_id, sale_price):
+    item = conn.execute(
+        "SELECT item_code FROM items WHERE id = ? AND branch_id = ?",
+        (target_item_id, store_id),
+    ).fetchone()
+    if not item or not item["item_code"]:
+        raise ValueError("تعذر تحديد كود الصنف الناتج لتعميم السعر.")
+    conn.execute(
+        "UPDATE items SET sale_price = ? WHERE item_code = ? AND branch_id <> ?",
+        (float(sale_price), item["item_code"], store_id),
+    )
+
+
 # ============================================================
 # اعتماد الخلطة
 # ============================================================
+
+def _production_balance(remaining_quantity, old_unit_cost, produced_quantity, production_cost):
+    """Preserve signed inventory value; refuse an undefined/non-positive average."""
+    import math
+    remaining_quantity, old_unit_cost, produced_quantity, production_cost = map(
+        float, (remaining_quantity, old_unit_cost, produced_quantity, production_cost))
+    if not all(math.isfinite(v) for v in (remaining_quantity, old_unit_cost, produced_quantity, production_cost)):
+        raise ValueError('تعذر تقييم الإنتاج: توجد كمية أو تكلفة غير صالحة. المسودة محفوظة.')
+    if produced_quantity <= 0 or production_cost <= 0:
+        raise ValueError('تكلفة الإنتاج غير معروفة أو غير صالحة؛ أكمل بيانات التكلفة أولاً.')
+    if remaining_quantity != 0 and old_unit_cost <= 0:
+        raise ValueError('تكلفة الرصيد السابق غير معروفة؛ راجع التكلفة قبل اعتماد الإنتاج.')
+    final_quantity = remaining_quantity + produced_quantity
+    signed_value = remaining_quantity * old_unit_cost + production_cost
+    if final_quantity <= 0:
+        raise ValueError('الناتج لا يغطي الرصيد السالب؛ يلزم اعتماد معالجة الرصيد والتكلفة. المسودة محفوظة.')
+    final_average = signed_value / final_quantity
+    if not math.isfinite(final_average) or final_average <= 0:
+        raise ValueError('القيمة الدفترية تعطي متوسط تكلفة غير صالح؛ راجع التسوية المحاسبية. المسودة محفوظة.')
+    return final_quantity, final_average
+
+
+def _production_request_identity(conn, branch_id):
+    import uuid
+    pending=st.session_state.get('production_pending_action')
+    operation_uuid=(pending.setdefault('batch_operation_uuid',str(uuid.uuid4()))
+                    if isinstance(pending,dict) else str(uuid.uuid4()))
+    if not conn.execute('SELECT id FROM branches WHERE id=? FOR UPDATE',(branch_id,)).fetchone():
+        raise ValueError('فرع الإنتاج غير موجود')
+    seen=conn.execute('SELECT id FROM production_logs WHERE branch_id=? AND notes LIKE ?',
+                      (branch_id,'%"operation_uuid": "'+operation_uuid+'"%')).fetchone()
+    return operation_uuid, bool(seen)
+
+
+def _production_batch_ledger(conn, branch_id, materials, target_id, produced_qty,
+                             manufacturing_value, prior_target_qty, prior_target_cost, operation_uuid):
+    """Consume documented receipt batches and retain immutable production evidence.
+
+    The existing notes/source_type fields link the operation without inventing
+    historical batches, dates, costs, or additional financial entries.
+    All writes are in the caller's business transaction.
+    """
+    import json, math, uuid
+    from decimal import Decimal
+    links=[]
+    for item_id, requested in sorted(materials.items()):
+        left=Decimal(str(requested))
+        if not left.is_finite() or left<=0:
+            raise ValueError('كمية خام غير صالحة')
+        batches=conn.execute("""SELECT id,remaining_quantity,unit_cost,source_type
+            FROM inventory_batches WHERE branch_id=? AND item_id=? AND remaining_quantity>0
+            ORDER BY CASE WHEN NULLIF(CAST(expiry_date AS TEXT),'') IS NULL THEN 1 ELSE 0 END,
+                     expiry_date,received_date,id FOR UPDATE""",(branch_id,item_id)).fetchall()
+        plan=[]
+        for batch in batches:
+            cost=Decimal(str(batch['unit_cost'])) if batch['unit_cost'] is not None else None
+            available=Decimal(str(batch['remaining_quantity']))
+            if cost is None or not cost.is_finite() or cost<0 or not available.is_finite():
+                raise ValueError('تكلفة أو كمية دفعة الخام غير صالحة؛ المسودة محفوظة')
+            take=min(left,available)
+            if take>0:plan.append((batch,take,cost));left-=take
+            if left<=Decimal('0.00000001'):break
+        if left>Decimal('0.00000001'):
+            raise ValueError('رصيد الخام غير مغطى بدفعات موثقة؛ اعتمد الرصيد الافتتاحي المعروف أولاً. المسودة محفوظة')
+        for batch,take,cost in plan:
+            conn.execute('UPDATE inventory_batches SET remaining_quantity=remaining_quantity-? WHERE id=?',
+                         (float(take),batch['id']))
+            links.append({'item_id':int(item_id),'batch_id':int(batch['id']),
+                          'source_type':batch['source_type'],'quantity':float(take),'receipt_unit_cost':float(cost)})
+    produced=Decimal(str(produced_qty));manufacturing=Decimal(str(manufacturing_value))
+    prior=Decimal(str(prior_target_qty));old_cost=Decimal(str(prior_target_cost))
+    covered=min(produced,max(Decimal(0),-prior));available=produced-covered
+    assigned=manufacturing-covered*old_cost
+    if available<=0 or assigned<=0:
+        raise ValueError('لا توجد كمية وقيمة موجبتان لتقييم دفعة الناتج؛ المسودة محفوظة')
+    unit_cost=assigned/available
+    if not math.isfinite(float(unit_cost)):raise ValueError('تكلفة دفعة الناتج غير صالحة')
+    source='production:'+operation_uuid
+    conn.execute("""INSERT INTO inventory_batches(item_id,branch_id,quantity,remaining_quantity,
+        received_date,unit_cost,source_type) VALUES(?,?,?,?,?,?,?)""",
+        (target_id,branch_id,float(produced),float(available),datetime.now().date().isoformat(),float(unit_cost),source))
+    evidence={'version':1,'operation_uuid':operation_uuid,'raw_batches':links,
+              'output_source':source,'manufacturing_value':float(manufacturing),
+              'deficit_quantity':float(covered),'deficit_book_value':float(covered*old_cost),
+              'available_quantity':float(available),'assigned_value':float(assigned),'output_unit_cost':float(unit_cost)}
+    # IDs in the evidence are explicitly source-qualified, never mistaken for central IDs.
+    try:
+        from offline_store import get_device_id
+        evidence['source_device_id']=get_device_id()
+    except ImportError:
+        evidence['source_device_id']='central'
+    return '\n[production_batch_ledger_v1]'+json.dumps(evidence,ensure_ascii=False,sort_keys=True)
+
 
 def execute_mix(
     store_id,
@@ -117,6 +230,11 @@ def execute_mix(
             ]["qty"] += qty
 
         conn = get_db_connection()
+        operation_uuid, already_saved = _production_request_identity(conn,store_id)
+        if already_saved:
+            _production_done('تم حفظ عملية الإنتاج سابقاً؛ لم تتكرر الحركة.')
+            return
+
 
         total_mix_weight = 0.0
         total_mix_cost = 0.0
@@ -171,9 +289,9 @@ def execute_mix(
                     f"الكمية غير كافية من "
                     f"({row['item_name']}). "
                     f"المتاح "
-                    f"{available_qty:,.2f} كجم "
+                    f"{decimal_display(available_qty, 2)} كجم "
                     f"والمطلوب "
-                    f"{required_qty:,.2f} كجم."
+                    f"{decimal_display(required_qty, 2)} كجم."
                 )
 
             unit_cost = float(
@@ -185,6 +303,9 @@ def execute_mix(
                 unit_cost = float(
                     row["buy_price"] or 0
                 )
+
+            if unit_cost <= 0:
+                raise ValueError('تكلفة أحد الخامات غير معروفة؛ أكمل بيانات التكلفة قبل اعتماد الإنتاج.')
 
             material[
                 "actual_cost"
@@ -301,39 +422,9 @@ def execute_mix(
                 ]["qty"]
             )
 
-        remaining_target_qty = max(
-            0.0,
-            old_target_qty
-            - target_consumed_qty
-        )
-
-        final_target_qty = (
-            remaining_target_qty
-            + total_mix_weight
-        )
-
-        old_remaining_value = (
-            remaining_target_qty
-            * old_target_cost
-        )
-
-        final_target_value = (
-            old_remaining_value
-            + total_mix_cost
-        )
-
-        if final_target_qty > 0:
-
-            final_avg_cost = (
-                final_target_value
-                / final_target_qty
-            )
-
-        else:
-
-            final_avg_cost = (
-                new_mix_cost
-            )
+        remaining_target_qty = old_target_qty - target_consumed_qty
+        final_target_qty, final_avg_cost = _production_balance(
+            remaining_target_qty, old_target_cost, total_mix_weight, total_mix_cost)
 
         # لأننا خصمنا الخام بالفعل،
         # نضبط الرصيد النهائي مباشرة
@@ -358,20 +449,26 @@ def execute_mix(
             )
         )
 
+        _propagate_sale_price(conn, target_item_id, store_id, new_sale_price)
+
         materials_details = "\n".join(
-            f"{m['name']} [{m['code']}] - {float(m['qty']):,.2f} كجم"
+            f"{m['name']} [{m['code']}] - {decimal_display(float(m['qty']), 2)} كجم"
             for m in merged_materials.values()
         )
 
         production_notes = (
             f"الخامات:\n{materials_details}\n"
             f"الصنف الناتج: {target['item_name']}\n"
-            f"وزن الناتج: {total_mix_weight:,.2f} كجم\n"
-            f"إجمالي التكلفة: {total_mix_cost:,.2f} د.ل\n"
-            f"تكلفة الكيلو: {new_mix_cost:,.2f} د.ل\n"
-            f"سعر البيع: {float(new_sale_price):,.2f} د.ل\n"
+            f"وزن الناتج: {decimal_display(total_mix_weight, 2)} كجم\n"
+            f"إجمالي التكلفة: {decimal_display(total_mix_cost, 2)} د.ل\n"
+            f"تكلفة الكيلو: {decimal_display(new_mix_cost, 2)} د.ل\n"
+            f"سعر البيع: {decimal_display(float(new_sale_price), 2)} د.ل\n"
             f"بواسطة: {username or 'غير محدد'}"
         )
+
+        production_notes += _production_batch_ledger(conn,store_id,
+            {m['id']:m['qty'] for m in merged_materials.values()},target_item_id,
+            total_mix_weight,total_mix_cost,remaining_target_qty,old_target_cost,operation_uuid)
 
         conn.execute(
             """
@@ -389,9 +486,10 @@ def execute_mix(
                 total_cost,
                 unit_cost,
                 sale_price,
-                notes
+                notes,
+                created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 store_id,
@@ -406,7 +504,8 @@ def execute_mix(
                 total_mix_cost,
                 new_mix_cost,
                 float(new_sale_price),
-                production_notes
+                production_notes,
+                datetime.now().isoformat(sep=" ", timespec="seconds")
             )
         )
 
@@ -414,10 +513,10 @@ def execute_mix(
 
         _production_done(
             "تم اعتماد الخلطة بنجاح. "
-            f"الوزن الناتج: {total_mix_weight:,.2f} كجم — "
-            f"تكلفة الخلطة: {total_mix_cost:,.2f} د.ل — "
-            f"تكلفة الكيلو المنتج: {new_mix_cost:,.2f} د.ل — "
-            f"متوسط تكلفة الرصيد بعد الدمج: {final_avg_cost:,.2f} د.ل"
+            f"الوزن الناتج: {decimal_display(total_mix_weight, 2)} كجم — "
+            f"تكلفة الخلطة: {decimal_display(total_mix_cost, 2)} د.ل — "
+            f"تكلفة الكيلو المنتج: {decimal_display(new_mix_cost, 2)} د.ل — "
+            f"متوسط تكلفة الرصيد بعد الدمج: {decimal_display(final_avg_cost, 2)} د.ل"
         )
 
     except ValueError as e:
@@ -438,7 +537,7 @@ def execute_mix(
             "❌ تعذر تنفيذ عملية الخلط."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/roasting_blending.py:538')
 
     finally:
 
@@ -505,6 +604,11 @@ def execute_roasting(
             )
 
         conn = get_db_connection()
+        operation_uuid, already_saved = _production_request_identity(conn,store_id)
+        if already_saved:
+            _production_done('تم حفظ عملية الإنتاج سابقاً؛ لم تتكرر الحركة.')
+            return
+
 
         # ====================================================
         # الخام
@@ -546,7 +650,7 @@ def execute_roasting(
                 f"الكمية غير كافية من "
                 f"({raw_item['item_name']}). "
                 f"المتاح "
-                f"{available_qty:,.2f} كجم."
+                f"{decimal_display(available_qty, 2)} كجم."
             )
 
         raw_unit_cost = float(
@@ -558,6 +662,9 @@ def execute_roasting(
             raw_unit_cost = float(
                 raw_item["buy_price"] or 0
             )
+
+        if raw_unit_cost <= 0:
+            raise ValueError('تكلفة الخام غير معروفة؛ أكمل بيانات التكلفة قبل اعتماد التحميص.')
 
         total_raw_cost = (
             raw_weight
@@ -641,27 +748,8 @@ def execute_roasting(
                 - raw_weight
             )
 
-            final_qty = (
-                remaining_qty
-                + roasted_weight
-            )
-
-            remaining_value = (
-                remaining_qty
-                * old_target_cost
-            )
-
-            final_value = (
-                remaining_value
-                + total_raw_cost
-            )
-
-            final_avg_cost = (
-                final_value
-                / final_qty
-                if final_qty > 0
-                else roasted_unit_cost
-            )
+            final_qty, final_avg_cost = _production_balance(
+                remaining_qty, old_target_cost, roasted_weight, total_raw_cost)
 
             conn.execute(
                 """
@@ -705,33 +793,8 @@ def execute_roasting(
                 )
             )
 
-            new_target_qty = (
-                old_target_qty
-                + roasted_weight
-            )
-
-            old_target_value = (
-                old_target_qty
-                * old_target_cost
-            )
-
-            new_target_value = (
-                old_target_value
-                + total_raw_cost
-            )
-
-            if new_target_qty > 0:
-
-                final_avg_cost = (
-                    new_target_value
-                    / new_target_qty
-                )
-
-            else:
-
-                final_avg_cost = (
-                    roasted_unit_cost
-                )
+            new_target_qty, final_avg_cost = _production_balance(
+                old_target_qty, old_target_cost, roasted_weight, total_raw_cost)
 
             conn.execute(
                 """
@@ -754,17 +817,23 @@ def execute_roasting(
                 )
             )
 
+        _propagate_sale_price(conn, target_item_id, store_id, sale_price)
+
         production_notes = (
             f"الخام: {raw_item['item_name']} [{raw_item['item_code']}]\n"
             f"الصنف الناتج: {target['item_name']}\n"
-            f"الوزن الخام: {raw_weight:,.2f} كجم\n"
-            f"الوزن الناتج: {roasted_weight:,.2f} كجم\n"
-            f"الفقد: {loss_weight:,.2f} كجم ({loss_percent:,.2f}%)\n"
-            f"إجمالي تكلفة الخام: {total_raw_cost:,.2f} د.ل\n"
-            f"تكلفة كيلو الناتج: {roasted_unit_cost:,.2f} د.ل\n"
-            f"سعر البيع: {sale_price:,.2f} د.ل\n"
+            f"الوزن الخام: {decimal_display(raw_weight, 2)} كجم\n"
+            f"الوزن الناتج: {decimal_display(roasted_weight, 2)} كجم\n"
+            f"الفقد: {decimal_display(loss_weight, 2)} كجم ({decimal_display(loss_percent, 2)}%)\n"
+            f"إجمالي تكلفة الخام: {decimal_display(total_raw_cost, 2)} د.ل\n"
+            f"تكلفة كيلو الناتج: {decimal_display(roasted_unit_cost, 2)} د.ل\n"
+            f"سعر البيع: {decimal_display(sale_price, 2)} د.ل\n"
             f"بواسطة: {username or 'غير محدد'}"
         )
+
+        production_notes += _production_batch_ledger(conn,store_id,{raw_item_id:raw_weight},
+            target_item_id,roasted_weight,total_raw_cost,
+            old_target_qty-(raw_weight if raw_item_id==target_item_id else 0),old_target_cost,operation_uuid)
 
         conn.execute(
             """
@@ -782,9 +851,10 @@ def execute_roasting(
                 total_cost,
                 unit_cost,
                 sale_price,
-                notes
+                notes,
+                created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 store_id,
@@ -799,7 +869,8 @@ def execute_roasting(
                 total_raw_cost,
                 roasted_unit_cost,
                 sale_price,
-                production_notes
+                production_notes,
+                datetime.now().isoformat(sep=" ", timespec="seconds")
             )
         )
 
@@ -836,12 +907,12 @@ def execute_roasting(
 
         _production_done(
             "تمت عملية التحميص بنجاح. "
-            f"الخام: {raw_weight:,.2f} كجم — الناتج: {roasted_weight:,.2f} كجم — "
-            f"الفقد: {loss_weight:,.2f} كجم ({loss_percent:,.2f}%) — "
-            f"إجمالي تكلفة الخام: {total_raw_cost:,.2f} د.ل — "
-            f"تكلفة كيلو المنتج: {roasted_unit_cost:,.2f} د.ل — "
-            f"ربح الكيلو المتوقع: {profit_per_kg:,.2f} د.ل "
-            f"({profit_margin_sale:,.2f}% من سعر البيع)"
+            f"الخام: {decimal_display(raw_weight, 2)} كجم — الناتج: {decimal_display(roasted_weight, 2)} كجم — "
+            f"الفقد: {decimal_display(loss_weight, 2)} كجم ({decimal_display(loss_percent, 2)}%) — "
+            f"إجمالي تكلفة الخام: {decimal_display(total_raw_cost, 2)} د.ل — "
+            f"تكلفة كيلو المنتج: {decimal_display(roasted_unit_cost, 2)} د.ل — "
+            f"ربح الكيلو المتوقع: {decimal_display(profit_per_kg, 2)} د.ل "
+            f"({decimal_display(profit_margin_sale, 2)}% من سعر البيع)"
         )
 
     except ValueError as e:
@@ -862,7 +933,7 @@ def execute_roasting(
             "❌ تعذر تنفيذ عملية التحميص."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/roasting_blending.py:934')
 
     finally:
 
@@ -874,10 +945,11 @@ def execute_roasting(
 # الصفحة
 # ============================================================
 
-@st.dialog("✅ تمت العملية بنجاح")
+@st.dialog("✅ تمت العملية بنجاح", dismissible=False)
 def _production_success_dialog():
     st.success(st.session_state.get("production_success_message", "تمت العملية بنجاح."))
     if st.button("موافق", type="primary", use_container_width=True, key="production_success_ok"):
+        reset_page_fields()
         for _key in ['mix_list_state', 'roast_raw_weight', 'roast_finished_weight', 'roast_raw_item', 'roast_target_item']:
             st.session_state.pop(_key, None)
         for _key in list(st.session_state.keys()):
@@ -889,6 +961,7 @@ def _production_success_dialog():
 
 
 def _production_done(message):
+    st.session_state.pop("production_pending_action", None)
     st.session_state["production_success_message"] = message
     st.session_state["production_success_pending"] = True
     st.rerun()
@@ -908,7 +981,6 @@ def _production_confirm_dialog():
         callback = pending.get("callback")
         args = pending.get("args", [])
         kwargs = pending.get("kwargs", {})
-        st.session_state.pop("production_pending_action", None)
         callback(*args, **kwargs)
     if c2.button("❌ إلغاء", use_container_width=True, key="production_confirm_no"):
         st.session_state.pop("production_pending_action", None)
@@ -925,6 +997,7 @@ def show_page():
 
     if st.session_state.get("production_success_pending"):
         _production_success_dialog()
+        st.stop()
 
 
     st.markdown(
@@ -984,7 +1057,7 @@ def show_page():
             "❌ تعذر تحميل بيانات المخزن."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/roasting_blending.py:1058')
 
         return
 
@@ -1051,18 +1124,18 @@ def show_page():
         conn_log = get_db_connection()
         try:
             type_filter, date_from_col, date_to_col = st.columns(3)
-            selected_type = type_filter.selectbox(
-                "نوع العملية:",
-                ["الكل", "خلط", "تحميص"],
+            selected_type = ui_field(type_filter.selectbox, "roasting_blending:1054",
+                "اختر السجل:",
+                ["سجل الخلط", "سجل التحميص", "كل العمليات"],
                 key="production_log_type"
             )
             today = date.today()
-            from_date = date_from_col.date_input(
+            from_date = ui_field(date_from_col.date_input, "roasting_blending:1060", 
                 "من تاريخ:",
                 value=today - timedelta(days=30),
                 key="production_log_from"
             )
-            to_date = date_to_col.date_input(
+            to_date = ui_field(date_to_col.date_input, "roasting_blending:1065", 
                 "إلى تاريخ:",
                 value=today,
                 key="production_log_to"
@@ -1074,9 +1147,19 @@ def show_page():
 
             where = ["DATE(created_at) BETWEEN ? AND ?"]
             params = [from_date.isoformat(), to_date.isoformat()]
-            if selected_type != "الكل":
+            if selected_type != "كل العمليات":
                 where.append("production_type = ?")
-                params.append(selected_type)
+                params.append("خلط" if selected_type == "سجل الخلط" else "تحميص")
+
+            operation_id = st.number_input(
+                "البحث برقم العملية (0 لعرض جميع العمليات):",
+                min_value=0, value=0, step=1, key="production_log_search_id"
+            )
+            if operation_id:
+                where = [condition for condition in where if not condition.startswith("DATE(created_at)")]
+                params = params[2:]
+                where.append("id = ?")
+                params.append(int(operation_id))
 
             rows_log = conn_log.execute(
                 f"""
@@ -1123,9 +1206,9 @@ def show_page():
 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("عدد العمليات", f"{len(df_log):,}")
-                m2.metric("إجمالي الإدخال", f"{df_log['كمية الإدخال'].sum():,.2f}")
-                m3.metric("إجمالي الناتج", f"{df_log['كمية الناتج'].sum():,.2f}")
-                m4.metric("إجمالي الفقد", f"{df_log['الفقد'].sum():,.2f}")
+                m2.metric("إجمالي الإدخال", f"{decimal_display(df_log['كمية الإدخال'].sum(), 2)}")
+                m3.metric("إجمالي الناتج", f"{decimal_display(df_log['كمية الناتج'].sum(), 2)}")
+                m4.metric("إجمالي الفقد", f"{decimal_display(df_log['الفقد'].sum(), 2)}")
 
                 st.dataframe(
                     df_log.drop(columns=["التفاصيل"]),
@@ -1150,7 +1233,7 @@ def show_page():
                     )
                     operation_options[label] = row
 
-                selected_operation = st.selectbox(
+                selected_operation = ui_field(st.selectbox, "roasting_blending:1153", 
                     "اختر العملية:",
                     ["-- اختر عملية --"] + list(operation_options.keys()),
                     key="production_single_operation"
@@ -1158,15 +1241,15 @@ def show_page():
                 if selected_operation != "-- اختر عملية --":
                     op = operation_options[selected_operation]
                     d1, d2, d3 = st.columns(3)
-                    d1.metric("كمية الإدخال", f"{op['كمية الإدخال']:,.2f}")
-                    d2.metric("كمية الناتج", f"{op['كمية الناتج']:,.2f}")
-                    d3.metric("الفقد", f"{op['الفقد']:,.2f}")
+                    d1.metric("كمية الإدخال", f"{decimal_display(op['كمية الإدخال'], 2)}")
+                    d2.metric("كمية الناتج", f"{decimal_display(op['كمية الناتج'], 2)}")
+                    d3.metric("الفقد", f"{decimal_display(op['الفقد'], 2)}")
                     st.write(f"**رقم العملية:** {int(op['رقم العملية'])}")
                     st.write(f"**النوع:** {op['نوع العملية']}")
                     st.write(f"**التاريخ والوقت:** {op['التاريخ والوقت']}")
                     st.write(f"**الخامة / المصدر:** {op['الخامة / المصدر']}")
                     st.write(f"**الصنف الناتج:** {op['الصنف الناتج']}")
-                    st.text_area(
+                    ui_field(st.text_area, "roasting_blending:1169", 
                         "تفاصيل العملية:",
                         value=str(op["التفاصيل"] or ""),
                         height=180,
@@ -1178,6 +1261,7 @@ def show_page():
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
                     df_log.to_excel(writer, index=False, sheet_name="Production_Log")
+                    excel_literal_text(writer)
 
                 st.download_button(
                     "📥 تصدير التقرير المحدد إلى Excel",
@@ -1190,7 +1274,7 @@ def show_page():
                 st.info("لا توجد عمليات إنتاج مطابقة للفترة ونوع العملية المحددين.")
         except Exception as e:
             st.error("❌ تعذر تحميل سجل الإنتاج.")
-            st.code(str(e))
+            show_operation_error(e, announce=False, context='views/roasting_blending.py:1275')
         finally:
             conn_log.close()
         return
@@ -1228,9 +1312,9 @@ def show_page():
                 f"[{item['item_code']}] "
                 f"{item['item_name']} "
                 f"| المتاح: "
-                f"{float(item['quantity'] or 0):,.2f} كجم "
+                f"{decimal_display(float(item['quantity'] or 0), 2)} كجم "
                 f"| التكلفة: "
-                f"{cost:,.2f} د.ل"
+                f"{decimal_display(cost, 2)} د.ل"
             )
 
             item_choices[label] = item
@@ -1248,13 +1332,13 @@ def show_page():
         # إضافة خام
         # ====================================================
 
-        with st.form(
+        with ui_form(
             "mix_form",
-            clear_on_submit=True
+            clear_on_submit=False
         ):
 
             selected_label = (
-                st.selectbox(
+                ui_field(st.selectbox, "roasting_blending:1257", 
                     "اختر الخام:",
                     list(
                         item_choices.keys()
@@ -1262,7 +1346,7 @@ def show_page():
                 )
             )
 
-            mix_qty = st.number_input(
+            mix_qty = ui_field(st.number_input, "roasting_blending:1265", 
                 "الوزن المستخدم (كجم):",
                 min_value=0.01,
                 value=1.0,
@@ -1271,7 +1355,7 @@ def show_page():
             )
 
             add_mix_btn = (
-                st.form_submit_button(
+                ui_submit(
                     "➕ إضافة الخام "
                     "لقائمة الخلط"
                 )
@@ -1295,7 +1379,7 @@ def show_page():
 
                 st.warning(
                     f"⚠️ المتاح من الصنف "
-                    f"{available:,.2f} كجم فقط."
+                    f"{decimal_display(available, 2)} كجم فقط."
                 )
 
             else:
@@ -1474,7 +1558,7 @@ def show_page():
             )
 
             remove_selected = (
-                c_remove1.selectbox(
+                ui_field(c_remove1.selectbox, "roasting_blending:1477", 
                     "حذف خام من الخلطة:",
                     list(
                         remove_options.keys()
@@ -1532,17 +1616,17 @@ def show_page():
 
             c_mix1.metric(
                 "⚖️ وزن الخلطة",
-                f"{total_mix_weight:,.2f} كجم"
+                f"{decimal_display(total_mix_weight, 2)} كجم"
             )
 
             c_mix2.metric(
                 "💰 تكلفة الخامات",
-                f"{total_mix_cost:,.2f} د.ل"
+                f"{decimal_display(total_mix_cost, 2)} د.ل"
             )
 
             c_mix3.metric(
                 "📊 تكلفة الكيلو",
-                f"{mix_unit_cost:,.2f} د.ل"
+                f"{decimal_display(mix_unit_cost, 2)} د.ل"
             )
 
             st.markdown("---")
@@ -1560,7 +1644,7 @@ def show_page():
                 for item in store_items
             }
 
-            target_label = st.selectbox(
+            target_label = ui_field(st.selectbox, "roasting_blending:1563", 
                 "🎯 اختر الصنف الناتج "
                 "بعد الخلط:",
                 list(
@@ -1576,7 +1660,7 @@ def show_page():
             )
 
             mix_sale_price = (
-                st.number_input(
+                ui_field(st.number_input, "roasting_blending:1579", 
                     "سعر بيع الكيلو "
                     "للصنف الناتج:",
                     min_value=0.0,
@@ -1613,8 +1697,8 @@ def show_page():
 
             st.info(
                 f"📈 الربح المتوقع للكيلو: "
-                f"**{expected_profit:,.2f} د.ل** "
-                f"({expected_margin:,.2f}% "
+                f"**{decimal_display(expected_profit, 2)} د.ل** "
+                f"({decimal_display(expected_margin, 2)}% "
                 f"من سعر البيع)"
             )
 
@@ -1641,9 +1725,9 @@ def show_page():
                     "summary": [
                         ("العملية", "خلط"),
                         ("عدد الخامات", str(len(st.session_state["mix_list_state"]))),
-                        ("إجمالي الوزن", f"{total_mix_weight:,.2f} كجم"),
+                        ("إجمالي الوزن", f"{decimal_display(total_mix_weight, 2)} كجم"),
                         ("الصنف الناتج", target_item["item_name"]),
-                        ("سعر البيع", f"{float(mix_sale_price):,.2f} د.ل"),
+                        ("سعر البيع", f"{decimal_display(float(mix_sale_price), 2)} د.ل"),
                     ],
                 }
                 st.rerun()
@@ -1703,15 +1787,15 @@ def show_page():
                 f"[{item['item_code']}] "
                 f"{item['item_name']} "
                 f"| المتاح: "
-                f"{float(item['quantity'] or 0):,.2f} كجم "
+                f"{decimal_display(float(item['quantity'] or 0), 2)} كجم "
                 f"| التكلفة: "
-                f"{cost:,.2f} د.ل"
+                f"{decimal_display(cost, 2)} د.ل"
             )
 
             raw_options[label] = item
 
         selected_raw_label = (
-            st.selectbox(
+            ui_field(st.selectbox, "roasting_blending:1714", 
                 "اختر الخام المراد تحميصه:",
                 list(
                     raw_options.keys()
@@ -1734,7 +1818,7 @@ def show_page():
         }
 
         selected_target_label = (
-            st.selectbox(
+            ui_field(st.selectbox, "roasting_blending:1737", 
                 "🎯 اختر الصنف الناتج "
                 "بعد التحميص:",
                 list(
@@ -1750,7 +1834,7 @@ def show_page():
 
         c_r1, c_r2 = st.columns(2)
 
-        raw_weight = c_r1.number_input(
+        raw_weight = ui_field(c_r1.number_input, "roasting_blending:1753", 
             "الوزن الخام قبل التحميص (كجم):",
             min_value=0.0,
             value=0.0,
@@ -1759,7 +1843,7 @@ def show_page():
             key="roast_raw_weight"
         )
 
-        roasted_weight = c_r2.number_input(
+        roasted_weight = ui_field(c_r2.number_input, "roasting_blending:1762", 
             "الوزن بعد التحميص (كجم):",
             min_value=0.0,
             value=0.0,
@@ -1819,24 +1903,24 @@ def show_page():
 
         c_info1.metric(
             "💰 تكلفة الخام",
-            f"{total_raw_cost:,.2f} د.ل"
+            f"{decimal_display(total_raw_cost, 2)} د.ل"
         )
 
         c_info2.metric(
             "📉 الفقد الوزني",
             (
-                f"{weight_loss:,.2f} كجم "
-                f"({weight_loss_pct:,.2f}%)"
+                f"{decimal_display(weight_loss, 2)} كجم "
+                f"({decimal_display(weight_loss_pct, 2)}%)"
             )
         )
 
         c_info3.metric(
             "📊 تكلفة كيلو المحمص",
-            f"{roasted_cost:,.2f} د.ل"
+            f"{decimal_display(roasted_cost, 2)} د.ل"
         )
 
         roast_sale_price = (
-            st.number_input(
+            ui_field(st.number_input, "roasting_blending:1839", 
                 "سعر بيع كيلو "
                 "الصنف المحمص:",
                 min_value=0.0,
@@ -1878,8 +1962,8 @@ def show_page():
 
             st.info(
                 f"📈 ربح الكيلو المتوقع: "
-                f"**{profit_per_kg:,.2f} د.ل** "
-                f"({profit_pct:,.2f}% "
+                f"**{decimal_display(profit_per_kg, 2)} د.ل** "
+                f"({decimal_display(profit_pct, 2)}% "
                 f"من سعر البيع)"
             )
 
@@ -1904,11 +1988,11 @@ def show_page():
                 "summary": [
                     ("العملية", "تحميص"),
                     ("الخامة", raw_item["item_name"]),
-                    ("الوزن الخام", f"{float(raw_weight):,.2f} كجم"),
+                    ("الوزن الخام", f"{decimal_display(float(raw_weight), 2)} كجم"),
                     ("الناتج", target_item["item_name"]),
-                    ("الوزن بعد التحميص", f"{float(roasted_weight):,.2f} كجم"),
-                    ("الفاقد", f"{max(float(raw_weight)-float(roasted_weight),0):,.2f} كجم"),
-                    ("سعر البيع", f"{float(roast_sale_price):,.2f} د.ل"),
+                    ("الوزن بعد التحميص", f"{decimal_display(float(roasted_weight), 2)} كجم"),
+                    ("الفاقد", f"{decimal_display(max(float(raw_weight)-float(roasted_weight),0), 2)} كجم"),
+                    ("سعر البيع", f"{decimal_display(float(roast_sale_price), 2)} د.ل"),
                 ],
             }
             st.rerun()

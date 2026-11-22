@@ -1,3 +1,5 @@
+from views.dashboard import _validated_role
+from views.ui_feedback import ui_field, ui_form, ui_submit, notify_success, reset_page_fields
 from views.ui_common import back_button
 import streamlit as st
 import pandas as pd
@@ -6,10 +8,11 @@ import time
 from database import get_db_connection
 
 def show_page():
+    _validated_role()
     back_button(key="back_favorites")
 
-    role = st.session_state.get("role", "")
-    if role not in ["Admin", "General_Supervisor"]:
+    role = _validated_role()
+    if role not in ["Super_Admin", "Admin", "Manager", "General_Supervisor"]:
         st.error("🔒 عذراً، هذه الشاشة مخصصة للمدير والمشرف العام فقط.")
         return
 
@@ -18,22 +21,22 @@ def show_page():
     
     conn = get_db_connection()
     b_dict = {b["branch_name"]: b["id"] for b in conn.execute("SELECT id, branch_name FROM branches").fetchall()}
-    sel_b = st.selectbox("اختر الفرع / المخزن:", list(b_dict.keys()))
+    sel_b = ui_field(st.selectbox, "favorites:21", "اختر الفرع / المخزن:", list(b_dict.keys()))
     b_id = b_dict[sel_b]
     
-    items_df = pd.read_sql("SELECT id, item_code AS 'كود الصنف', item_name AS 'اسم الصنف', favorite_rank AS 'مفضل (1 نعم، 0 لا)' FROM items WHERE branch_id = ?", conn, params=(b_id,))
+    items_df = pd.read_sql('''SELECT id, item_code AS "كود الصنف", item_name AS "اسم الصنف", favorite_rank AS "مفضل (1 نعم، 0 لا)" FROM items WHERE branch_id = ?''', conn, params=(b_id,))
     
     col1, col2 = st.columns([1.8, 1.2])
     
     with col1:
         st.markdown("### 📋 تحديد الأصناف المفضلة")
         if not items_df.empty:
-            edited_df = st.data_editor(items_df, hide_index=True, use_container_width=True, height=500)
+            edited_df = ui_field(st.data_editor, "favorites:31", items_df, hide_index=True, use_container_width=True, height=500)
             if st.button("💾 حفظ التعديلات", type="primary", use_container_width=True):
                 for idx, row in edited_df.iterrows():
                     conn.execute("UPDATE items SET favorite_rank = ? WHERE id = ?", (row['مفضل (1 نعم، 0 لا)'], row['id']))
                 conn.commit()
-                st.success("✅ تم حفظ الأصناف المفضلة بنجاح!")
+                notify_success("✅ تم حفظ الأصناف المفضلة بنجاح!")
                 time.sleep(0.5)
                 st.rerun()
         else:
@@ -44,17 +47,17 @@ def show_page():
         with st.container(border=True):
             if not items_df.empty:
                 item_list = {f"[{row['كود الصنف']}] {row['اسم الصنف']}": row['كود الصنف'] for _, row in items_df.iterrows()}
-                selected_item_label = st.selectbox("اختر الصنف لرفع صورته:", list(item_list.keys()))
+                selected_item_label = ui_field(st.selectbox, "favorites:47", "اختر الصنف لرفع صورته:", list(item_list.keys()))
                 selected_code = item_list[selected_item_label]
                 
-                uploaded_file = st.file_uploader("اختر صورة (JPG, PNG)", type=["jpg", "jpeg", "png"], key=f"upload_{selected_code}")
+                uploaded_file = ui_field(st.file_uploader, "favorites:50", "اختر صورة (JPG, PNG)", type=["jpg", "jpeg", "png"], key=f"upload_{selected_code}")
                 
                 if uploaded_file is not None:
                     if st.button("📤 رفع وحفظ الصورة", use_container_width=True):
                         file_path = os.path.join("item_images", f"{selected_code}.jpg")
                         with open(file_path, "wb") as f:
                             f.write(uploaded_file.getbuffer())
-                        st.success("✅ تم حفظ الصورة بنجاح!")
+                        notify_success("✅ تم حفظ الصورة بنجاح!")
                         time.sleep(0.5)
                         st.rerun()
                 

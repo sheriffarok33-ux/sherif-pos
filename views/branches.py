@@ -1,3 +1,7 @@
+_PAGE_ERROR_UI_REVISION = 60
+from views.page_guard import show_operation_error
+from views.dashboard import _validated_role
+from views.ui_feedback import ui_field, ui_form, ui_submit, notify_success, reset_page_fields
 from views.ui_common import back_button
 import streamlit as st
 import pandas as pd
@@ -12,13 +16,14 @@ from database import get_db_connection
 @st.dialog("🔒 تأكيد أمني لحذف الفرع أو المخزن")
 def confirm_delete_branch_dialog(branch_id, branch_name):
 
+    _validated_role()
     st.warning(
         f"⚠️ تنبيه خطير: أنت على وشك حذف الكيان "
         f"(**{branch_name}**).\n\n"
         "لا يمكن التراجع عن هذه الخطوة بعد تنفيذها!"
     )
 
-    admin_pass = st.text_input(
+    admin_pass = ui_field(st.text_input, "branches:21", 
         "أدخل كلمة المرور الخاصة بك للتأكيد:",
         type="password",
         key="del_branch_pass_input"
@@ -42,15 +47,8 @@ def confirm_delete_branch_dialog(branch_id, branch_name):
 
                 user_id = st.session_state.get("user_id")
 
-                user_check = conn.execute(
-                    """
-                    SELECT id
-                    FROM users
-                    WHERE id = ?
-                    AND password = ?
-                    """,
-                    (user_id, admin_pass)
-                ).fetchone()
+                from branch_auth import verify_local_user_password
+                user_check = verify_local_user_password(user_id, admin_pass)
 
                 if not user_check:
 
@@ -64,7 +62,7 @@ def confirm_delete_branch_dialog(branch_id, branch_name):
 
                 conn.commit()
 
-                st.success("✅ تم حذف الفرع بنجاح!")
+                notify_success("✅ تم حذف الفرع بنجاح!")
 
                 st.rerun()
 
@@ -73,10 +71,7 @@ def confirm_delete_branch_dialog(branch_id, branch_name):
                 if conn:
                     conn.rollback()
 
-                st.error(
-                    f"❌ تعذر حذف الفرع.\n\n"
-                    f"تفاصيل الخطأ: {e}"
-                )
+                show_operation_error(e, announce=True, context='views/branches.py:72')
 
             finally:
 
@@ -97,20 +92,95 @@ def confirm_delete_branch_dialog(branch_id, branch_name):
 # الصفحة الرئيسية
 # ============================================================
 
+def _confirm_settlement_device(branch_id,device_id):
+    from branch_auth import admin_assign_settlement_device
+    admin_assign_settlement_device(branch_id,device_id)
+    from offline_store import sync_exception_settlements
+    sync_exception_settlements()
+    notify_success('تم اعتماد جهاز التسويات وحفظ تفويض الجهاز محلياً عند تطابق الفرع.')
+    st.rerun()
+
+
 def show_page():
+    _validated_role()
     back_button(key="back_branches")
 
 
     st.header("🏢 إدارة الفروع والمخازن المستقلة")
+
+    if _validated_role() in ('Super_Admin','Admin','Manager'):
+        try:
+            from views.branch_sync_state import display_receipt_summary,invoice_receipt_summary
+            if __import__('os').name=='nt':
+                from central_inventory import load_overview
+                data,_,_=load_overview(st.session_state.get('user_id'),_validated_role(),False,None)
+            else:
+                c=get_db_connection()
+                try:
+                    branches=[dict(row) for row in c.execute('SELECT id,branch_name FROM branches ORDER BY id').fetchall()]
+                    data={'branches':branches,'last_synced_invoices':invoice_receipt_summary(c,[row['id'] for row in branches])}
+                finally:c.close()
+            display_receipt_summary(data,[row['id'] for row in data['branches']])
+        except Exception as exc:st.warning('تعذر جلب آخر الفواتير المؤكدة: '+str(exc))
+
+    if _validated_role() == 'Super_Admin':
+        with st.expander('🖥️ إدارة وتهيئة أجهزة الفروع', expanded=True):
+            from branch_auth import local_device_info, configure_local_device
+            from offline_store import get_device_id
+            info = local_device_info()
+            st.caption('اعتماد مركزي من Super Admin؛ لا يمكن تكرار رقم جهاز نشط داخل الفرع.')
+            st.code(get_device_id(), language=None)
+            conn_device = get_db_connection()
+            try:
+                branch_options = conn_device.execute('SELECT id,branch_name FROM branches ORDER BY id').fetchall()
+            finally:
+                conn_device.close()
+            if branch_options:
+                ids = [int(b[0]) for b in branch_options]
+                existing = info.get('bound_branch_id')
+                current_index = ids.index(int(existing)) if existing and int(existing) in ids else 0
+                with st.form('branch_device_local_config'):
+                    target = st.selectbox('الفرع المرتبط بالجهاز', ids, index=current_index,
+                        format_func=lambda x, _choices=tuple(branch_options): next(str(b[1]) for b in _choices if int(b[0]) == x))
+                    device_name = st.text_input('اسم الجهاز', value=info.get('device_name') or '', max_chars=80)
+                    device_num = st.text_input('رقم الجهاز', value=info.get('device_number') or '01', max_chars=24)
+                    active = st.checkbox('الجهاز مفعل', value=info.get('device_active','1') == '1')
+                    save = st.form_submit_button('💾 حفظ إعدادات الجهاز', use_container_width=True)
+                if save:
+                    try:
+                        configure_local_device(target, device_name, device_num, active)
+                        notify_success('تم اعتماد الجهاز مركزيًا وحفظ تعريفه محليًا')
+                        st.rerun()
+                    except Exception as exc:
+                        show_operation_error(exc, announce=True, context='views/branches.py:156')
+                st.caption('المزامنة لا تُغيّر الفرع أو رقم الجهاز تلقائيًا. لا تنقل الجهاز مع وجود معاملات معلقة.')
+
+                if st.button('تحرير تفويض التسويات لهذا الجهاز',key='release_settlement_authority'):
+                    from branch_auth import admin_release_settlement_device
+                    from views.adjustments import secure_action_dialog
+                    secure_action_dialog('تحرير تفويض جهاز التسويات',admin_release_settlement_device)
+                if st.button('تحميل الأجهزة المعتمدة للتسويات',key='load_settlement_devices'):
+                    from branch_auth import admin_list_devices
+                    try:st.session_state['settlement_device_choices']=admin_list_devices()
+                    except Exception:st.error('تعذر تحميل الأجهزة؛ يلزم دخول الإدارة أونلاين.')
+                choices=[d for d in st.session_state.get('settlement_device_choices',[]) if int(d.get('branch_id') or 0)==int(target) and d.get('is_active')]
+                if choices:
+                    selected=st.selectbox('جهاز التسويات المعتمد للفرع',choices,format_func=lambda d:str(d.get('device_number') or d['device_id']),key='settlement_authority_choice')
+                    if st.button('اعتماد جهاز التسويات',key='grant_settlement_authority'):
+                        from views.adjustments import secure_action_dialog
+                        secure_action_dialog('اعتماد جهاز التسويات',_confirm_settlement_device,target,selected['device_id'])
+
+
+
 
     st.info(
         "💡 من هنا يمكنك إضافة الفروع الجديدة للبيع اليومي "
         "أو المخازن الرئيسية، وتعديل أو حذف الفروع الحالية."
     )
 
-    current_user_role = st.session_state.get("role", "")
+    current_user_role = _validated_role()
 
-    if current_user_role == "Admin":
+    if current_user_role in ("Super_Admin", "Admin", "Manager", "General_Supervisor"):
 
         st.caption(
             "تلميح للإدارة: تحكم كامل في البنية "
@@ -180,27 +250,27 @@ def show_page():
 
         st.subheader("➕ إضافة فرع أو مخزن جديد للنظام")
 
-        with st.form(
+        with ui_form(
             "new_branch_form_unique",
-            clear_on_submit=True
+            clear_on_submit=False
         ):
 
             col1, col2 = st.columns(2)
 
             with col1:
 
-                nb_name = st.text_input(
+                nb_name = ui_field(st.text_input, "branches:192", 
                     "اسم الفرع أو المخزن الجديد:"
                 )
 
             with col2:
 
-                nb_type = st.selectbox(
+                nb_type = ui_field(st.selectbox, "branches:198", 
                     "نوع الكيان:",
                     ["فرع", "مخزن"]
                 )
 
-            save_new = st.form_submit_button(
+            save_new = ui_submit(
                 "💾 حفظ الكيان الجديد",
                 type="primary"
             )
@@ -235,7 +305,7 @@ def show_page():
 
                     conn.commit()
 
-                    st.success(
+                    notify_success(
                         f"✅ تم إضافة ({nb_name.strip()}) "
                         f"بنجاح كـ ({nb_type})!"
                     )
@@ -251,7 +321,7 @@ def show_page():
                         "❌ لم يتم حفظ الفرع في قاعدة البيانات."
                     )
 
-                    st.code(str(e))
+                    show_operation_error(e, announce=False, context='views/branches.py:325')
 
                 finally:
 
@@ -291,7 +361,7 @@ def show_page():
                 "❌ تعذر تحميل بيانات الفروع."
             )
 
-            st.code(str(e))
+            show_operation_error(e, announce=False, context='views/branches.py:365')
 
             raw_branches = []
 
@@ -349,7 +419,7 @@ def show_page():
                 "### ⚙️ تعديل أو حذف فرع / مخزن معين"
             )
 
-            selected_branch_label = st.selectbox(
+            selected_branch_label = ui_field(st.selectbox, "branches:352", 
                 "اختر الفرع أو المخزن للتحكم به:",
                 list(branch_options.keys())
             )
@@ -357,6 +427,13 @@ def show_page():
             selected_b_id = branch_options[
                 selected_branch_label
             ]
+            if _validated_role() in ('Super_Admin','Manager'):
+                try:
+                    from views.branch_devices import render_branch_devices
+                    render_branch_devices(selected_b_id)
+                except Exception:
+                    st.warning('تعذر تحميل أجهزة الفرع وتحديثاتها الآن؛ لا تغييرات على تسجيلها أو فواتيرها.')
+
 
             # ================================================
             # تحميل الفرع المختار
@@ -385,7 +462,7 @@ def show_page():
                     "❌ تعذر تحميل بيانات الفرع."
                 )
 
-                st.code(str(e))
+                show_operation_error(e, announce=False, context='views/branches.py:466')
 
                 b_data = None
 
@@ -400,16 +477,16 @@ def show_page():
 
             if b_data:
 
-                with st.form(
+                with ui_form(
                     "edit_branch_form_unique"
                 ):
 
-                    e_name = st.text_input(
+                    e_name = ui_field(st.text_input, "branches:407", 
                         "تعديل الاسم:",
                         value=b_data["branch_name"]
                     )
 
-                    e_type = st.selectbox(
+                    e_type = ui_field(st.selectbox, "branches:412", 
                         "تعديل النوع:",
                         ["فرع", "مخزن"],
                         index=(
@@ -424,7 +501,7 @@ def show_page():
                     with col_save:
 
                         save_clicked = (
-                            st.form_submit_button(
+                            ui_submit(
                                 "💾 حفظ التعديلات",
                                 type="primary"
                             )
@@ -433,7 +510,7 @@ def show_page():
                     with col_del:
 
                         del_clicked = (
-                            st.form_submit_button(
+                            ui_submit(
                                 "🗑️ حذف هذا الكيان"
                             )
                         )
@@ -477,7 +554,7 @@ def show_page():
 
                             conn.commit()
 
-                            st.success(
+                            notify_success(
                                 "✅ تم تحديث بيانات "
                                 "الكيان بنجاح!"
                             )
@@ -493,7 +570,7 @@ def show_page():
                                 "❌ لم يتم حفظ التعديل."
                             )
 
-                            st.code(str(e))
+                            show_operation_error(e, announce=False, context='views/branches.py:574')
 
                         finally:
 
@@ -506,7 +583,7 @@ def show_page():
 
                 if del_clicked:
 
-                    if current_user_role != "Admin":
+                    if current_user_role not in ("Super_Admin", "Admin", "Manager", "General_Supervisor"):
 
                         st.error(
                             "❌ عملية حذف الفروع مقتصرة "

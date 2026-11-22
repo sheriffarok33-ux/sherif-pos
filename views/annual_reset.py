@@ -1,3 +1,6 @@
+_PAGE_ERROR_UI_REVISION = 60
+from views.page_guard import show_operation_error
+from views.ui_feedback import ui_field, ui_form, ui_submit, notify_success, reset_page_fields
 from views.ui_common import back_button
 import json
 import streamlit as st
@@ -31,18 +34,7 @@ KEEP_DATA = [
 
 
 def _table_exists(conn, table_name):
-    row = conn.execute(
-        """
-        SELECT EXISTS (
-            SELECT 1
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-              AND table_name = ?
-        )
-        """,
-        (table_name,)
-    ).fetchone()
-    return bool(row[0]) if row else False
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,)).fetchone() is not None
 
 
 def _count_rows(conn, table_name):
@@ -270,7 +262,7 @@ def show_page():
         archived_years = get_archived_years()
     except Exception as e:
         st.error("تعذر قراءة بيانات الإقفال السنوي.")
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/annual_reset.py:263')
         return
 
     st.markdown("### الحركات التي ستتم أرشفتها ثم تصفيرها")
@@ -300,7 +292,7 @@ def show_page():
 
     default_year = datetime.now().year
 
-    financial_year = st.number_input(
+    financial_year = ui_field(st.number_input, "annual_reset:303", 
         "السنة المالية المراد إقفالها:",
         min_value=2000,
         max_value=2100,
@@ -315,12 +307,12 @@ def show_page():
         f"للتنفيذ اكتب العبارة التالية حرفياً: {expected}"
     )
 
-    confirmation = st.text_input(
+    confirmation = ui_field(st.text_input, "annual_reset:318", 
         "عبارة التأكيد:",
         key="annual_close_confirmation"
     )
 
-    acknowledge = st.checkbox(
+    acknowledge = ui_field(st.checkbox, "annual_reset:323", 
         "أؤكد أنني راجعت السنة المختارة وأوافق على أرشفة "
         "الحركات ثم تصفيرها لبدء سنة مالية جديدة.",
         key="annual_close_ack"
@@ -351,7 +343,7 @@ def show_page():
             )
 
         if success:
-            st.success(
+            notify_success(
                 f"✅ تم إقفال وأرشفة السنة المالية "
                 f"{int(financial_year)} بنجاح. "
                 f"رقم الأرشيف: {archive_id}"
@@ -365,3 +357,9 @@ def show_page():
             )
             if error:
                 st.code(error)
+
+
+def show_page():
+    from views.initial_setup_reset import show_page as show_data_preparation
+    st.session_state.setdefault('prep_mode', 'إغلاق سنة مالية')
+    show_data_preparation()

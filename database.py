@@ -1,3 +1,5 @@
+from control_services import (_control_execute, _control_table_exists, business_date_today, ensure_governance_schema, write_audit_event, _lock_account_lifecycle, _current_super_admin, assert_future_super_admin_coverage, account_login_allowed, approve_account_state, approve_employee_termination, set_product_expiry_policy)
+import os
 import streamlit as st
 import psycopg2
 from psycopg2 import pool
@@ -36,6 +38,9 @@ _POOL_LOCK = threading.Lock()
 
 
 def _get_pool():
+    import os
+    if os.name == "nt":
+        raise RuntimeError("Windows local POS: direct PostgreSQL pool is disabled; use SQLite")
 
     global _POOL
 
@@ -609,7 +614,21 @@ class PostgreSQLConnection:
 # الحصول على اتصال
 # ============================================================
 
+def get_sync_transport_info():
+    """Explain the two distinct endpoints without disclosing DB credentials."""
+    return {
+        'api_http_port': 18765,
+        'database_protocol': 'postgresql',
+        'database_port_default': 5432,
+        'legacy_offline_sync': 'direct_database_connection',
+    }
+
+
 def get_remote_connection():
+    # Windows must never open a direct PostgreSQL connection or read secrets.toml.
+    import os
+    if os.name == "nt":
+        raise RuntimeError("Windows offline mode: direct PostgreSQL is disabled; use local SQLite and HTTPS sync")
 
     try:
 
@@ -657,6 +676,11 @@ def get_remote_connection():
 # ============================================================
 
 def ensure_pos_extensions_schema():
+    if os.name == "nt":
+        from offline_store import ensure_local_schema
+        ensure_local_schema()
+        return
+
     """تهيئة إضافات POS المطلوبة لتقارير الوردية وبيانات العملاء."""
     conn = None
     cursor = None
@@ -713,6 +737,11 @@ def ensure_pos_extensions_schema():
 # ============================================================
 
 def ensure_hr_schema():
+    if os.name == "nt":
+        from offline_store import ensure_local_schema
+        ensure_local_schema()
+        return
+
     """
     ينشئ/يضمن جداول HR بشكل مستقل عن initialize_database().
     آمن للاستدعاء عند كل فتح لشاشة الموظفين.
@@ -822,6 +851,11 @@ def create_desktop_backup():
 # ============================================================
 
 def initialize_database():
+    if os.name == "nt":
+        from offline_store import ensure_local_schema
+        ensure_local_schema()
+        return
+
 
     conn = None
     cursor = None
@@ -1132,7 +1166,11 @@ def initialize_database():
                     DEFAULT 'مكتملة',
 
                 transfer_date TIMESTAMP
-                    DEFAULT CURRENT_TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP,
+
+                created_by TEXT,
+                received_by TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
@@ -1823,47 +1861,7 @@ def initialize_database():
             if first_admin:
                 cursor.execute("UPDATE users SET role='Super_Admin' WHERE id=?", (first_admin[0],))
 
-        # ====================================================
-        # Admin الافتراضي
-        # ====================================================
-
-        cursor.execute(
-            """
-            SELECT COUNT(*)
-            FROM users
-            WHERE role = 'Admin'
-              AND is_active = 1
-            """
-        )
-
-        admin_count = (
-            cursor.fetchone()[0]
-        )
-
-        if admin_count == 0:
-
-            cursor.execute(
-                """
-                INSERT INTO users
-                (
-                    username,
-                    phone,
-                    password,
-                    role,
-                    allowed_branches,
-                    is_active
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "admin",
-                    "0910000000",
-                    "123456",
-                    "Admin",
-                    "ALL",
-                    1
-                )
-            )
+        # Create the administrator through first-time setup; never embed default credentials.
 
         conn.commit()
 
@@ -1908,4 +1906,58 @@ def get_db_connection():
     Central PostgreSQL is reached only through get_remote_connection().
     """
     from offline_store import get_local_connection
-    return get_local_connection(queue_writes=True)
+    return get_local_connection(queue_writes=True, actor_id=st.session_state.get("user_id"))
+
+
+def hash_password(password):
+    import hashlib, secrets
+    salt = secrets.token_bytes(16)
+    verifier = hashlib.pbkdf2_hmac('sha256', str(password).encode('utf-8'), salt, 310000)
+    return 'pbkdf2_sha256$310000$' + salt.hex() + '$' + verifier.hex()
+
+def verify_password(password, stored):
+    import hashlib, hmac
+    stored = str(stored or '')
+    if not stored.startswith('pbkdf2_sha256$'):
+        return bool(stored) and hmac.compare_digest(str(password).encode('utf-8'), stored.encode('utf-8'))
+    try:
+        scheme, rounds, salt, expected = stored.split('$')
+        if not 100000 <= int(rounds) <= 2000000 or len(bytes.fromhex(salt)) != 16:
+            return False
+        actual = hashlib.pbkdf2_hmac('sha256', str(password).encode('utf-8'), bytes.fromhex(salt), int(rounds))
+        return hmac.compare_digest(actual, bytes.fromhex(expected))
+    except (ValueError, TypeError):
+        return False
+
+
+def move_inventory_batches(conn,source_item,source_branch,target_item,target_branch,quantity):
+    """Move tracked stock with its expiry/cost in the caller's transaction; legacy stock stays untracked."""
+    from decimal import Decimal
+    remaining=Decimal(str(quantity));moved=[]
+    if not remaining.is_finite() or remaining<=0:raise ValueError('Invalid inventory movement quantity')
+    batches=conn.execute("""SELECT id,remaining_quantity,expiry_date,unit_cost FROM inventory_batches
+        WHERE item_id=? AND branch_id=? AND remaining_quantity>0
+        ORDER BY CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END,expiry_date,id FOR UPDATE""",(source_item,source_branch)).fetchall()
+    for batch in batches:
+        if remaining<=0:break
+        take=min(remaining,Decimal(str(batch['remaining_quantity'] or 0)))
+        conn.execute('UPDATE inventory_batches SET remaining_quantity=remaining_quantity-? WHERE id=?',(float(take),batch['id']))
+        target_id=None
+        if target_item is not None:
+            row=conn.execute("""INSERT INTO inventory_batches(item_id,branch_id,quantity,remaining_quantity,expiry_date,unit_cost,source_type)
+                VALUES(?,?,?,?,?,?,'transfer') RETURNING id""",(target_item,target_branch,float(take),float(take),batch['expiry_date'],batch['unit_cost'])).fetchone()
+            target_id=row[0]
+        moved.append({'source_batch_id':batch['id'],'target_batch_id':target_id,'quantity':float(take)})
+        remaining-=take
+    return moved
+
+def reverse_inventory_batches(conn,movements):
+    """Refuse reversal after any transferred tracked stock has already been consumed."""
+    for movement in movements:
+        row=conn.execute('SELECT remaining_quantity FROM inventory_batches WHERE id=? FOR UPDATE',(movement['target_batch_id'],)).fetchone()
+        if row is None or float(row[0] or 0)+1e-8<float(movement['quantity']):
+            raise ValueError('تعذر التراجع: استُهلك جزء من دفعات التزويد في الفرع')
+    for movement in movements:
+        conn.execute('UPDATE inventory_batches SET remaining_quantity=remaining_quantity-? WHERE id=?',(movement['quantity'],movement['target_batch_id']))
+        conn.execute('UPDATE inventory_batches SET remaining_quantity=remaining_quantity+? WHERE id=?',(movement['quantity'],movement['source_batch_id']))
+

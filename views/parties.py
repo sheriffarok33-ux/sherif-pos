@@ -1,3 +1,8 @@
+_PAGE_ERROR_UI_REVISION = 60
+from views.page_guard import show_operation_error
+from views.number_format import excel_literal_text
+from views.number_format import decimal_display
+from views.ui_feedback import ui_field, ui_form, ui_submit, notify_success, reset_page_fields
 from views.ui_common import back_button
 import streamlit as st
 import pandas as pd
@@ -11,6 +16,7 @@ def _excel_bytes(df, sheet_name):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+        excel_literal_text(writer)
     return output.getvalue()
 
 
@@ -112,12 +118,13 @@ def _save_voucher(conn, voucher_type, party_type, party_id, party_name,
     raise RuntimeError("تعذر إنشاء رقم إيصال مسلسل جديد.")
 
 
-@st.dialog("✅ تمت العملية بنجاح")
+@st.dialog("✅ تمت العملية بنجاح", dismissible=False)
 def _parties_success_dialog():
     st.success(st.session_state.get("parties_success_message", "تمت العملية بنجاح."))
     if st.session_state.get("last_voucher_html"):
         st.download_button("🖨️ طباعة / حفظ السند", st.session_state["last_voucher_html"].encode("utf-8"), file_name=f"{st.session_state.get('last_voucher_no','voucher')}.html", mime="text/html", use_container_width=True)
     if st.button("موافق", type="primary", use_container_width=True, key="parties_success_ok"):
+        reset_page_fields()
         st.session_state.pop("parties_success_pending", None)
         st.session_state.pop("parties_success_message", None)
         st.rerun()
@@ -153,7 +160,7 @@ def _ensure_treasury_schema(conn):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # أبو زيد يعمل بخزينة مركزية واحدة فقط في المخزن الرئيسي.
+    # SHERIF يعمل بخزينة مركزية واحدة فقط في المخزن الرئيسي.
     # لا نحذف خزائن الفروع القديمة حفاظاً على التاريخ، بل نعطلها من الاستخدام الجديد.
     row = conn.execute("SELECT id FROM treasuries WHERE treasury_type='company' ORDER BY id LIMIT 1").fetchone()
     if row:
@@ -175,7 +182,7 @@ def _voucher_html(voucher_no, voucher_type, party_type, party_name, amount, note
 <body><div class="box"><h1>{title}</h1><table>
 <tr><td><b>رقم السند</b></td><td>{voucher_no}</td><td><b>التاريخ والوقت</b></td><td>{dt}</td></tr>
 <tr><td><b>الخزينة</b></td><td>{treasury_name}</td><td><b>الجهة</b></td><td>{party_type}</td></tr>
-<tr><td><b>الاسم</b></td><td>{party_name}</td><td><b>المبلغ</b></td><td>{float(amount):,.2f} د.ل</td></tr>
+<tr><td><b>الاسم</b></td><td>{party_name}</td><td><b>المبلغ</b></td><td>{decimal_display(float(amount), 2)} د.ل</td></tr>
 <tr><td><b>البيان</b></td><td colspan="3">{notes or '-'}</td></tr>
 </table><div class="sig"><span>توقيع المستلم: __________</span><span>المحاسب: __________</span><span>الاعتماد: __________</span></div></div>
 <script>window.onload=function(){{window.print();}}</script></body></html>"""
@@ -191,6 +198,7 @@ def show_page():
 
     if st.session_state.get("parties_success_pending"):
         _parties_success_dialog()
+        st.stop()
 
     st.header("👥 جهات التعامل والحسابات")
     st.info("الجهة الواحدة يمكن أن تبيع لنا وتشتري منا؛ ويظهر صافي حسابها تلقائياً كدائن أو مدين.")
@@ -204,7 +212,7 @@ def show_page():
             "➕ إضافة مورد / جهة تعامل": "add",
         }
         current_label = next((k for k,v in party_modes.items() if v == st.session_state["parties_mode"]), list(party_modes)[0])
-        selected_label = st.selectbox("اختر العملية:", list(party_modes), index=list(party_modes).index(current_label), key="parties_action_dropdown")
+        selected_label = ui_field(st.selectbox, "parties:207", "اختر العملية:", list(party_modes), index=list(party_modes).index(current_label), key="parties_action_dropdown")
         selected_mode = party_modes[selected_label]
         if selected_mode != st.session_state["parties_mode"]:
             st.session_state["parties_mode"] = selected_mode
@@ -219,11 +227,11 @@ def show_page():
         if mode == "add":
             st.subheader("➕ إضافة مورد / جهة تعامل")
             st.caption("سيتم إنشاء الجهة مرة واحدة للاستخدام في الشراء والبيع الآجل معاً.")
-            with st.form("party_add_form", clear_on_submit=True):
+            with ui_form("party_add_form", clear_on_submit=False):
                 c1, c2 = st.columns(2)
-                name = c1.text_input("اسم الجهة / المورد:")
-                phone = c2.text_input("رقم الهاتف:")
-                submit = st.form_submit_button("💾 حفظ الجهة", type="primary", use_container_width=True)
+                name = ui_field(c1.text_input, "parties:224", "اسم الجهة / المورد:")
+                phone = ui_field(c2.text_input, "parties:225", "رقم الهاتف:")
+                submit = ui_submit("💾 حفظ الجهة", type="primary", use_container_width=True)
             if submit:
                 if not name.strip():
                     st.warning("أدخل اسم الجهة.")
@@ -239,7 +247,7 @@ def show_page():
                         conn.commit()
                         _parties_done("تم حفظ الجهة، وأصبحت متاحة في الشراء والبيع الآجل.")
                     except Exception as e:
-                        conn.rollback(); st.error("تعذر حفظ الجهة."); st.code(str(e))
+                        conn.rollback(); st.error("تعذر حفظ الجهة."); show_operation_error(e, announce=False, context='views/parties.py:248')
 
         elif mode == "accounts":
             st.subheader("📒 كشف حساب الجهات — دائن / مدين")
@@ -262,8 +270,8 @@ def show_page():
                 df=pd.DataFrame(data).sort_values(["الحالة","الجهة"])
                 st.dataframe(df, hide_index=True, use_container_width=True)
                 c1,c2,c3=st.columns(3)
-                c1.metric("إجمالي الدائنين", f"{sum(max(v['supplier']-v['customer'],0) for v in merged.values()):,.2f} د.ل")
-                c2.metric("إجمالي المدينين", f"{sum(max(v['customer']-v['supplier'],0) for v in merged.values()):,.2f} د.ل")
+                c1.metric("إجمالي الدائنين", f"{decimal_display(sum(max(v['supplier']-v['customer'],0) for v in merged.values()), 2)} د.ل")
+                c2.metric("إجمالي المدينين", f"{decimal_display(sum(max(v['customer']-v['supplier'],0) for v in merged.values()), 2)} د.ل")
                 c3.download_button("📥 تصدير كشف الحساب", _excel_bytes(df,"Party Accounts"), "party_accounts.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
             else:
                 st.info("لا توجد جهات تعامل مسجلة.")
@@ -279,7 +287,7 @@ def show_page():
                     "id": r["id"], "اسم المورد": r["supplier_name"],
                     "الهاتف": r["phone"] or "", "الرصيد": float(r["balance"] or 0)
                 } for r in rows])
-                edited = st.data_editor(
+                edited = ui_field(st.data_editor, "parties:282", 
                     df, hide_index=True, use_container_width=True, num_rows="fixed",
                     disabled=["id", "الرصيد"],
                     key="suppliers_editor"
@@ -296,7 +304,7 @@ def show_page():
                         _parties_done("تم حفظ تعديلات الموردين بنجاح.")
                     except Exception as e:
                         conn.rollback()
-                        st.error(str(e))
+                        show_operation_error(e, announce=True, context='views/parties.py:305')
                 c2.download_button(
                     "📥 تصدير الموردين Excel",
                     _excel_bytes(df.drop(columns=["id"]), "Suppliers"),
@@ -306,7 +314,7 @@ def show_page():
                 )
 
                 labels = {f"{r['supplier_name']} | {r['phone'] or '-'}": r for r in rows}
-                sel = labels[st.selectbox("اختر موردًا للحذف:", list(labels), key="delete_supplier_select")]
+                sel = labels[ui_field(st.selectbox, "parties:309", "اختر موردًا للحذف:", list(labels), key="delete_supplier_select")]
                 if st.button("🗑️ حذف المورد المختار", use_container_width=True):
                     if abs(float(sel["balance"] or 0)) > 1e-9:
                         st.error("لا يمكن حذف مورد له رصيد غير مسفّر. صفّر الحساب أولاً.")
@@ -323,7 +331,7 @@ def show_page():
                                 _parties_done("تم حذف المورد بنجاح.")
                         except Exception as e:
                             conn.rollback()
-                            st.error(str(e))
+                            show_operation_error(e, announce=True, context='views/parties.py:332')
 
         elif mode == "customers":
             customer_columns = _table_columns(conn, "customers")
@@ -344,7 +352,7 @@ def show_page():
                     "الرصيد": float(r["balance"] or 0),
                     "تاريخ التسجيل": r["created_at"]
                 } for r in rows])
-                edited = st.data_editor(
+                edited = ui_field(st.data_editor, "parties:347", 
                     df, hide_index=True, use_container_width=True, num_rows="fixed",
                     disabled=["id", "إجمالي المشتريات", "الرصيد", "تاريخ التسجيل"],
                     key="customers_editor"
@@ -361,7 +369,7 @@ def show_page():
                         _parties_done("تم حفظ تعديلات العملاء بنجاح.")
                     except Exception as e:
                         conn.rollback()
-                        st.error(str(e))
+                        show_operation_error(e, announce=True, context='views/parties.py:370')
                 c2.download_button(
                     "📥 تصدير العملاء Excel",
                     _excel_bytes(df.drop(columns=["id"]), "Customers"),
@@ -375,12 +383,12 @@ def show_page():
             if not rows:
                 st.info("لا يوجد موردون.")
             else:
-                opts={f"{r['supplier_name']} | الرصيد: {float(r['balance'] or 0):,.2f}":r for r in rows}
-                supplier=opts[st.selectbox("اختر المورد:",list(opts))]
+                opts={f"{r['supplier_name']} | الرصيد: {decimal_display(float(r['balance'] or 0), 2)}":r for r in rows}
+                supplier=opts[ui_field(st.selectbox, "parties:379", "اختر المورد:",list(opts))]
                 treasuries=_treasury_options(conn)
-                treasury=treasuries[st.selectbox("🏦 الخزينة التي سيتم الدفع منها:",list(treasuries),key="pay_treasury")]
-                amount=st.number_input("المبلغ المدفوع (د.ل):",min_value=0.0,step=10.0,key="supplier_pay_amount")
-                notes=st.text_input("البيان:",value="دفعة من حساب مورد",key="supplier_pay_notes")
+                treasury=treasuries[ui_field(st.selectbox, "parties:381", "🏦 الخزينة التي سيتم الدفع منها:",list(treasuries),key="pay_treasury")]
+                amount=ui_field(st.number_input, "parties:382", "المبلغ المدفوع (د.ل):",min_value=0.0,step=10.0,key="supplier_pay_amount")
+                notes=ui_field(st.text_input, "parties:383", "البيان:",value="دفعة من حساب مورد",key="supplier_pay_notes")
                 if st.button("✅ تسجيل سند الدفع",type="primary",use_container_width=True):
                     if amount<=0: st.warning("أدخل مبلغًا أكبر من صفر.")
                     else:
@@ -401,12 +409,12 @@ def show_page():
             rows=conn.execute("SELECT id,customer_name,phone,balance FROM customers ORDER BY customer_name").fetchall()
             if not rows: st.info("لا يوجد عملاء.")
             else:
-                opts={f"{r['customer_name']} ({r['phone'] or '-'}) | الرصيد: {float(r['balance'] or 0):,.2f}":r for r in rows}
-                customer=opts[st.selectbox("اختر العميل:",list(opts))]
+                opts={f"{r['customer_name']} ({r['phone'] or '-'}) | الرصيد: {decimal_display(float(r['balance'] or 0), 2)}":r for r in rows}
+                customer=opts[ui_field(st.selectbox, "parties:405", "اختر العميل:",list(opts))]
                 treasuries=_treasury_options(conn)
-                treasury=treasuries[st.selectbox("🏦 الخزينة التي سيتم القبض فيها:",list(treasuries),key="rec_treasury")]
-                amount=st.number_input("المبلغ المحصل (د.ل):",min_value=0.0,step=10.0,key="customer_rec_amount")
-                notes=st.text_input("البيان:",value="تحصيل من حساب عميل",key="customer_rec_notes")
+                treasury=treasuries[ui_field(st.selectbox, "parties:407", "🏦 الخزينة التي سيتم القبض فيها:",list(treasuries),key="rec_treasury")]
+                amount=ui_field(st.number_input, "parties:408", "المبلغ المحصل (د.ل):",min_value=0.0,step=10.0,key="customer_rec_amount")
+                notes=ui_field(st.text_input, "parties:409", "البيان:",value="تحصيل من حساب عميل",key="customer_rec_notes")
                 if st.button("✅ تسجيل سند القبض",type="primary",use_container_width=True):
                     if amount<=0: st.warning("أدخل مبلغًا أكبر من صفر.")
                     else:
@@ -429,7 +437,7 @@ def show_page():
             else:
                 name,t=next(iter(treasuries.items()))
                 bal=conn.execute("SELECT COALESCE(SUM(amount),0) AS balance FROM treasury_movements WHERE treasury_id=?",(t["id"],)).fetchone()["balance"]
-                st.metric("الرصيد الحالي للخزينة الرئيسية", f"{float(bal or 0):,.2f} د.ل")
+                st.metric("الرصيد الحالي للخزينة الرئيسية", f"{decimal_display(float(bal or 0), 2)} د.ل")
                 st.markdown("#### 📒 آخر حركات الخزينة")
                 mov=conn.execute("""SELECT tm.created_at,tm.movement_type,tm.amount,tm.voucher_no,tm.description,
                     tm.branch_id,tm.payment_method,b.branch_name
@@ -444,7 +452,7 @@ def show_page():
 
         elif mode == "vouchers":
             st.subheader("🧾 أرشيف إيصالات الدفع والقبض")
-            voucher_filter = st.selectbox(
+            voucher_filter = ui_field(st.selectbox, "parties:447", 
                 "نوع الإيصال:",
                 ["الكل", "دفع", "قبض"],
                 key="voucher_archive_type"

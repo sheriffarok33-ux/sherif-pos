@@ -1,3 +1,10 @@
+from views.test_branch_policy import expense_allocation_branches
+_PAGE_ERROR_UI_REVISION = 61
+from views.page_guard import show_operation_error
+from views.number_format import excel_literal_text
+from views.dashboard import _validated_role
+from views.number_format import decimal_display
+from views.ui_feedback import ui_field, ui_form, ui_submit, notify_success, reset_page_fields
 from views.ui_common import back_button
 import streamlit as st
 import pandas as pd
@@ -23,6 +30,7 @@ def to_excel(df):
             index=False,
             sheet_name="Financial_Report"
         )
+        excel_literal_text(writer)
 
     return output.getvalue()
 
@@ -68,6 +76,7 @@ def add_branch_expense(
     advance_end_date
 ):
 
+    _validated_role()
     conn = None
 
     try:
@@ -133,7 +142,7 @@ def add_branch_expense(
         st.session_state["finance_success_info"] = {
             "message": "✅ تم تسجيل المصروف على الفرع المحدد بنجاح.",
             "summary": [
-                ("المبلغ", f"{float(amount):,.2f} د.ل"),
+                ("المبلغ", f"{decimal_display(float(amount), 2)} د.ل"),
                 ("البيان", description.strip()),
                 ("تاريخ التسجيل", expense_date.strftime("%Y-%m-%d")),
             ],
@@ -149,7 +158,7 @@ def add_branch_expense(
             "❌ تعذر تسجيل المصروف."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/expenses.py:158')
 
     finally:
 
@@ -169,9 +178,11 @@ def add_general_expense(
     expense_date
 ):
 
+    _validated_role()
     conn = None
 
     try:
+        operational_branches = expense_allocation_branches(operational_branches, st.session_state.get('branch_id'))
         conn = get_db_connection()
 
         if amount <= 0:
@@ -205,7 +216,7 @@ def add_general_expense(
                 f"[{target_month}] "
                 f"[مصروف عام صادر من المخزن الرئيسي "
                 f"- إجمالي البند: "
-                f"{amount:.2f} د.ل] "
+                f"{decimal_display(amount, 2)} د.ل] "
                 f"{description.strip()}"
             )
 
@@ -242,9 +253,9 @@ def add_general_expense(
         st.session_state["finance_success_info"] = {
             "message": "✅ تم تسجيل المصروف العام وتوزيعه على الفروع التشغيلية بنجاح.",
             "summary": [
-                ("إجمالي المصروف", f"{float(amount):,.2f} د.ل"),
+                ("إجمالي المصروف", f"{decimal_display(float(amount), 2)} د.ل"),
                 ("عدد الفروع", str(op_count)),
-                ("نصيب كل فرع", f"{share_per_branch:,.2f} د.ل"),
+                ("نصيب كل فرع", f"{decimal_display(share_per_branch, 2)} د.ل"),
                 ("البيان", description.strip()),
             ],
         }
@@ -259,7 +270,7 @@ def add_general_expense(
             "❌ تعذر تسجيل وتوزيع المصروف."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/expenses.py:269')
 
     finally:
 
@@ -279,6 +290,7 @@ def add_revenue(
     revenue_date
 ):
 
+    _validated_role()
     conn = None
 
     try:
@@ -334,7 +346,7 @@ def add_revenue(
         st.session_state["finance_success_info"] = {
             "message": "✅ تم تسجيل الإيراد في الفرع / المخزن المحدد بنجاح.",
             "summary": [
-                ("المبلغ", f"{float(amount):,.2f} د.ل"),
+                ("المبلغ", f"{decimal_display(float(amount), 2)} د.ل"),
                 ("المصدر", revenue_source.strip()),
                 ("تاريخ الإيراد", revenue_date.strftime("%Y-%m-%d")),
             ],
@@ -350,7 +362,7 @@ def add_revenue(
             "❌ تعذر تسجيل الإيراد."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/expenses.py:361')
 
     finally:
 
@@ -454,22 +466,20 @@ def delete_expense(
     password
 ):
 
+    _validated_role()
     conn = None
 
     try:
         conn = get_db_connection()
 
-        role = st.session_state.get(
-            "role",
-            ""
-        )
+        role = _validated_role()
 
         user_id = st.session_state.get(
             "user_id"
         )
 
         if role not in [
-            "Admin",
+            "Super_Admin", "Admin",
             "General_Supervisor"
         ]:
 
@@ -483,18 +493,8 @@ def delete_expense(
                 "تعذر تحديد المستخدم الحالي."
             )
 
-        user_chk = conn.execute(
-            """
-            SELECT id
-            FROM users
-            WHERE id = ?
-            AND password = ?
-            """,
-            (
-                user_id,
-                password
-            )
-        ).fetchone()
+        from branch_auth import verify_local_user_password
+        user_chk = verify_local_user_password(user_id, password)
 
         if not user_chk:
 
@@ -519,6 +519,13 @@ def delete_expense(
                 "أو تم حذفه مسبقاً."
             )
 
+        linked = conn.execute("""SELECT 1 FROM commitment_accruals WHERE expense_id=?
+            UNION ALL SELECT 1 FROM commitment_documents WHERE expense_id=?
+            UNION ALL SELECT 1 FROM employee_financial_transactions WHERE expense_id=?
+            LIMIT 1""", (expense_id, expense_id, expense_id)).fetchone()
+        if linked:
+            raise ValueError('المصروف مرتبط بقيد محاسبي؛ لا يمكن حذفه مباشرة. يلزم إجراء إلغاء محاسبي متكامل.')
+
         conn.execute(
             """
             DELETE FROM expenses
@@ -529,7 +536,7 @@ def delete_expense(
 
         conn.commit()
 
-        st.success(
+        notify_success(
             "✅ تم حذف المصروف بنجاح."
         )
 
@@ -553,7 +560,7 @@ def delete_expense(
             "❌ تعذر حذف المصروف."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/expenses.py:559')
 
     finally:
 
@@ -568,6 +575,7 @@ def delete_expense(
 
 @st.dialog("⚠️ مراجعة العملية قبل التنفيذ")
 def _finance_confirm_dialog():
+    _validated_role()
     pending = st.session_state.get("finance_pending_action")
     if not pending:
         st.info("لا توجد عملية معلقة للمراجعة.")
@@ -594,8 +602,9 @@ def _finance_confirm_dialog():
         st.rerun()
 
 
-@st.dialog("✅ تمت العملية بنجاح")
+@st.dialog("✅ تمت العملية بنجاح", dismissible=False)
 def _finance_success_dialog():
+    _validated_role()
     info = st.session_state.get("finance_success_info")
     if not info:
         return
@@ -603,12 +612,14 @@ def _finance_success_dialog():
     for label, value in info.get("summary", []):
         st.write(f"**{label}:** {value}")
     if st.button("موافق", type="primary", use_container_width=True, key="finance_success_ok"):
+        reset_page_fields()
         st.session_state.pop("finance_success_info", None)
         st.rerun()
 
 
 @st.dialog("↩️ تأكيد التراجع عن آخر إدخال")
 def _finance_undo_dialog():
+    _validated_role()
     undo = st.session_state.get("finance_last_undo")
     if not undo:
         st.info("لا توجد عملية حديثة قابلة للتراجع.")
@@ -616,7 +627,7 @@ def _finance_undo_dialog():
 
     st.warning("سيتم عكس آخر إدخال فقط. هل تريد المتابعة؟")
     st.write(f"**العملية:** {undo.get('label', '')}")
-    st.write(f"**القيمة:** {undo.get('amount', 0):,.2f} د.ل")
+    st.write(f"**القيمة:** {decimal_display(undo.get('amount', 0), 2)} د.ل")
     c1, c2 = st.columns(2)
     if c1.button("✅ نعم، تراجع", type="primary", use_container_width=True, key="finance_undo_yes"):
         conn = get_db_connection()
@@ -637,7 +648,7 @@ def _finance_undo_dialog():
             st.rerun()
         except Exception as e:
             conn.rollback()
-            st.error(f"تعذر التراجع: {e}")
+            show_operation_error(e, announce=True, context='views/expenses.py:647')
         finally:
             conn.close()
     if c2.button("❌ إلغاء", use_container_width=True, key="finance_undo_no"):
@@ -651,6 +662,7 @@ def _finance_undo_dialog():
 
 
 def _ensure_settlement_schema(conn):
+    _validated_role()
     conn.execute("""CREATE TABLE IF NOT EXISTS shift_closures(
         id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER NOT NULL, shift_date TEXT NOT NULL, shift_number INTEGER NOT NULL,
         gross_sales REAL DEFAULT 0, net_sales REAL DEFAULT 0, cash_amount REAL DEFAULT 0, card_amount REAL DEFAULT 0,
@@ -678,8 +690,9 @@ def _main_treasury(conn):
     return cur.lastrowid
 
 def _show_shift_settlement(branches):
-    role=st.session_state.get('role','')
-    if role not in ('Admin','General_Supervisor'):
+    _validated_role()
+    role=_validated_role()
+    if role not in ("Super_Admin", 'Admin','Manager','General_Supervisor'):
         st.warning('🔒 تسوية الورديات والأيام السابقة متاحة للمدير أو الأدمن فقط.')
         return
     conn=get_db_connection()
@@ -688,19 +701,19 @@ def _show_shift_settlement(branches):
         st.subheader('🧮 مراجعة وتسوية ترحيل الورديات')
         closures=conn.execute("""SELECT sc.*,b.branch_name FROM shift_closures sc JOIN branches b ON b.id=sc.branch_id ORDER BY sc.shift_date DESC,sc.id DESC LIMIT 180""").fetchall()
         if closures:
-            labels={f"{r['shift_date']} | {r['branch_name']} | وردية {r['shift_number']} | {float(r['net_sales'] or 0):,.2f}":r for r in closures}
-            row=labels[st.selectbox('اختر وردية مغلقة:',list(labels),key='settlement_closure')]
+            labels={f"{r['shift_date']} | {r['branch_name']} | وردية {r['shift_number']} | {decimal_display(float(r['net_sales'] or 0), 2)}":r for r in closures}
+            row=labels[ui_field(st.selectbox, "expenses:692", 'اختر وردية مغلقة:',list(labels),key='settlement_closure')]
             st.caption('التعديل هنا يصحح توزيع طرق التحصيل ولا يغيّر فواتير البيع الأصلية. الآجل لا يدخل الخزينة.')
             c1,c2,c3=st.columns(3)
-            cash=c1.number_input('كاش',min_value=0.0,value=float(row['cash_amount'] or 0),step=1.0,key='set_cash')
-            card=c2.number_input('بطاقة',min_value=0.0,value=float(row['card_amount'] or 0),step=1.0,key='set_card')
-            transfer=c3.number_input('تحويل',min_value=0.0,value=float(row['transfer_amount'] or 0),step=1.0,key='set_transfer')
+            cash=ui_field(c1.number_input, "expenses:695", 'كاش',min_value=0.0,value=float(row['cash_amount'] or 0),step=1.0,key='set_cash')
+            card=ui_field(c2.number_input, "expenses:696", 'بطاقة',min_value=0.0,value=float(row['card_amount'] or 0),step=1.0,key='set_card')
+            transfer=ui_field(c3.number_input, "expenses:697", 'تحويل',min_value=0.0,value=float(row['transfer_amount'] or 0),step=1.0,key='set_transfer')
             c4,c5=st.columns(2)
-            credit=c4.number_input('آجل',min_value=0.0,value=float(row['credit_amount'] or 0),step=1.0,key='set_credit')
-            other=c5.number_input('دفع آخر',min_value=0.0,value=float(row['other_amount'] or 0),step=1.0,key='set_other')
-            reason=st.text_input('سبب التسوية:',key='set_reason')
+            credit=ui_field(c4.number_input, "expenses:699", 'آجل',min_value=0.0,value=float(row['credit_amount'] or 0),step=1.0,key='set_credit')
+            other=ui_field(c5.number_input, "expenses:700", 'دفع آخر',min_value=0.0,value=float(row['other_amount'] or 0),step=1.0,key='set_other')
+            reason=ui_field(st.text_input, "expenses:701", 'سبب التسوية:',key='set_reason')
             total=float(cash+card+transfer+credit+other)
-            st.metric('إجمالي التوزيع',f'{total:,.2f} د.ل',delta=f'{total-float(row["net_sales"] or 0):,.2f} عن صافي المبيعات')
+            st.metric('إجمالي التوزيع',f'{decimal_display(total, 2)} د.ل',delta=f'{decimal_display(total-float(row["net_sales"] or 0), 2)} عن صافي المبيعات')
             if st.button('✅ حفظ تسوية الوردية',type='primary',use_container_width=True,key='save_shift_settlement'):
                 if not reason.strip(): st.warning('اكتب سبب التسوية.')
                 elif abs(total-float(row['net_sales'] or 0))>0.01: st.error('إجمالي طرق الدفع يجب أن يساوي صافي مبيعات الوردية.')
@@ -711,23 +724,24 @@ def _show_shift_settlement(branches):
                         if amount>0: conn.execute("""INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id,branch_id,payment_method,movement_date,source_type,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(tid,'تسوية وردية',float(amount),f'ADJ-{ref}',reason,uid,row['branch_id'],method,row['shift_date'],'shift_adjustment',ref))
                     conn.execute("UPDATE shift_closures SET cash_amount=?,card_amount=?,transfer_amount=?,credit_amount=?,other_amount=?,notes=? WHERE id=?",(cash,card,transfer,credit,other,reason,row['id']))
                     conn.execute("INSERT INTO shift_settlement_adjustments(closure_id,branch_id,shift_date,shift_number,cash_amount,card_amount,transfer_amount,credit_amount,other_amount,reason,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(row['id'],row['branch_id'],row['shift_date'],row['shift_number'],cash,card,transfer,credit,other,reason,uid))
-                    conn.commit(); st.success('تم حفظ التسوية وتحديث الترحيل إلى الخزينة الرئيسية مع الاحتفاظ باسم الفرع وسجل التعديل.'); st.rerun()
+                    conn.commit(); notify_success('تم حفظ التسوية وتحديث الترحيل إلى الخزينة الرئيسية مع الاحتفاظ باسم الفرع وسجل التعديل.'); st.rerun()
         else: st.info('لا توجد ورديات مغلقة مسجلة بالنظام الجديد حتى الآن.')
         st.markdown('---'); st.subheader('➕ إضافة حركة مالية ليوم سابق')
         bmap={b['branch_name']:b['id'] for b in branches}; bc1,bc2=st.columns(2)
-        bn=bc1.selectbox('الفرع:',list(bmap),key='hist_branch'); d=bc2.date_input('التاريخ:',key='hist_date')
-        hc1,hc2=st.columns(2); method=hc1.selectbox('نوع دخول المال:',['كاش','بطاقة','تحويل','أخرى'],key='hist_method'); amount=hc2.number_input('المبلغ:',min_value=0.0,step=1.0,key='hist_amount')
-        source=st.selectbox('مصدر الحركة:',['مبيعات سابقة','إيراد آخر','تحصيل دين'],key='hist_source'); note=st.text_input('البيان / السبب:',key='hist_note')
+        bn=ui_field(bc1.selectbox, "expenses:718", 'الفرع:',list(bmap),key='hist_branch'); d=ui_field(bc2.date_input, "expenses:718", 'التاريخ:',key='hist_date')
+        hc1,hc2=st.columns(2); method=ui_field(hc1.selectbox, "expenses:719", 'نوع دخول المال:',['كاش','بطاقة','تحويل','أخرى'],key='hist_method'); amount=ui_field(hc2.number_input, "expenses:719", 'المبلغ:',min_value=0.0,step=1.0,key='hist_amount')
+        source=ui_field(st.selectbox, "expenses:720", 'مصدر الحركة:',['مبيعات سابقة','إيراد آخر','تحصيل دين'],key='hist_source'); note=ui_field(st.text_input, "expenses:720", 'البيان / السبب:',key='hist_note')
         if st.button('💾 إضافة الحركة السابقة',type='primary',use_container_width=True,key='save_hist_money'):
             if amount<=0 or not note.strip(): st.warning('أدخل مبلغاً وبياناً واضحاً.')
             else:
                 bid=bmap[bn]; tid=_main_treasury(conn); uid=st.session_state.get('user_id'); ref=f'MAN-{bid}-{d}-{datetime.now().strftime("%H%M%S")}'
                 conn.execute("""INSERT INTO treasury_movements(treasury_id,movement_type,amount,voucher_no,description,user_id,branch_id,payment_method,movement_date,source_type,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(tid,'إضافة يوم سابق',float(amount),ref,f'{source}: {note}',uid,bid,method,str(d),'manual_historical',ref))
                 if source=='إيراد آخر': conn.execute("INSERT INTO revenues(branch_id,revenue_source,amount,notes,description,revenue_date) VALUES(?,?,?,?,?,?)",(bid,'إيراد يوم سابق',float(amount),note,note,str(d)))
-                conn.commit(); st.success('تمت إضافة الحركة السابقة إلى الخزينة الرئيسية مع تسجيل الفرع المصدر.'); st.rerun()
+                conn.commit(); notify_success('تمت إضافة الحركة السابقة إلى الخزينة الرئيسية مع تسجيل الفرع المصدر.'); st.rerun()
     finally: conn.close()
 
 def show_page():
+    _validated_role()
     back_button(key="back_expenses")
 
 
@@ -766,7 +780,7 @@ def show_page():
             "❌ تعذر تحميل الفروع."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/expenses.py:779')
 
         return
 
@@ -800,7 +814,7 @@ def show_page():
     if not st.session_state.get("finance_entry_lock"):
         finance_modes = {"💸 مصروف جديد":"expense", "💵 إيراد آخر":"revenue", "🧮 تسوية الورديات":"settlement", "📋 الأرشيف والتقارير":"archive"}
         current_label = next((k for k,v in finance_modes.items() if v == st.session_state["finance_screen_mode"]), list(finance_modes)[0])
-        selected_label = st.selectbox("اختر العملية:", list(finance_modes), index=list(finance_modes).index(current_label), key="finance_action_dropdown")
+        selected_label = ui_field(st.selectbox, "expenses:803", "اختر العملية:", list(finance_modes), index=list(finance_modes).index(current_label), key="finance_action_dropdown")
         selected_value = finance_modes[selected_label]
         if selected_value != st.session_state["finance_screen_mode"]:
             st.session_state["finance_screen_mode"] = selected_value
@@ -859,15 +873,15 @@ def show_page():
             else '🌍 مصروف عام للمخزن الرئيسي '
         )
 
-        with st.form(
+        with ui_form(
             "expense_advanced_form",
-            clear_on_submit=True
+            clear_on_submit=False
         ):
             sel_branch_name = None
 
             if "خاص بفرع" in exp_scope:
 
-                sel_branch_name = st.selectbox(
+                sel_branch_name = ui_field(st.selectbox, "expenses:870", 
                     "اختر الفرع أو المخزن المستفيد:",
                     list(branch_dict.keys())
                 )
@@ -876,7 +890,7 @@ def show_page():
 
             with col_a:
 
-                amount = st.number_input(
+                amount = ui_field(st.number_input, "expenses:879", 
                     "المبلغ الإجمالي (د.ل):",
                     min_value=0.0,
                     value=0.0,
@@ -884,7 +898,7 @@ def show_page():
                     format="%.2f"
                 )
 
-                expense_type = st.selectbox(
+                expense_type = ui_field(st.selectbox, "expenses:887", 
                     "نوع المصروف:",
                     [
                         "تشغيلي عادي",
@@ -901,18 +915,18 @@ def show_page():
                     )
                 )
 
-                target_month = st.text_input(
+                target_month = ui_field(st.text_input, "expenses:904", 
                     "شهر الاستحقاق المحاسبي "
                     "(YYYY-MM):",
                     value=current_year_month
                 )
 
-                expense_date = st.date_input(
+                expense_date = ui_field(st.date_input, "expenses:910", 
                     "تاريخ التسجيل الفعلي:",
                     value=datetime.now()
                 )
 
-            description = st.text_input(
+            description = ui_field(st.text_input, "expenses:915", 
                 "البيان أو وصف المصروف "
                 "(مثلاً: صيانة سيارة المخزن، "
                 "فاتورة كهرباء...):"
@@ -929,7 +943,7 @@ def show_page():
                     "والمصروفات المقدمة:"
                 )
 
-                advance_end_date = st.text_input(
+                advance_end_date = ui_field(st.text_input, "expenses:932", 
                     "تاريخ انتهاء فترة التغطية "
                     "المقدمة "
                     "(مثال: 2027-06-30):",
@@ -937,7 +951,7 @@ def show_page():
                 )
 
             submitted_exp = (
-                st.form_submit_button(
+                ui_submit(
                     "💾 حفظ وترحيل وتوزيع المصروف",
                     type="primary",
                     use_container_width=True
@@ -972,7 +986,7 @@ def show_page():
                     },
                     "summary": [
                         ("الفرع", sel_branch_name),
-                        ("المبلغ", f"{float(amount):,.2f} د.ل"),
+                        ("المبلغ", f"{decimal_display(float(amount), 2)} د.ل"),
                         ("نوع المصروف", expense_type),
                         ("البيان", description.strip()),
                         ("شهر الاستحقاق", target_month),
@@ -992,7 +1006,7 @@ def show_page():
                     },
                     "summary": [
                         ("النطاق", "مصروف عام موزع على الفروع التشغيلية"),
-                        ("إجمالي المبلغ", f"{float(amount):,.2f} د.ل"),
+                        ("إجمالي المبلغ", f"{decimal_display(float(amount), 2)} د.ل"),
                         ("عدد الفروع", str(len(operational_branches))),
                         ("البيان", description.strip()),
                         ("شهر الاستحقاق", target_month),
@@ -1011,43 +1025,43 @@ def show_page():
             "(خارجي أو خدمي)"
         )
 
-        with st.form(
+        with ui_form(
             "revenue_form_new",
-            clear_on_submit=True
+            clear_on_submit=False
         ):
 
-            rev_branch = st.selectbox(
+            rev_branch = ui_field(st.selectbox, "expenses:1019", 
                 "الفرع أو المخزن "
                 "المستفيد من الإيراد:",
                 list(branch_dict.keys())
             )
 
-            rev_source = st.text_input(
+            rev_source = ui_field(st.text_input, "expenses:1025", 
                 "مصدر الإيراد "
                 "(مثال: بيع خردة، "
                 "إيراد خدمات، "
                 "أرباح رأسمالية...):"
             )
 
-            rev_amount = st.number_input(
+            rev_amount = ui_field(st.number_input, "expenses:1032", 
                 "مبلغ الإيراد (د.ل):",
                 min_value=0.0,
                 step=0.5,
                 format="%.2f"
             )
 
-            rev_date = st.date_input(
+            rev_date = ui_field(st.date_input, "expenses:1039", 
                 "تاريخ الإيراد:",
                 value=datetime.now(),
                 key="revenue_date"
             )
 
-            rev_notes = st.text_area(
+            rev_notes = ui_field(st.text_area, "expenses:1045", 
                 "ملاحظات إضافية:"
             )
 
             submit_rev = (
-                st.form_submit_button(
+                ui_submit(
                     "💾 حفظ وتسجيل الإيراد",
                     type="primary",
                     use_container_width=True
@@ -1081,7 +1095,7 @@ def show_page():
                     },
                     "summary": [
                         ("الفرع / المخزن", rev_branch),
-                        ("المبلغ", f"{float(rev_amount):,.2f} د.ل"),
+                        ("المبلغ", f"{decimal_display(float(rev_amount), 2)} د.ل"),
                         ("مصدر الإيراد", rev_source.strip()),
                         ("التاريخ", rev_date.strftime("%Y-%m-%d")),
                         ("ملاحظات", rev_notes.strip() or "-"),
@@ -1107,7 +1121,7 @@ def show_page():
             "مصروفات الفروع"
         )
 
-        report_filter = st.selectbox(
+        report_filter = ui_field(st.selectbox, "expenses:1110", 
             "عرض مصروفات حسب الفرع:",
             [
                 "🌐 عرض كل المصروفات "
@@ -1143,7 +1157,7 @@ def show_page():
                 "المصروفات."
             )
 
-            st.code(str(e))
+            show_operation_error(e, announce=False, context='views/expenses.py:1156')
 
             exp_df = pd.DataFrame()
 
@@ -1161,7 +1175,7 @@ def show_page():
                     f"({report_filter})"
                 ),
                 value=(
-                    f"{total_filtered_amount:,.2f} "
+                    f"{decimal_display(total_filtered_amount, 2)} "
                     "د.ل"
                 )
             )
@@ -1225,13 +1239,13 @@ def show_page():
                 "(يتطلب كلمة مرور)"
             )
 
-            del_id = st.selectbox(
+            del_id = ui_field(st.selectbox, "expenses:1228", 
                 "اختر مسلسل المصروف "
                 "المراد حذفه:",
                 exp_df["مسلسل"].tolist()
             )
 
-            admin_pass_del = st.text_input(
+            admin_pass_del = ui_field(st.text_input, "expenses:1234", 
                 "🔒 أدخل كلمة المرور "
                 "لتأكيد الحذف:",
                 type="password",

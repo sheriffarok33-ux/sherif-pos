@@ -1,0 +1,38 @@
+# Local databases and application data
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+/data/
+/backups/
+/LOCAL_SERVER/
+# Local connection and private credentials
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+SERVER_URL.txt
+SHERIF_CONNECTION.json
+update_public_keys.json
+update_launcher.json
+local_database.txt
+credentials.json
+# Build, cache, logs, tests and binaries
+_TEMP_TESTS/
+*.exe
+*.dll
+*.pyd
+*.pyc
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+*.log
+.updates/
+*.spec
+*.tmp

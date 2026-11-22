@@ -1,3 +1,6 @@
+_PAGE_ERROR_UI_REVISION = 60
+from views.page_guard import show_operation_error
+from views.number_format import decimal_display
 from views.ui_common import back_button
 import streamlit as st
 import html
@@ -5,42 +8,45 @@ from datetime import datetime
 from database import get_db_connection
 
 
+def _document_columns(conn, table):
+    """Read schema without provoking/catching a PostgreSQL transaction error."""
+    import sqlite3
+    if table not in ('purchases','document_registry','purchase_items'):
+        raise ValueError('Unexpected document table')
+    ddl=getattr(conn, '_conn', conn)
+    if isinstance(ddl, sqlite3.Connection):
+        return {row[1] for row in ddl.execute('PRAGMA table_info('+table+')').fetchall()}
+    return {row[0] for row in conn.execute(
+        'SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=?',
+        (table,)).fetchall()}
+
+def _document_schema_commands(conn, commands):
+    """Recover only our schema savepoint; never commit/rollback the caller's work."""
+    ddl=getattr(conn, '_conn', conn)
+    ddl.execute('SAVEPOINT document_schema_guard')
+    try:
+        for command in commands:ddl.execute(command)
+    except Exception:
+        ddl.execute('ROLLBACK TO SAVEPOINT document_schema_guard')
+        ddl.execute('RELEASE SAVEPOINT document_schema_guard')
+        raise
+    else:
+        ddl.execute('RELEASE SAVEPOINT document_schema_guard')
+
+def ensure_purchase_number_column(conn):
+    import sqlite3
+    if 'document_number' in _document_columns(conn, 'purchases'):return
+    ddl=getattr(conn, '_conn', conn)
+    clause='' if isinstance(ddl, sqlite3.Connection) else 'IF NOT EXISTS '
+    _document_schema_commands(conn, ['ALTER TABLE purchases ADD COLUMN '+clause+'document_number TEXT'])
+
 def ensure_document_schema(conn):
-    ddl = getattr(conn, "_conn", conn)
-    ddl.execute("""
-        CREATE TABLE IF NOT EXISTS document_registry(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            document_number TEXT NOT NULL UNIQUE,
-            document_type TEXT NOT NULL,
-            source_table TEXT,
-            source_id INTEGER,
-            external_number TEXT,
-            branch_id INTEGER,
-            party_name TEXT,
-            amount REAL DEFAULT 0,
-            document_date TEXT,
-            created_by INTEGER,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    ddl.execute("CREATE INDEX IF NOT EXISTS idx_document_registry_type_date ON document_registry(document_type, document_date)")
-    ddl.execute("CREATE INDEX IF NOT EXISTS idx_document_registry_external ON document_registry(external_number)")
-    ddl.execute("""
-        CREATE TABLE IF NOT EXISTS purchase_items(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            purchase_id INTEGER NOT NULL,
-            item_id INTEGER,
-            item_code TEXT,
-            item_name TEXT NOT NULL,
-            quantity REAL NOT NULL DEFAULT 0,
-            unit TEXT,
-            unit_price REAL NOT NULL DEFAULT 0,
-            line_total REAL NOT NULL DEFAULT 0,
-            expiry_date TEXT
-        )
-    """)
-    ddl.execute("CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchase_id)")
-    ddl.commit()
+    required={
+        'document_registry':{'id','document_number','document_type','source_table','source_id','external_number','branch_id','party_name','amount','document_date','created_by','created_at'},
+        'purchase_items':{'id','purchase_id','item_id','item_code','item_name','quantity','unit','unit_price','line_total','expiry_date'},
+    }
+    if all(columns <= _document_columns(conn, table) for table, columns in required.items()):return
+    _document_schema_commands(conn, ['\n        CREATE TABLE IF NOT EXISTS document_registry(\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            document_number TEXT NOT NULL UNIQUE,\n            document_type TEXT NOT NULL,\n            source_table TEXT,\n            source_id INTEGER,\n            external_number TEXT,\n            branch_id INTEGER,\n            party_name TEXT,\n            amount REAL DEFAULT 0,\n            document_date TEXT,\n            created_by INTEGER,\n            created_at TEXT DEFAULT CURRENT_TIMESTAMP\n        )\n    ', 'CREATE INDEX IF NOT EXISTS idx_document_registry_type_date ON document_registry(document_type, document_date)', 'CREATE INDEX IF NOT EXISTS idx_document_registry_external ON document_registry(external_number)', '\n        CREATE TABLE IF NOT EXISTS purchase_items(\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            purchase_id INTEGER NOT NULL,\n            item_id INTEGER,\n            item_code TEXT,\n            item_name TEXT NOT NULL,\n            quantity REAL NOT NULL DEFAULT 0,\n            unit TEXT,\n            unit_price REAL NOT NULL DEFAULT 0,\n            line_total REAL NOT NULL DEFAULT 0,\n            expiry_date TEXT\n        )\n    ', 'CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchase_id)'])
 
 
 def register_document(conn, document_number, document_type, source_table, source_id,
@@ -77,11 +83,11 @@ def _purchase_html(conn, source_id):
     p=conn.execute("""SELECT p.*,COALESCE(b.branch_name,'') branch_name FROM purchases p LEFT JOIN branches b ON b.id=p.branch_id WHERE p.id=?""",(source_id,)).fetchone()
     if not p: return '<p>المستند غير موجود.</p>'
     lines=_purchase_rows(conn, source_id)
-    trs=''.join(f"<tr><td>{html.escape(str(x['item_code'] or ''))}</td><td>{html.escape(str(x['item_name']))}</td><td>{float(x['quantity']):,.3f}</td><td>{html.escape(str(x['unit'] or ''))}</td><td>{float(x['unit_price']):,.2f}</td><td>{float(x['line_total']):,.2f}</td><td>{html.escape(str(x['expiry_date'] or '-'))}</td></tr>" for x in lines)
+    trs=''.join(f"<tr><td>{html.escape(str(x['item_code'] or ''))}</td><td>{html.escape(str(x['item_name']))}</td><td>{decimal_display(float(x['quantity']), 3)}</td><td>{html.escape(str(x['unit'] or ''))}</td><td>{decimal_display(float(x['unit_price']), 2)}</td><td>{decimal_display(float(x['line_total']), 2)}</td><td>{html.escape(str(x['expiry_date'] or '-'))}</td></tr>" for x in lines)
     if not trs:
         trs=f"<tr><td colspan='7' style='text-align:right'>{html.escape(str(p['items_details'] or '-')).replace(chr(10),'<br>')}</td></tr>"
     return f"""<html dir='rtl'><head><meta charset='utf-8'><style>body{{font-family:Arial;direction:rtl;text-align:right;padding:24px}}table{{width:100%;border-collapse:collapse}}th,td{{border:1px solid #999;padding:8px;text-align:right}}h2{{text-align:center}}@media print{{button{{display:none}}}}</style></head><body>
-    <h2>فاتورة مشتريات</h2><table><tr><th>رقم مستند النظام</th><td>{html.escape(str(p['document_number']))}</td><th>رقم فاتورة المورد</th><td>{html.escape(str(p['invoice_number'] or '-'))}</td></tr><tr><th>المورد</th><td>{html.escape(str(p['supplier_name']))}</td><th>التاريخ</th><td>{html.escape(str(p['invoice_date']))}</td></tr><tr><th>الفرع</th><td>{html.escape(str(p['branch_name'] or '-'))}</td><th>الإجمالي</th><td>{float(p['total_cost'] or 0):,.2f} د.ل</td></tr></table>
+    <h2>فاتورة مشتريات</h2><table><tr><th>رقم مستند النظام</th><td>{html.escape(str(p['document_number']))}</td><th>رقم فاتورة المورد</th><td>{html.escape(str(p['invoice_number'] or '-'))}</td></tr><tr><th>المورد</th><td>{html.escape(str(p['supplier_name']))}</td><th>التاريخ</th><td>{html.escape(str(p['invoice_date']))}</td></tr><tr><th>الفرع</th><td>{html.escape(str(p['branch_name'] or '-'))}</td><th>الإجمالي</th><td>{decimal_display(float(p['total_cost'] or 0), 2)} د.ل</td></tr></table>
     <h3>الأصناف</h3><table><thead><tr><th>الكود</th><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>سعر الشراء</th><th>الإجمالي</th><th>الصلاحية</th></tr></thead><tbody>{trs}</tbody></table><br><button onclick='window.print()'>🖨️ طباعة</button></body></html>"""
 
 
@@ -111,7 +117,7 @@ def show_page():
                     v=conn.execute('SELECT * FROM financial_vouchers WHERE id=?',(r['source_id'],)).fetchone()
                     if v:
                         st.write(f"**رقم المستند:** {v['voucher_no']}")
-                        st.write(f"**الجهة:** {v['party_name']} — **المبلغ:** {float(v['amount']):,.2f} د.ل")
+                        st.write(f"**الجهة:** {v['party_name']} — **المبلغ:** {decimal_display(float(v['amount']), 2)} د.ل")
                         st.write(f"**البيان:** {v['notes'] or '-'}")
                 else:
                     st.info('المستند مسجل في الفهرس، والمعاينة التفصيلية لهذا النوع ستستخدم شاشة المصدر.')

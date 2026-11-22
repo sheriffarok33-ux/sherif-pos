@@ -1,3 +1,8 @@
+_PAGE_ERROR_UI_REVISION = 60
+from views.page_guard import show_operation_error
+from database import move_inventory_batches
+from views.number_format import decimal_display
+from views.ui_feedback import ui_field, ui_form, ui_submit, notify_success, reset_page_fields
 from views.ui_common import back_button
 from views.ui_common import item_alerts
 import streamlit as st
@@ -71,12 +76,12 @@ def _add_saleable_to_main(conn, main_branch_id, source_item, qty):
     if not target:
         target=conn.execute("SELECT id FROM items WHERE branch_id=? AND item_name=? LIMIT 1",(main_branch_id,source_item["item_name"])).fetchone()
     if target:
-        conn.execute("UPDATE items SET quantity=COALESCE(quantity,0)+? WHERE id=?",(qty,target["id"])); return
+        conn.execute("UPDATE items SET quantity=COALESCE(quantity,0)+? WHERE id=?",(qty,target["id"])); return target["id"]
     cols={r["name"] for r in conn.execute("PRAGMA table_info(items)").fetchall()}
     fields=["item_name","branch_id","quantity"]; vals=[source_item["item_name"],main_branch_id,qty]
     for col in ["item_code","buy_price","avg_cost","sale_price"]:
         if col in cols: fields.append(col); vals.append(source_item[col])
-    conn.execute(f"INSERT INTO items({','.join(fields)}) VALUES({','.join(['?']*len(fields))})",tuple(vals))
+    return conn.execute(f"INSERT INTO items({','.join(fields)}) VALUES({','.join(['?']*len(fields))}) RETURNING id",tuple(vals)).fetchone()[0]
 
 
 # ============================================================
@@ -104,28 +109,31 @@ def execute_adjustment(branch_id,item_id,qty,adj_type,notes):
         if good:
             if source_is_main:
                 if "إعادة صنف تالف/مُصلح" in adj_type: conn.execute("UPDATE items SET quantity=quantity+? WHERE id=?",(qty,item_id))
-            else: _add_saleable_to_main(conn,main_id,item,qty)
+            else:
+                target_id=_add_saleable_to_main(conn,main_id,item,qty)
+                move_inventory_batches(conn,item_id,branch_id,target_id,main_id,qty)
             if "إعادة صنف تالف/مُصلح" in adj_type: db_type="إعادة صنف مُصلح للخدمة"; total_value=-total_value
             else: db_type="مرتجع صالح للبيع"; total_value=0.0
         else:
             if source_is_main:
                 if qty>current: raise ValueError(f"الكمية المطلوبة ({qty}) أكبر من الرصيد المتاح ({current}).")
                 conn.execute("UPDATE items SET quantity=quantity-? WHERE id=?",(qty,item_id))
+            move_inventory_batches(conn,item_id,branch_id,None,None,qty)
             _ensure_damaged_stock_schema(conn)
             db_type="منتهي الصلاحية" if "منتهي" in adj_type else ("مرتجع زبون - تالف" if "مرتجع زبون - تالف" in adj_type else "تالف / هالك")
             conn.execute("INSERT INTO damaged_stock(main_branch_id,source_branch_id,item_code,item_name,quantity,damage_type,notes) VALUES(?,?,?,?,?,?,?)",(main_id,branch_id,item["item_code"],item["item_name"],qty,db_type,notes.strip()))
         movement_notes=(notes.strip()+(" | " if notes.strip() else "")+(f"تحويل إلى {main['branch_name']}" if not source_is_main else "حركة داخل المخزن الرئيسي"))
         conn.execute("INSERT INTO stock_adjustments(branch_id,item_id,item_name,quantity,adjustment_type,loss_or_gain_value,notes) VALUES(?,?,?,?,?,?,?)",(branch_id,item_id,item["item_name"],qty,db_type,total_value,movement_notes))
         conn.commit()
-        if source_is_main: msg=f"تم تسجيل {db_type} في المخزن الرئيسي بكمية {qty:,.2f}."
-        elif good: msg=f"تم خصم {qty:,.2f} من الفرع وإرجاعها إلى {main['branch_name']} كمخزون صالح."
-        else: msg=f"تم خصم {qty:,.2f} من الفرع وإرجاعها إلى {main['branch_name']} كرَصيد تالف/غير صالح للبيع."
+        if source_is_main: msg=f"تم تسجيل {db_type} في المخزن الرئيسي بكمية {decimal_display(qty, 2)}."
+        elif good: msg=f"تم خصم {decimal_display(qty, 2)} من الفرع وإرجاعها إلى {main['branch_name']} كمخزون صالح."
+        else: msg=f"تم خصم {decimal_display(qty, 2)} من الفرع وإرجاعها إلى {main['branch_name']} كرَصيد تالف/غير صالح للبيع."
         _damages_done(msg)
     except Exception as e:
         if conn:
             try: conn.rollback()
             except Exception: pass
-        st.error(f"❌ تعذر تسجيل الحركة: {e}")
+        show_operation_error(e, announce=True, context='views/damages_returns.py:134')
     finally:
         if conn: conn.close()
 
@@ -224,7 +232,7 @@ def execute_surplus(
             "❌ تعذر إضافة الفائض."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/damages_returns.py:233')
 
     finally:
 
@@ -291,7 +299,7 @@ def execute_price_update(
 
         conn.commit()
 
-        _damages_done(f"تم تحديث وتعميم السعر الجديد ({new_price:.2f} د.ل) بنجاح.")
+        _damages_done(f"تم تحديث وتعميم السعر الجديد ({decimal_display(new_price, 2)} د.ل) بنجاح.")
 
     except Exception as e:
 
@@ -302,7 +310,7 @@ def execute_price_update(
             "❌ تعذر تحديث سعر الصنف."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/damages_returns.py:311')
 
     finally:
 
@@ -326,10 +334,11 @@ def _set_damage_mode(mode):
     st.rerun()
 
 
-@st.dialog("✅ تمت العملية بنجاح")
+@st.dialog("✅ تمت العملية بنجاح", dismissible=False)
 def _damages_success_dialog():
     st.success(st.session_state.get("damages_success_message", "تمت العملية بنجاح."))
     if st.button("موافق", type="primary", use_container_width=True, key="damages_success_ok"):
+        reset_page_fields()
         st.session_state.pop("damages_success_pending", None)
         st.session_state.pop("damages_success_message", None)
         st.rerun()
@@ -372,6 +381,7 @@ def show_page():
 
     if st.session_state.get("damages_success_pending"):
         _damages_success_dialog()
+        st.stop()
 
     st.markdown(
         """
@@ -397,7 +407,7 @@ def show_page():
         branches = get_branches()
     except Exception as e:
         st.error("❌ تعذر تحميل الفروع.")
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/damages_returns.py:408')
         return
 
     if not branches:
@@ -438,7 +448,7 @@ def show_page():
     # تلف / منتهي
     # --------------------------------------------------------
     if mode == "adjustment":
-        branch_name = st.selectbox(
+        branch_name = ui_field(st.selectbox, "damages_returns:441", 
             "🏢 اختر الفرع / المخزن:",
             list(b_dict.keys()),
             key="damage_branch_btn"
@@ -453,9 +463,9 @@ def show_page():
             f"[{x['item_code'] or 'بدون'}] {x['item_name']} (متاح: {x['quantity']})": x
             for x in items
         }
-        selected = opts[st.selectbox("📦 اختر الصنف:", list(opts), key="damage_item_btn")]
-        qty = st.number_input("الكمية:", min_value=0.01, value=1.0, step=0.5, key="damage_qty_btn")
-        notes = st.text_input("ملاحظات / سبب الحركة:", key="damage_notes_btn")
+        selected = opts[ui_field(st.selectbox, "damages_returns:456", "📦 اختر الصنف:", list(opts), key="damage_item_btn")]
+        qty = ui_field(st.number_input, "damages_returns:457", "الكمية:", min_value=0.01, value=1.0, step=0.5, key="damage_qty_btn")
+        notes = ui_field(st.text_input, "damages_returns:458", "ملاحظات / سبب الحركة:", key="damage_notes_btn")
         adj_type = st.session_state.get(
             "damage_adj_type",
             "🗑️ تلف / كسر (خسارة تشغيلية)"
@@ -466,7 +476,7 @@ def show_page():
             st.session_state["stockmove_pending_action"] = {
                 "callback": execute_adjustment,
                 "args": [branch_id, selected["id"], qty, adj_type, notes],
-                "summary": [("العملية", adj_type), ("الفرع", branch_name), ("الصنف", selected["item_name"]), ("الكمية", f"{float(qty):,.2f}"), ("السبب", notes or "-")],
+                "summary": [("العملية", adj_type), ("الفرع", branch_name), ("الصنف", selected["item_name"]), ("الكمية", f"{decimal_display(float(qty), 2)}"), ("السبب", notes or "-")],
             }
             st.rerun()
 
@@ -488,7 +498,7 @@ def show_page():
             st.session_state["return_kind"] = "🔄 إعادة صنف تالف/مُصلح إلى المخزن (إلغاء إتلاف)"
             st.rerun()
 
-        branch_name = st.selectbox("🏢 اختر الفرع:", list(b_dict), key="return_branch_btn")
+        branch_name = ui_field(st.selectbox, "damages_returns:491", "🏢 اختر الفرع:", list(b_dict), key="return_branch_btn")
         branch_id = b_dict[branch_name]
         items = get_branch_items(branch_id)
         if not items:
@@ -498,15 +508,15 @@ def show_page():
             f"[{x['item_code'] or 'بدون'}] {x['item_name']} (الرصيد: {x['quantity']})": x
             for x in items
         }
-        selected = opts[st.selectbox("📦 اختر الصنف:", list(opts), key="return_item_btn")]
-        qty = st.number_input("الكمية:", min_value=0.01, value=1.0, step=0.5, key="return_qty_btn")
-        notes = st.text_input("ملاحظات:", key="return_notes_btn")
+        selected = opts[ui_field(st.selectbox, "damages_returns:501", "📦 اختر الصنف:", list(opts), key="return_item_btn")]
+        qty = ui_field(st.number_input, "damages_returns:502", "الكمية:", min_value=0.01, value=1.0, step=0.5, key="return_qty_btn")
+        notes = ui_field(st.text_input, "damages_returns:503", "ملاحظات:", key="return_notes_btn")
         st.info(f"نوع المرتجع المحدد: **{st.session_state['return_kind']}**")
         if st.button("💾 اعتماد المرتجع", type="primary", use_container_width=True):
             st.session_state["stockmove_pending_action"] = {
                 "callback": execute_adjustment,
                 "args": [branch_id, selected["id"], qty, st.session_state["return_kind"], notes],
-                "summary": [("العملية", st.session_state["return_kind"]), ("الفرع", branch_name), ("الصنف", selected["item_name"]), ("الكمية", f"{float(qty):,.2f}"), ("ملاحظات", notes or "-")],
+                "summary": [("العملية", st.session_state["return_kind"]), ("الفرع", branch_name), ("الصنف", selected["item_name"]), ("الكمية", f"{decimal_display(float(qty), 2)}"), ("ملاحظات", notes or "-")],
             }
             st.rerun()
 
@@ -514,7 +524,7 @@ def show_page():
     # فائض
     # --------------------------------------------------------
     elif mode == "surplus":
-        branch_name = st.selectbox("🏢 اختر الفرع:", list(b_dict), key="surplus_branch_btn")
+        branch_name = ui_field(st.selectbox, "damages_returns:517", "🏢 اختر الفرع:", list(b_dict), key="surplus_branch_btn")
         branch_id = b_dict[branch_name]
         items = get_branch_items(branch_id)
         if not items:
@@ -524,14 +534,14 @@ def show_page():
             f"[{x['item_code'] or 'بدون'}] {x['item_name']} (الحالي: {x['quantity']})": x
             for x in items
         }
-        selected = opts[st.selectbox("📦 اختر الصنف:", list(opts), key="surplus_item_btn")]
-        qty = st.number_input("كمية الفائض:", min_value=0.01, value=1.0, step=0.5, key="surplus_qty_btn")
-        notes = st.text_input("سبب الفائض:", value="جرد / فائض مخزني", key="surplus_notes_btn")
+        selected = opts[ui_field(st.selectbox, "damages_returns:527", "📦 اختر الصنف:", list(opts), key="surplus_item_btn")]
+        qty = ui_field(st.number_input, "damages_returns:528", "كمية الفائض:", min_value=0.01, value=1.0, step=0.5, key="surplus_qty_btn")
+        notes = ui_field(st.text_input, "damages_returns:529", "سبب الفائض:", value="جرد / فائض مخزني", key="surplus_notes_btn")
         if st.button("💾 اعتماد وإضافة الفائض", type="primary", use_container_width=True):
             st.session_state["stockmove_pending_action"] = {
                 "callback": execute_surplus,
                 "args": [branch_id, selected["id"], qty, notes],
-                "summary": [("العملية", "إضافة فائض مخزني"), ("الفرع", branch_name), ("الصنف", selected["item_name"]), ("الكمية", f"{float(qty):,.2f}"), ("السبب", notes or "-")],
+                "summary": [("العملية", "إضافة فائض مخزني"), ("الفرع", branch_name), ("الصنف", selected["item_name"]), ("الكمية", f"{decimal_display(float(qty), 2)}"), ("السبب", notes or "-")],
             }
             st.rerun()
 
@@ -561,8 +571,8 @@ def show_page():
             f"[{x['item_code'] or 'بدون'}] {x['item_name']} (الحالي: {x['sale_price']} د.ل)": x
             for x in rows
         }
-        selected = opts[st.selectbox("📦 اختر الصنف:", list(opts), key="price_item_btn")]
-        new_price = st.number_input(
+        selected = opts[ui_field(st.selectbox, "damages_returns:564", "📦 اختر الصنف:", list(opts), key="price_item_btn")]
+        new_price = ui_field(st.number_input, "damages_returns:565", 
             "سعر البيع الجديد:",
             min_value=0.0,
             value=float(selected["sale_price"] or 0),
@@ -574,7 +584,7 @@ def show_page():
             st.session_state["stockmove_pending_action"] = {
                 "callback": execute_price_update,
                 "args": [selected["item_code"], selected["item_name"], new_price],
-                "summary": [("العملية", "تعديل وتعميم سعر البيع"), ("الصنف", selected["item_name"]), ("السعر الحالي", f"{float(selected['sale_price'] or 0):,.2f} د.ل"), ("السعر الجديد", f"{float(new_price):,.2f} د.ل")],
+                "summary": [("العملية", "تعديل وتعميم سعر البيع"), ("الصنف", selected["item_name"]), ("السعر الحالي", f"{decimal_display(float(selected['sale_price'] or 0), 2)} د.ل"), ("السعر الجديد", f"{decimal_display(float(new_price), 2)} د.ل")],
             }
             st.rerun()
 
@@ -582,7 +592,7 @@ def show_page():
     # سجل الحركات / التصدير
     # --------------------------------------------------------
     elif mode in ("log", "export"):
-        branch_name = st.selectbox(
+        branch_name = ui_field(st.selectbox, "damages_returns:585", 
             "🏢 اختر الفرع لعرض الحركات:",
             list(b_dict),
             key=f"log_branch_{mode}"

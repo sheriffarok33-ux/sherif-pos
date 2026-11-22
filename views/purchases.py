@@ -1,3 +1,8 @@
+_PAGE_ERROR_UI_REVISION = 60
+from views.page_guard import show_operation_error
+from control_services import weighted_inventory_receipt
+from views.number_format import decimal_display
+from views.ui_feedback import ui_field, ui_form, ui_submit, notify_success, reset_page_fields
 from views.ui_common import back_button
 from views.ui_common import item_alerts
 import streamlit as st
@@ -5,14 +10,11 @@ import html
 from datetime import datetime, date
 from database import get_db_connection
 from offline_store import get_device_id
-from views.documents import ensure_document_schema, register_document
+from views.documents import ensure_document_schema, register_document, ensure_purchase_number_column
 
 
 def _ensure_purchase_document_schema(conn):
-    try:
-        conn.execute("ALTER TABLE purchases ADD COLUMN document_number TEXT")
-    except Exception:
-        pass
+    ensure_purchase_number_column(conn)
     ensure_document_schema(conn)
 
 def _next_purchase_document_number(conn, branch_id):
@@ -46,7 +48,7 @@ def ensure_inventory_batches_table(conn):
         """
         CREATE TABLE IF NOT EXISTS inventory_batches
         (
-            id BIGSERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             item_id INTEGER NOT NULL,
             branch_id INTEGER NOT NULL,
             quantity NUMERIC DEFAULT 0,
@@ -188,7 +190,7 @@ def add_supplier(name, phone):
 
         conn.commit()
 
-        st.success(
+        notify_success(
             f"✅ تمت إضافة المورد "
             f"({name}) بنجاح."
         )
@@ -211,7 +213,7 @@ def add_supplier(name, phone):
             "❌ تعذر إضافة المورد."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/purchases.py:214')
 
     finally:
         if conn:
@@ -280,7 +282,7 @@ def add_customer(name, phone):
 
         conn.commit()
 
-        st.success(
+        notify_success(
             f"✅ تم اعتماد الزبون الآجل "
             f"({name}) بنجاح."
         )
@@ -303,7 +305,7 @@ def add_customer(name, phone):
             "❌ تعذر إضافة الزبون."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/purchases.py:306')
 
     finally:
         if conn:
@@ -369,6 +371,14 @@ def post_purchase_invoice(
             raise ValueError(
                 "فاتورة المشتريات فارغة."
             )
+
+        import math
+        for line in purchase_cart:
+            qty,price,total = (float(line[key]) for key in ('qty','price','total'))
+            if not all(math.isfinite(value) for value in (qty,price,total)) or qty<=0 or price<=0:
+                raise ValueError('كمية أو تكلفة سطر المشتريات غير صالحة.')
+            if not math.isclose(total,qty*price,rel_tol=1e-12,abs_tol=0.001):
+                raise ValueError('إجمالي سطر المشتريات لا يطابق الكمية وسعر الوحدة؛ راجع المسودة.')
 
         # إجمالي الفاتورة
         grand_total = sum(
@@ -494,6 +504,9 @@ def post_purchase_invoice(
                 old_row["quantity"] or 0
             )
 
+            if old_qty != 0 and old_row["avg_cost"] is None and old_row["buy_price"] is None:
+                raise ValueError("تكلفة الرصيد السابق غير موثقة؛ اعتمد تكلفة الرصيد الافتتاحي أولاً. المسودة محفوظة دون اختلاق سعر.")
+
             old_avg = float(
                 old_row["avg_cost"] or 0
             )
@@ -507,31 +520,7 @@ def post_purchase_invoice(
             if old_avg <= 0:
                 old_avg = old_buy_price
 
-            new_total_qty = (
-                old_qty
-                + purchased_qty
-            )
-
-            # =================================================
-            # المتوسط الموزون
-            # =================================================
-
-            if new_total_qty > 0:
-
-                new_avg_cost = (
-                    (
-                        old_qty
-                        * old_avg
-                    )
-                    +
-                    (
-                        purchased_qty
-                        * purchase_price
-                    )
-                ) / new_total_qty
-
-            else:
-                new_avg_cost = purchase_price
+            new_total_qty, new_avg_cost = weighted_inventory_receipt(old_qty, old_avg, purchased_qty, purchase_price)
 
             conn.execute(
                 """
@@ -554,6 +543,7 @@ def post_purchase_invoice(
 
             expiry_date = purchase_item.get("expiry_date")
 
+            expiry_date_value = None
             if expiry_date:
                 if hasattr(expiry_date, "isoformat"):
                     expiry_date_value = expiry_date
@@ -570,43 +560,44 @@ def post_purchase_invoice(
                         "منتهي بالفعل."
                     )
 
-                conn.execute(
-                    """
-                    INSERT INTO inventory_batches
-                    (
-                        item_id,
-                        branch_id,
-                        quantity,
-                        remaining_quantity,
-                        received_date,
-                        expiry_date,
-                        unit_cost,
-                        source_type
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        item_id,
-                        branch_id,
-                        purchased_qty,
-                        purchased_qty,
-                        datetime.now().date(),
-                        expiry_date_value,
-                        purchase_price,
-                        "purchase"
-                    )
+            conn.execute(
+                """
+                INSERT INTO inventory_batches
+                (
+                    item_id,
+                    branch_id,
+                    quantity,
+                    remaining_quantity,
+                    received_date,
+                    expiry_date,
+                    unit_cost,
+                    source_type
                 )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item_id,
+                    branch_id,
+                    purchased_qty,
+                    purchased_qty,
+                    datetime.now().date(),
+                    expiry_date_value,
+                    purchase_price,
+                    "purchase"
+                )
+            )
+
 
             details.append(
                 (
                     f"{purchase_item['name']} "
                     f"[{purchase_item['code']}] "
                     f"- كمية: "
-                    f"{purchased_qty:,.2f} "
+                    f"{decimal_display(purchased_qty, 2)} "
                     f"- سعر: "
-                    f"{purchase_price:,.2f} د.ل "
+                    f"{decimal_display(purchase_price, 2)} د.ل "
                     f"- إجمالي: "
-                    f"{purchased_qty * purchase_price:,.2f} د.ل"
+                    f"{decimal_display(purchased_qty * purchase_price, 2)} د.ل"
                     + (
                         f" - انتهاء: {expiry_date_value}"
                         if expiry_date
@@ -693,7 +684,7 @@ def post_purchase_invoice(
         st.session_state["purchase_success_pending"] = True
         st.session_state["purchase_success_message"] = (
             f"تم ترحيل فاتورة المشتريات {document_number} بنجاح. "
-            f"إجمالي الفاتورة: {grand_total:,.2f} د.ل"
+            f"إجمالي الفاتورة: {decimal_display(grand_total, 2)} د.ل"
         )
         st.rerun()
 
@@ -713,7 +704,7 @@ def post_purchase_invoice(
             "❌ تعذر ترحيل فاتورة المشتريات."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/purchases.py:705')
 
     finally:
 
@@ -737,12 +728,12 @@ def show_purchase_reports(branches, suppliers_data):
     month_start = today.replace(day=1)
 
     f1, f2 = st.columns(2)
-    selected_supplier = f1.selectbox("المورد", list(supplier_map), key="purchase_report_supplier")
-    selected_branch = f2.selectbox("الفرع / المخزن", list(branch_map), key="purchase_report_branch")
+    selected_supplier = ui_field(f1.selectbox, "purchases:740", "المورد", list(supplier_map), key="purchase_report_supplier")
+    selected_branch = ui_field(f2.selectbox, "purchases:741", "الفرع / المخزن", list(branch_map), key="purchase_report_branch")
 
     d1, d2 = st.columns(2)
-    date_from = d1.date_input("من تاريخ", value=month_start, key="purchase_report_from")
-    date_to = d2.date_input("إلى تاريخ", value=today, key="purchase_report_to")
+    date_from = ui_field(d1.date_input, "purchases:744", "من تاريخ", value=month_start, key="purchase_report_from")
+    date_to = ui_field(d2.date_input, "purchases:745", "إلى تاريخ", value=today, key="purchase_report_to")
 
     if date_from > date_to:
         st.error("تاريخ البداية يجب أن يكون قبل أو مساوياً لتاريخ النهاية.")
@@ -779,7 +770,7 @@ def show_purchase_reports(branches, suppliers_data):
         ).fetchall()
     except Exception as e:
         st.error("❌ تعذر تحميل تقرير المشتريات.")
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/purchases.py:771')
         return
     finally:
         if conn:
@@ -788,7 +779,7 @@ def show_purchase_reports(branches, suppliers_data):
     total_value = sum(float(r["total_cost"] or 0) for r in rows)
     m1, m2, m3 = st.columns(3)
     m1.metric("عدد الفواتير", len(rows))
-    m2.metric("إجمالي المشتريات", f"{total_value:,.2f} د.ل")
+    m2.metric("إجمالي المشتريات", f"{decimal_display(total_value, 2)} د.ل")
     m3.metric("المورد", selected_supplier)
 
     if not rows:
@@ -822,7 +813,7 @@ def show_purchase_reports(branches, suppliers_data):
     for r in rows:
         with st.expander(
             f"فاتورة {r['document_number'] or ('PUR-OLD-' + str(r['id']))} — {r['supplier_name']} — "
-            f"{float(r['total_cost'] or 0):,.2f} د.ل"
+            f"{decimal_display(float(r['total_cost'] or 0), 2)} د.ل"
         ):
             st.write(f"**التاريخ:** {r['invoice_date']}")
             st.write(f"**الفرع / المخزن:** {r['branch_name'] or '-'}")
@@ -856,7 +847,7 @@ def show_purchase_reports(branches, suppliers_data):
                 st.write("-")
             if _item_rows:
                 _print_items_html = "".join(
-                    f"<tr><td>{html.escape(str(x['item_code'] or ''))}</td><td>{html.escape(str(x['item_name']))}</td><td>{float(x['quantity'] or 0):,.3f}</td><td>{html.escape(str(x['unit'] or ''))}</td><td>{float(x['unit_price'] or 0):,.2f}</td><td>{float(x['line_total'] or 0):,.2f}</td><td>{html.escape(str(x['expiry_date'] or '-'))}</td></tr>"
+                    f"<tr><td>{html.escape(str(x['item_code'] or ''))}</td><td>{html.escape(str(x['item_name']))}</td><td>{decimal_display(float(x['quantity'] or 0), 3)}</td><td>{html.escape(str(x['unit'] or ''))}</td><td>{decimal_display(float(x['unit_price'] or 0), 2)}</td><td>{decimal_display(float(x['line_total'] or 0), 2)}</td><td>{html.escape(str(x['expiry_date'] or '-'))}</td></tr>"
                     for x in _item_rows)
                 _print_items_head = "<tr><th>الكود</th><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>سعر الشراء</th><th>الإجمالي</th><th>الصلاحية</th></tr>"
             else:
@@ -876,7 +867,7 @@ def show_purchase_reports(branches, suppliers_data):
             <tr><td><b>المورد</b></td><td>{html.escape(str(r['supplier_name'] or '-'))}</td></tr>
             <tr><td><b>الفرع / المخزن</b></td><td>{html.escape(str(r['branch_name'] or '-'))}</td></tr>
             <tr><td><b>طريقة الدفع</b></td><td>{html.escape(str(r['payment_type'] or '-'))}</td></tr>
-            <tr><td><b>الإجمالي</b></td><td>{float(r['total_cost'] or 0):,.2f} د.ل</td></tr>
+            <tr><td><b>الإجمالي</b></td><td>{decimal_display(float(r['total_cost'] or 0), 2)} د.ل</td></tr>
             </table>
             <h3 style='text-align:right'>الأصناف</h3>
             <table style='direction:rtl;text-align:right'><thead>{_print_items_head}</thead><tbody>{_print_items_html}</tbody></table>
@@ -896,7 +887,7 @@ def show_purchase_reports(branches, suppliers_data):
 # الصفحة
 # ============================================================
 
-@st.dialog("✅ تمت العملية بنجاح")
+@st.dialog("✅ تمت العملية بنجاح", dismissible=False)
 def _purchase_success_dialog():
     st.success(
         st.session_state.get(
@@ -912,6 +903,7 @@ def _purchase_success_dialog():
         key="purchase_success_ok"
     ):
         # تنظيف بيانات الفاتورة لا يتم إلا بعد تأكيد المستخدم.
+        reset_page_fields()
         st.session_state["purch_cart"] = []
         for key in [
             "purch_cart_branch_id",
@@ -958,6 +950,7 @@ def show_page():
 
     if st.session_state.get("purchase_success_pending"):
         _purchase_success_dialog()
+        st.stop()
 
 
     # ========================================================
@@ -1013,7 +1006,7 @@ def show_page():
             "❌ تعذر تحميل بيانات المشتريات."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/purchases.py:1007')
 
         return
 
@@ -1032,7 +1025,7 @@ def show_page():
     
         purchase_modes = {"🛒 فاتورة مشتريات":"invoice", "📊 الأرشيف والتقارير":"reports"}
         current_label = next((k for k,v in purchase_modes.items() if v == st.session_state["purchase_quick_mode"]), list(purchase_modes)[0])
-        selected_label = st.selectbox("اختر العملية:", list(purchase_modes), index=list(purchase_modes).index(current_label), key="purchase_action_dropdown")
+        selected_label = ui_field(st.selectbox, "purchases:1035", "اختر العملية:", list(purchase_modes), index=list(purchase_modes).index(current_label), key="purchase_action_dropdown")
         selected_value = purchase_modes[selected_label]
         if selected_value != st.session_state["purchase_quick_mode"]:
             st.session_state["purchase_quick_mode"] = selected_value
@@ -1049,14 +1042,14 @@ def show_page():
     # ========================================================
     if quick_mode == "supplier":
         st.markdown("#### ➕ إضافة مورد جديد")
-        with st.form(
+        with ui_form(
             "quick_sup_form_clean",
-            clear_on_submit=True
+            clear_on_submit=False
         ):
             qc1, qc2 = st.columns(2)
-            q_sname = qc1.text_input("اسم المورد / الشركة:")
-            q_sphone = qc2.text_input("رقم الهاتف:")
-            submit_supplier = st.form_submit_button(
+            q_sname = ui_field(qc1.text_input, "purchases:1057", "اسم المورد / الشركة:")
+            q_sphone = ui_field(qc2.text_input, "purchases:1058", "رقم الهاتف:")
+            submit_supplier = ui_submit(
                 "💾 حفظ المورد الجديد",
                 type="primary",
                 use_container_width=True
@@ -1073,14 +1066,14 @@ def show_page():
     # ========================================================
     if quick_mode == "customer":
         st.markdown("#### ➕ إضافة زبون آجل جديد")
-        with st.form(
+        with ui_form(
             "quick_cust_form_clean",
-            clear_on_submit=True
+            clear_on_submit=False
         ):
             qcc1, qcc2 = st.columns(2)
-            q_cname = qcc1.text_input("اسم الزبون الآجل:")
-            q_cphone = qcc2.text_input("رقم الهاتف:")
-            submit_customer = st.form_submit_button(
+            q_cname = ui_field(qcc1.text_input, "purchases:1081", "اسم الزبون الآجل:")
+            q_cphone = ui_field(qcc2.text_input, "purchases:1082", "رقم الهاتف:")
+            submit_customer = ui_submit(
                 "💾 حفظ واعتماد الزبون الآجل",
                 type="primary",
                 use_container_width=True
@@ -1149,21 +1142,21 @@ def show_page():
         st.columns(4)
     )
 
-    pb = col_h1.selectbox(
+    pb = ui_field(col_h1.selectbox, "purchases:1152", 
         "🏢 الفرع / المخزن المستلم:",
         list(branch_dict.keys())
     )
 
-    ps = col_h2.selectbox(
+    ps = ui_field(col_h2.selectbox, "purchases:1157", 
         "🚛 المورد:",
         list(supplier_dict.keys())
     )
 
-    inv_num = col_h3.text_input(
+    inv_num = ui_field(col_h3.text_input, "purchases:1162", 
         "🧾 رقم فاتورة المورد (اختياري):"
     )
 
-    payment_type = col_h4.selectbox(
+    payment_type = ui_field(col_h4.selectbox, "purchases:1166", 
         "💳 طريقة الدفع:",
         [
             "كاش (مدفوعة بالكامل)",
@@ -1188,7 +1181,7 @@ def show_page():
         finally:
             _doc_conn.close()
     document_number = st.session_state[doc_key]
-    st.text_input("🔒 رقم مستند النظام", value=document_number, disabled=True, key=f"purchase_doc_display_{selected_branch_id}")
+    ui_field(st.text_input, "purchases:1191", "🔒 رقم مستند النظام", value=document_number, disabled=True, key=f"purchase_doc_display_{selected_branch_id}")
 
     # ========================================================
     # رصيد المورد
@@ -1205,14 +1198,14 @@ def show_page():
 
         st.warning(
             f"⚠️ علينا للمورد ({ps}): "
-            f"{current_supplier_balance:,.2f} د.ل"
+            f"{decimal_display(current_supplier_balance, 2)} د.ل"
         )
 
     elif current_supplier_balance < 0:
 
         st.success(
             f"✅ لنا رصيد عند المورد ({ps}): "
-            f"{abs(current_supplier_balance):,.2f} د.ل"
+            f"{decimal_display(abs(current_supplier_balance), 2)} د.ل"
         )
 
     else:
@@ -1304,7 +1297,7 @@ def show_page():
             "❌ تعذر تحميل أصناف الفرع."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/purchases.py:1298')
 
         return
 
@@ -1313,7 +1306,7 @@ def show_page():
             f"[{item['item_code']}] "
             f"{item['item_name']} "
             f"- الرصيد: "
-            f"{float(item['quantity'] or 0):,.2f}"
+            f"{decimal_display(float(item['quantity'] or 0), 2)}"
         ): item
 
         for item in db_items
@@ -1325,9 +1318,9 @@ def show_page():
 
     if item_options:
 
-        with st.form(
+        with ui_form(
             "add_purch_item_form_clean",
-            clear_on_submit=True
+            clear_on_submit=False
         ):
 
             col_i1, col_i2, col_i3, col_i4 = (
@@ -1335,7 +1328,7 @@ def show_page():
             )
 
             selected_item_label = (
-                col_i1.selectbox(
+                ui_field(col_i1.selectbox, "purchases:1338", 
                     "اختر الصنف:",
                     list(
                         item_options.keys()
@@ -1344,7 +1337,7 @@ def show_page():
             )
 
             purchase_qty = (
-                col_i2.number_input(
+                ui_field(col_i2.number_input, "purchases:1347", 
                     "الكمية المشتراة:",
                     min_value=0.01,
                     value=1.0,
@@ -1353,7 +1346,7 @@ def show_page():
             )
 
             purchase_price = (
-                col_i3.number_input(
+                ui_field(col_i3.number_input, "purchases:1356", 
                     "سعر شراء الوحدة (د.ل):",
                     min_value=0.0,
                     value=0.0,
@@ -1362,7 +1355,7 @@ def show_page():
                 )
             )
 
-            has_expiry = col_i4.checkbox(
+            has_expiry = ui_field(col_i4.checkbox, "purchases:1365", 
                 "له تاريخ انتهاء",
                 value=False
             )
@@ -1370,7 +1363,7 @@ def show_page():
             purchase_expiry_date = None
 
             if has_expiry:
-                purchase_expiry_date = st.date_input(
+                purchase_expiry_date = ui_field(st.date_input, "purchases:1373", 
                     "📅 تاريخ انتهاء هذه الدفعة:",
                     value=date.today(),
                     min_value=date.today(),
@@ -1378,7 +1371,7 @@ def show_page():
                 )
 
             add_item_btn = (
-                st.form_submit_button(
+                ui_submit(
                     "➕ إضافة الصنف "
                     "لفاتورة المشتريات",
                     type="primary"
@@ -1541,7 +1534,7 @@ def show_page():
                         }
                     )
 
-                st.success(
+                notify_success(
                     "✅ تمت إضافة الصنف "
                     "لفاتورة المشتريات."
                 )
@@ -1588,7 +1581,7 @@ def show_page():
             }
         )
         d1, d2 = st.columns([3, 1])
-        delete_index = d1.selectbox(
+        delete_index = ui_field(d1.selectbox, "purchases:1591", 
             "حذف سطر من الفاتورة",
             list(range(len(st.session_state["purch_cart"]))),
             format_func=lambda i: f"{i+1} - {st.session_state['purch_cart'][i]['name']}",
@@ -1613,7 +1606,7 @@ def show_page():
 
         st.metric(
             "📌 إجمالي فاتورة المشتريات",
-            f"{grand_total:,.2f} د.ل"
+            f"{decimal_display(grand_total, 2)} د.ل"
         )
 
         col_act1, col_act2 = (
@@ -1676,7 +1669,7 @@ def show_page():
                     ("المورد", ps),
                     ("طريقة الدفع", payment_type),
                     ("عدد الأصناف", str(len(st.session_state["purch_cart"]))),
-                    ("إجمالي الفاتورة", f"{float(grand_total):,.2f} د.ل"),
+                    ("إجمالي الفاتورة", f"{decimal_display(float(grand_total), 2)} د.ل"),
                 ],
             }
             st.rerun()

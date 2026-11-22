@@ -2,3 +2,7 @@ streamlit
 pandas
 openpyxl
 psycopg2-binary
+Pillow
+python-barcode
+requests
+num2words

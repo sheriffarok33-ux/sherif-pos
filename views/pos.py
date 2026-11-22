@@ -1,28 +1,310 @@
+_PAGE_ERROR_UI_REVISION = 71
+from views.page_guard import show_operation_error
+from views.sales_invoice_a4 import show_invoice_a4, credit_balance_snapshot
+from views.dashboard import _validated_role
+from views.ui_feedback import ui_field, ui_form, ui_submit, notify_success, reset_page_fields, focus_barcode
 from views.ui_common import back_button
 from views.ui_common import item_alerts
 import streamlit as st
 import json
 from datetime import datetime
 from database import get_db_connection, ensure_pos_extensions_schema
-from offline_store import get_pos_connection, server_available, pending_count, sync_now
+from views.scoped_permissions import has_scoped_permission
+from offline_store import get_pos_connection, get_local_connection, server_available, pending_count, sync_now, get_central_shift_summary, get_cached_central_shift_summary
+
+
+def _commit_checkout_discount_while_typing():
+    # Streamlit number_input normally sends typed values only on Enter/blur.
+    # Commit this field after a short typing pause, without moving focus or
+    # invoking the invoice-confirmation button.
+    st.components.v1.html(r"""
+<script>
+(() => {
+  const w = window.parent, d = w.document;
+  if (w.__abuzaidDiscountTypingCleanup) w.__abuzaidDiscountTypingCleanup();
+  let timer;
+  const changed = event => {
+    const input = event.target;
+    if (!(input instanceof w.HTMLInputElement) || input.type !== 'number' ||
+        !input.closest('[role="dialog"], [data-testid="stDialog"]')) return;
+    const name = input.getAttribute('aria-label') || '';
+    if (name !== 'قيمة الخصم (د.ل):' && name !== 'نسبة الخصم (%):') return;
+    w.clearTimeout(timer);
+    timer = w.setTimeout(() => {
+      if (!input.isConnected || input.disabled || d.activeElement !== input ||
+          input.value === '' || !input.validity.valid) return;
+      input.dispatchEvent(new w.KeyboardEvent('keydown', {
+        key: 'Enter', code: 'Enter', bubbles: true, cancelable: true
+      }));
+    }, 450);
+  };
+  d.addEventListener('input', changed, true);
+  w.__abuzaidDiscountTypingCleanup = () => {
+    w.clearTimeout(timer);
+    d.removeEventListener('input', changed, true);
+  };
+})();
+</script>
+""", height=0, width=0)
+
+
+# Short-lived cache for the POS connection indicator and admin checks.
+# Manual synchronization continues to use its original uncached implementation.
+@st.cache_data(ttl=10, show_spinner=False)
+def _pos_server_reachable():
+    from auto_sync import auto_sync_status
+    return bool(auto_sync_status().get('server_reachable'))
+
+
+# Keyboard-only cashier flow. This affects browser focus/clicks only;
+# it does not touch checkout validation, invoice posting or synchronization.
+def _cashier_checkout_keyboard():
+    st.components.v1.html(r"""
+<script>
+(() => {
+  const w = window.parent, d = w.document;
+  if (w.__abuZaidCashierCleanup) w.__abuZaidCashierCleanup();
+  if (w.__abuZaidCashierKeys) d.removeEventListener('keydown', w.__abuZaidCashierKeys, true);
+  if (w.__abuZaidCashierObserver) w.__abuZaidCashierObserver.disconnect();
+  const state = w.__abuZaidCheckoutState ||= {phase:'idle', edited:false, pending:false};
+  let pendingTimer;
+  const visible = el => el && el.isConnected !== false && el.getClientRects().length && !el.disabled;
+  const label = el => (el.innerText || el.textContent || '').trim();
+  const dialog = () => d.querySelector('[role="dialog"], [data-testid="stDialog"]');
+  const button = (root, text) => Array.from(root.querySelectorAll('button')).find(el => visible(el) && label(el).includes(text));
+  const paid = root => Array.from(root.querySelectorAll('input')).find(el => visible(el) && el.type === 'number' &&
+    ((el.getAttribute('aria-label') || '').includes('المبلغ المدفوع') ||
+     (el.closest('[data-testid="stNumberInput"]')?.innerText || '').includes('المبلغ المدفوع')));
+  const busy = () => d.querySelector('.stApp')?.getAttribute('data-test-script-state') === 'running';
+  const consume = e => {e.preventDefault(); e.stopImmediatePropagation();};
+  const inspect = () => {
+    const dlg = dialog();
+    if (!dlg) { if (state.phase !== 'opening' && !state.pending && !busy()) Object.assign(state,{phase:'idle',pending:false,ack:false}); return; }
+    const confirm = button(dlg,'تأكيد وإصدار الفاتورة');
+    const ok = button(dlg,'موافق');
+    if (ok && !confirm) {
+      state.phase='success';state.pending=false;
+      if (state.ack && !state.acked) {state.acked=true;state.ack=false;ok.click();}
+      else if (!state.acked && !d.activeElement?.matches('input,textarea,select')) ok.focus({preventScroll:true});
+      return;
+    }
+    if (!confirm) return;
+    if (state.phase !== 'payment') {state.phase='payment';state.confirm=confirm;state.acked=false;}
+    if (state.pending) {
+      if (busy()) state.sawBusy=true;
+      // A completed rerender with the payment dialog still present means the
+      // existing Python validation rejected submission. Permit correction.
+      if (!busy() && (state.confirm !== confirm || state.sawBusy) && performance.now()-state.sentAt>150) {
+        state.pending=false;state.ack=false;state.sawBusy=false;
+      }
+      if (state.pending && !busy() && performance.now()-state.sentAt<=150) {
+        clearTimeout(pendingTimer);pendingTimer=setTimeout(inspect,160-(performance.now()-state.sentAt));
+      }
+    }
+    state.confirm=confirm;
+    if (state.keyboardOpen && !state.focused && !state.edited) {
+      const input=paid(dlg);if (input) {state.focused=true;input.focus({preventScroll:true});}
+    }
+    if (state.commit && !busy()) {state.commit=false;confirm.focus({preventScroll:true});}
+  };
+  const edited = e => {
+    const dlg=dialog();
+    if (e.isTrusted && dlg?.contains(e.target) && e.target.matches('input,textarea,select,[role="combobox"]')) state.edited=true;
+  };
+  const handler = e => {
+    if (!e.isTrusted || e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+    const dlg=dialog();
+    if (e.repeat) {if ((e.key==='Enter' && dlg) || e.key==='F10') consume(e);return;}
+    if (e.key==='F10' && !dlg) {
+      const open=button(d,'دفع واعتماد الفاتورة');
+      if (open) {consume(e);Object.assign(state,{phase:'opening',keyboardOpen:true,edited:false,focused:false,pending:false,ack:false,acked:false,sawBusy:false,commit:false});open.click();}
+      return;
+    }
+    if (e.key!=='Enter' || !dlg) return;
+    if (state.pending && state.phase!=='success') {consume(e);state.ack=true;return;}
+    const confirm=button(dlg,'تأكيد وإصدار الفاتورة');
+    if (confirm) {
+      if (state.pending) {consume(e);state.ack=true;return;}
+      const input=paid(dlg), active=d.activeElement;
+      if (active?.matches('[role="combobox"],select,textarea') || d.querySelector('[role="listbox"]')) return;
+      // Changed fields use native blur/commit, then the original confirmation
+      // and all Python payment/reference/account validation, without defaults.
+      if (state.edited && active===input) {
+        consume(e);state.commit=true;input.blur();setTimeout(inspect,120);return;
+      }
+      if (active!==confirm && !(state.keyboardOpen && !state.edited && input)) return;
+      consume(e);state.pending=true;state.sentAt=performance.now();state.confirm=confirm;state.sawBusy=busy();confirm.click();return;
+    }
+    const ok=button(dlg,'موافق');
+    if (ok && !state.acked && !d.activeElement?.matches('input,textarea,select')) {
+      consume(e);state.acked=true;ok.click();
+    }
+  };
+  d.addEventListener('keydown',handler,true);d.addEventListener('input',edited,true);d.addEventListener('change',edited,true);
+  const observer=new MutationObserver(inspect);
+  observer.observe(d.body,{childList:true,subtree:true,attributes:true,attributeFilter:['disabled','data-test-script-state']});
+  const timer=setTimeout(inspect,90);
+  w.__abuZaidCashierKeys=handler;w.__abuZaidCashierObserver=observer;
+  w.__abuZaidCashierCleanup=()=>{clearTimeout(timer);clearTimeout(pendingTimer);observer.disconnect();d.removeEventListener('keydown',handler,true);d.removeEventListener('input',edited,true);d.removeEventListener('change',edited,true);};
+})();
+
+</script>
+""", height=0, width=0)
+
+
+_real_pos_connection=get_pos_connection
+
+
+def _pos_actor():
+    from views.pos_policy import actor
+    c=get_db_connection()
+    try:return actor(c,st.session_state.get('user_id'))
+    finally:c.close()
+
+
+def get_pos_connection(*args,**kwargs):
+    from views.pos_policy import connection
+    return connection(st.session_state,get_db_connection,lambda:_real_pos_connection(*args,**kwargs))
+
+
+def _pos_branch():return st.session_state.get('_pos_branch_id',st.session_state.get('branch_id'))
 
 
 # ============================================================
 # رقم الوردية
 # ============================================================
 
-def get_current_shift_number():
-    current_hour = datetime.now().hour
+def get_current_shift_number(conn,branch_id):
+    # The isolated sale context has no financial closures. Read the authoritative
+    # branch state without copying history into memory or changing a real shift.
+    if getattr(conn, 'virtual_pos', False):
+        source = get_db_connection()
+        try:
+            return get_current_shift_number(source, branch_id)
+        finally:
+            source.close()
+    _ensure_shift_finance_schema(conn)
+    from views.branch_shift_state import effective_current_shift
+    return effective_current_shift(conn,branch_id)
 
-    if 6 <= current_hour < 16:
-        return 1
+@st.fragment(run_every='5s')
+def _watch_current_shift(branch_id,shown_shift):
+    if _pos_actor()['role']!='Cashier':return
+    conn=None
+    try:
+        from views.branch_shift_state import effective_current_shift
+        conn=get_local_connection(queue_writes=False)
+        current=effective_current_shift(conn,branch_id)
+        from views.branch_shift_state import sale_hold_reason
+        shift_hold=sale_hold_reason(conn,branch_id,shown_shift)
+        hold=conn.execute("SELECT 1 FROM local_meta WHERE key='branch_reset_guard'").fetchone()
+        reset_row=conn.execute('SELECT value FROM local_meta WHERE key=?',('last_branch_reset:'+str(int(branch_id)),)).fetchone()
+        reset_id=json.loads(reset_row[0])['reset_id'] if reset_row else None
+    except Exception:return
+    finally:
+        if conn is not None:conn.close()
+    if shift_hold or current!=shown_shift or hold or (reset_id and reset_id!=st.session_state.get('_pos_reset_seen')):st.rerun(scope='app')
 
-    return 2
+@st.fragment(run_every='5s')
+def _watch_branch_admin_hold():
+    conn=get_local_connection(queue_writes=False)
+    try:hold=conn.execute("SELECT 1 FROM local_meta WHERE key='branch_reset_guard'").fetchone()
+    finally:conn.close()
+    if not hold:st.rerun(scope='app')
+
 
 
 # ============================================================
 # تجهيز السلة
 # ============================================================
+
+def _can_use_sale_draft(conn, branch_id):
+    owner = _pos_actor()
+    if owner['role'] == 'Cashier': return True
+    if owner['role'] != 'Super_Admin': return False
+    from sherif_local_identity import authorized_branch
+    try: return authorized_branch(conn, owner['id'])['branch_id'] == int(branch_id)
+    except (PermissionError, ValueError, TypeError): return False
+
+
+def _bind_sale_draft(conn, branch_id):
+    if not _can_use_sale_draft(conn, branch_id): return
+    reset_row=conn.execute('SELECT value FROM local_meta WHERE key=?',('last_branch_reset:'+str(int(branch_id)),)).fetchone()
+    reset_id=json.loads(reset_row[0])['reset_id'] if reset_row else None
+    if reset_id and st.session_state.get('_pos_reset_seen')!=reset_id:
+        for key in ('_sale_draft_scope','_sale_draft_record','pos_success_pending','pos_success_message','_sale_draft_save_failed'):
+            st.session_state.pop(key,None)
+        st.session_state['cart']=[];st.session_state['last_invoice']=None
+        st.session_state['pos_active_view']='الكاشير السريع';st.session_state['pos_focus_barcode']=True
+        st.session_state['_pos_reset_seen']=reset_id
+    from offline_store import sale_draft_scope, read_sale_draft
+    scope = sale_draft_scope(conn, branch_id, st.session_state.get('user_id'))
+    if st.session_state.get('_sale_draft_scope') == scope:
+        return
+    prior_scope = st.session_state.get('_sale_draft_scope')
+    draft = read_sale_draft(conn, scope)
+    old_cart = st.session_state.get('cart', []) if prior_scope is None else []
+    # Invoice preview belongs only to a sale completed in this live session.
+    # Durable completed drafts prevent duplicate posting; they are not UI state.
+    st.session_state['last_invoice'] = None
+    st.session_state.pop('pos_success_pending', None)
+    st.session_state.pop('pos_success_message', None)
+    st.session_state['pos_active_view'] = 'الكاشير السريع'
+    st.session_state['pos_focus_barcode'] = True
+    st.session_state['_sale_draft_scope'] = scope
+    st.session_state['_sale_draft_record'] = draft if draft and draft['state'] == 'open' else None
+    st.session_state['cart'] = draft.get('cart', []) if draft and draft['state'] == 'open' else old_cart
+    # A committed draft is never restored as a sellable cart after an interrupted UI.
+    if draft and draft['state'] == 'completed':
+        st.session_state['cart'] = []
+    if not draft and old_cart:
+        _persist_sale_draft()
+
+
+def _persist_sale_draft():
+    _validated_role()
+    from offline_store import sale_draft_scope, save_sale_draft
+    conn = get_local_connection()
+    try:
+        if not _can_use_sale_draft(conn, _pos_branch()): return
+        scope = sale_draft_scope(conn, _pos_branch(), st.session_state.get('user_id'))
+        if st.session_state.get('_sale_draft_scope') != scope:
+            raise ValueError('تغير مالك السلة؛ أعد فتح شاشة البيع قبل تعديلها')
+        conn.execute('PRAGMA synchronous=FULL')
+        conn.execute('BEGIN IMMEDIATE')
+        record = save_sale_draft(conn, scope, st.session_state.get('cart', []),
+                                 st.session_state.get('_sale_draft_record'),
+                                 original_shift=get_current_shift_number(conn,scope['branch_id']))
+        conn.commit()
+        st.session_state['_sale_draft_record'] = record
+        st.session_state.pop('_sale_draft_save_failed', None)
+    except Exception:
+        conn.rollback()
+        st.session_state['_sale_draft_save_failed'] = True
+        raise ValueError('تعذر حفظ تعديل السلة على القرص؛ أعد المحاولة ولا تغلق البرنامج قبل نجاح الحفظ')
+    finally:
+        conn.close()
+
+
+def _claim_cashier_draft(conn, branch_id):
+    if getattr(conn,"virtual_pos",False):return None,{"state":"open"}
+    from offline_store import sale_draft_scope, claim_sale_draft
+    scope = sale_draft_scope(conn, branch_id, st.session_state.get('user_id'))
+    if st.session_state.get('_sale_draft_scope') != scope or st.session_state.get('_sale_draft_save_failed'):
+        raise ValueError('يلزم حفظ السلة والتحقق من مالكها قبل البيع')
+    if conn.in_transaction:
+        raise ValueError('توجد عملية حفظ أخرى؛ أعد المحاولة قبل اعتماد البيع')
+    conn.execute('PRAGMA synchronous=FULL')
+    conn.execute('BEGIN IMMEDIATE')
+    owner=conn.execute('SELECT role,branch_id,is_active FROM users WHERE id=?',(st.session_state.get('user_id'),)).fetchone()
+    if not owner or not owner['is_active'] or not _can_use_sale_draft(conn,branch_id):raise PermissionError('تغير تصريح البيع؛ لم تُسجل فاتورة حقيقية')
+    if owner['role']=='Cashier' and int(owner['branch_id'] or -1)!=int(branch_id):raise PermissionError('تغير فرع الكاشير؛ لم تُسجل فاتورة حقيقية')
+    from views.branch_shift_state import sale_hold_reason
+    reason=sale_hold_reason(conn,branch_id,(st.session_state.get('_sale_draft_record') or {}).get('original_shift'))
+    if reason:raise ValueError(reason)
+    draft = claim_sale_draft(conn, scope, st.session_state.get('_sale_draft_record'), st.session_state['cart'])
+    return scope, draft
+
 
 def ensure_cart():
     if "cart" not in st.session_state:
@@ -42,7 +324,7 @@ def ensure_inventory_batches_table(conn):
         """
         CREATE TABLE IF NOT EXISTS inventory_batches
         (
-            id BIGSERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             item_id INTEGER NOT NULL,
             branch_id INTEGER NOT NULL,
             quantity NUMERIC DEFAULT 0,
@@ -190,8 +472,9 @@ def get_item_stock_expiry_alert(conn, item_id, branch_id, cart_qty, threshold=5.
     }
 
 
-@st.dialog("🚨 تنبيه مخزون وصلاحية", width="large")
+@st.dialog("🚨 تنبيه مخزون وصلاحية", width="large", dismissible=False)
 def stock_expiry_warning_dialog(alert):
+    _validated_role()
     st.error("⚠️ تنبيه مهم — يرجى مراجعة حالة الصنف قبل متابعة العمل.")
 
     if alert.get("low_stock"):
@@ -227,6 +510,8 @@ def stock_expiry_warning_dialog(alert):
 
     st.caption("هذا التنبيه يظهر لكل المواقع والفروع، بما فيها المخزن الرئيسي.")
     if st.button("✅ فهمت التنبيه", type="primary", use_container_width=True):
+        st.session_state.pop("pos_stock_alert", None)
+        st.session_state["pos_focus_barcode"] = True
         st.rerun()
 
 
@@ -286,24 +571,25 @@ def deduct_batches_fefo(conn, item_id, branch_id, requested_qty):
 # إضافة صنف غير موجود
 # ============================================================
 
-@st.dialog("⚠️ صنف غير مسجل - إضافة سريعة")
+@st.dialog("⚠️ صنف غير مسجل - إضافة سريعة", dismissible=False)
 def add_missing_item_dialog(scanned_code, b_id):
 
+    _validated_role()
     st.warning(
         f"الكود ({scanned_code}) غير موجود في هذا الفرع. "
         "يمكنك إضافته وبيعه فوراً."
     )
 
-    with st.form("quick_add_missing_item_form"):
+    with ui_form("quick_add_missing_item_form"):
 
-        new_item_name = st.text_input(
+        new_item_name = ui_field(st.text_input, "pos:299", 
             "اسم الصنف:"
         )
 
         col_q1, col_q2 = st.columns(2)
 
         with col_q1:
-            new_item_qty = st.number_input(
+            new_item_qty = ui_field(st.number_input, "pos:306", 
                 "الكمية:",
                 min_value=0.01,
                 value=1.0,
@@ -311,7 +597,7 @@ def add_missing_item_dialog(scanned_code, b_id):
             )
 
         with col_q2:
-            new_item_price = st.number_input(
+            new_item_price = ui_field(st.number_input, "pos:314", 
                 "سعر البيع (د.ل):",
                 min_value=0.0,
                 value=0.0,
@@ -319,10 +605,15 @@ def add_missing_item_dialog(scanned_code, b_id):
                 format="%.2f"
             )
 
-        submitted = st.form_submit_button(
+        submitted = ui_submit(
             "💾 إضافة للسلة ومتابعة البيع",
             type="primary"
         )
+
+    if st.button("إلغاء والعودة للباركود", key="pos_missing_cancel"):
+        st.session_state.pop("pos_missing_item", None)
+        st.session_state["pos_focus_barcode"] = True
+        st.rerun()
 
     if not submitted:
         return
@@ -340,7 +631,12 @@ def add_missing_item_dialog(scanned_code, b_id):
     conn = None
 
     try:
-        conn, _pos_mode = get_pos_connection()
+        conn, _pos_mode = get_pos_connection(actor_id=st.session_state.get('user_id'))
+
+        if conn.execute("SELECT 1 FROM local_meta WHERE key='branch_reset_guard'").fetchone():
+            st.warning('يوجد إجراء إداري معتمد للفرع قيد الاستكمال. بياناتك المعلقة محفوظة؛ راجع المسؤول قبل البيع.')
+            _watch_branch_admin_hold()
+            return
 
         if _pos_mode in ("offline", "local"):
             st.warning("🟠 إضافة صنف جديد من نقطة البيع غير متاحة في وضع Local-first. استخدم الأصناف التي تم تنزيلها مسبقًا، ثم أضف الصنف الجديد بعد عودة الاتصال.")
@@ -411,7 +707,9 @@ def add_missing_item_dialog(scanned_code, b_id):
             }
         )
 
-        st.success(
+        _persist_sale_draft()
+        st.session_state.pop("pos_missing_item", None)
+        notify_success(
             "✅ تمت إضافة الصنف للسلة."
         )
 
@@ -426,7 +724,7 @@ def add_missing_item_dialog(scanned_code, b_id):
             "❌ تعذر إضافة الصنف."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/pos.py:715')
 
     finally:
 
@@ -438,8 +736,12 @@ def add_missing_item_dialog(scanned_code, b_id):
 # شاشة الدفع والخصم
 # ============================================================
 
-@st.dialog("✅ تمت العملية بنجاح")
+@st.dialog("✅ تمت العملية بنجاح", dismissible=False)
 def _pos_success_dialog():
+    # Keep keyboard handler mounted while the success dialog is open.
+    # The main cashier page stops rendering during this dialog.
+    _validated_role()
+    _cashier_checkout_keyboard()
     st.success(
         st.session_state.get(
             "pos_success_message",
@@ -452,6 +754,7 @@ def _pos_success_dialog():
     inv = st.session_state.get("last_invoice")
     if inv:
         html_file_content = build_invoice_print_html(inv)
+        show_invoice_a4(inv, key='a4_saved_1_'+str(inv['inv_id']))
         st.components.v1.html(
             html_file_content,
             height=330,
@@ -473,6 +776,7 @@ def _pos_success_dialog():
         key="pos_success_ok"
     ):
         # تنظيف بيانات العملية السابقة وبدء فاتورة جديدة فوراً.
+        reset_page_fields()
         st.session_state["cart"] = []
         for key in [
             "pos_customer_name",
@@ -504,22 +808,24 @@ def checkout_payment_dialog(
     daily_inv_num
 ):
 
+    _validated_role()
+    _cashier_checkout_keyboard()
     st.subheader(
         f"إجمالي الفاتورة قبل الخصم: "
         f"{gross_total:,.2f} د.ل"
     )
 
-    cust_name = st.text_input(
+    cust_name = ui_field(st.text_input, "pos:512", 
         "اسم الزبون:",
         value=st.session_state.get("pos_customer_name", "زبون نقدي")
     )
 
-    cust_phone = st.text_input(
+    cust_phone = ui_field(st.text_input, "pos:517", 
         "رقم الهاتف (اختياري):",
         value=st.session_state.get("pos_customer_phone", "")
     )
 
-    marketing_consent = st.checkbox(
+    marketing_consent = ui_field(st.checkbox, "pos:522", 
         "يوافق العميل على استقبال العروض والرسائل التسويقية",
         value=bool(st.session_state.get("pos_marketing_consent", False))
     )
@@ -530,7 +836,8 @@ def checkout_payment_dialog(
 
     st.markdown("### 🎁 خصم على الفاتورة")
 
-    discount_type = st.radio(
+    # Register the mode with the existing rerun preservation/success reset.
+    discount_type = ui_field(st.radio, "pos:discount_mode",
         "طريقة الخصم:",
         [
             "بدون خصم",
@@ -545,12 +852,19 @@ def checkout_payment_dialog(
 
     if discount_type == "خصم بمبلغ":
 
-        discount_value = st.number_input(
+        # The old generated widget identity included the changing gross total.
+        # Keep one identity across redraws and preserve the current entered value.
+        amount_key = "_entry_pos:548_amount"
+        if amount_key not in st.session_state:
+            previous_keys = [k for k in st.session_state.get("_entry_fields", {})
+                             if k.startswith("_entry_pos:548_") and k in st.session_state]
+            st.session_state[amount_key] = float(st.session_state[previous_keys[-1]]) if previous_keys else 0.0
+        discount_value = ui_field(st.number_input, "pos:548",
             "قيمة الخصم (د.ل):",
+            key=amount_key,
             min_value=0.0,
-            max_value=float(gross_total),
             value=0.0,
-            step=0.5,
+            step=0.01,
             format="%.2f"
         )
 
@@ -560,7 +874,7 @@ def checkout_payment_dialog(
 
     elif discount_type == "خصم بنسبة %":
 
-        discount_value = st.number_input(
+        discount_value = ui_field(st.number_input, "pos:563", 
             "نسبة الخصم (%):",
             min_value=0.0,
             max_value=100.0,
@@ -574,6 +888,9 @@ def checkout_payment_dialog(
             * float(discount_value)
             / 100.0
         )
+
+    if discount_type != "بدون خصم":
+        _commit_checkout_discount_while_typing()
 
     discount_amount = min(
         discount_amount,
@@ -589,6 +906,27 @@ def checkout_payment_dialog(
     # ========================================================
     # عرض الحسبة
     # ========================================================
+    # Keep amounts legible inside the narrow checkout dialog, including RTL.
+    st.markdown("""
+    <style>
+    [data-testid="stDialog"] [data-testid="stMetricValue"] {
+        font-size: clamp(0.95rem, 2.5vw, 1.35rem) !important;
+        line-height: 1.45 !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        white-space: nowrap !important;
+        letter-spacing: -0.025em !important;
+    }
+    [data-testid="stDialog"] [data-testid="stMetric"] {
+        min-width: 0 !important;
+    }
+    @media (max-width: 600px) {
+        [data-testid="stDialog"] [data-testid="stMetricValue"] {
+            font-size: 0.95rem !important;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     c_total1, c_total2, c_total3 = (
         st.columns(3)
@@ -633,7 +971,7 @@ def checkout_payment_dialog(
     # الدفع
     # ========================================================
 
-    pay_method = st.selectbox(
+    pay_method = ui_field(st.selectbox, "pos:657", 
         "نوع الدفع:",
         [
             "كاش (نقدي)",
@@ -645,25 +983,20 @@ def checkout_payment_dialog(
     )
 
     conn = None
+    _pos_priority_held = False
     accounts = []
     selected_account_id = None
 
     try:
-        conn, _pos_mode = get_pos_connection()
+        conn, _pos_mode = get_pos_connection(actor_id=st.session_state.get('user_id'))
 
         if pay_method == "آجل (على الحساب)":
 
-            accounts = conn.execute(
-                """
-                SELECT
-                    id,
-                    customer_name,
-                    phone,
-                    balance
-                FROM customers
-                ORDER BY customer_name
-                """
-            ).fetchall()
+            from views.party_reference import credit_accounts
+            accounts = credit_accounts(conn)
+            from views.scale_quantity import credit_freshness
+            freshness=credit_freshness(conn)
+            if freshness:st.caption(freshness)
 
             if accounts:
 
@@ -678,7 +1011,7 @@ def checkout_payment_dialog(
                     for a in accounts
                 }
 
-                sel_acc_str = st.selectbox(
+                sel_acc_str = ui_field(st.selectbox, "pos:702", 
                     "📌 اختر الزبون الآجل:",
                     list(acc_opts.keys())
                 )
@@ -726,7 +1059,7 @@ def checkout_payment_dialog(
 
         else:
 
-            paid_amount = st.number_input(
+            paid_amount = ui_field(st.number_input, "pos:750", 
                 "المبلغ المدفوع (د.ل):",
                 min_value=0.0,
                 value=float(final_tot),
@@ -738,6 +1071,9 @@ def checkout_payment_dialog(
                 float(paid_amount)
                 - float(final_tot)
             )
+            # Ignore binary-float noise only; a real monetary shortfall still fails.
+            if abs(change_due) <= 1e-9:
+                change_due = 0.0
 
             if change_due >= 0:
 
@@ -767,6 +1103,18 @@ def checkout_payment_dialog(
         if not confirm_invoice:
             return
 
+        from offline_store import begin_pos_priority
+        begin_pos_priority()
+        _pos_priority_held = True
+        owner=_pos_actor()
+        if owner['role']=='Cashier':
+            from views.branch_shift_state import registered_pos_branch
+            if registered_pos_branch(conn,owner['id'])[0]!=int(b_id):raise PermissionError('البيع الحقيقي مقصور على فرع الكاشير والجهاز المسجل')
+        elif not getattr(conn,'virtual_pos',False):
+            if owner['role']!='Super_Admin':raise PermissionError('تعذر اعتماد سياق POS لهذا الحساب؛ أعد فتح شاشة البيع')
+            from sherif_local_identity import authorized_branch
+            if authorized_branch(conn,owner['id'])['branch_id']!=int(b_id):raise PermissionError('البيع خارج فرع الجهاز غير مسموح')
+
         if (
             pay_method == "آجل (على الحساب)"
             and not selected_account_id
@@ -778,7 +1126,7 @@ def checkout_payment_dialog(
 
         if (
             pay_method != "آجل (على الحساب)"
-            and paid_amount < final_tot
+            and change_due < 0.0
         ):
             st.warning(
                 "⚠️ المبلغ المدفوع أقل "
@@ -786,93 +1134,65 @@ def checkout_payment_dialog(
             )
             return
 
-        # ====================================================
-        # التأكد من المخزون قبل البيع
-        # ====================================================
+        owner=_pos_actor()
+        if owner['role']=='Cashier' and getattr(conn,'virtual_pos',False):raise PermissionError('تغير سياق البيع؛ أعد فتح شاشة POS')
+        if owner['role']!='Cashier' and not getattr(conn,'virtual_pos',False):
+            from sherif_local_identity import authorized_branch
+            if owner['role']!='Super_Admin' or authorized_branch(conn,owner['id'])['branch_id']!=int(b_id):raise PermissionError('تغير سياق البيع؛ أعد فتح شاشة POS')
 
+        # ====================================================
+        # رصد البيع الاستثنائي دون إيقاف البيع أو تنبيه الكاشير
+        # لا تُسجل التسوية تلقائياً؛ يراجعها المسؤول في لوحة التحكم.
+        # ====================================================
+        _draft_scope, _checkout_draft = _claim_cashier_draft(conn, b_id)
+        if _checkout_draft['state'] == 'completed':
+            conn.rollback()
+            st.session_state['last_invoice'] = _checkout_draft.get('print_data')
+            st.session_state['cart'] = []
+            st.session_state['_sale_draft_record'] = None
+            st.session_state['pos_success_pending'] = True
+            st.session_state['pos_success_message'] = 'الفاتورة محفوظة بالفعل؛ لم يتم إنشاء بيع جديد.'
+            st.rerun()
         ensure_inventory_batches_table(conn)
-
+        stock_exceptions = []
+        requested_by_item = {}
         for cart_item in st.session_state["cart"]:
-
             if cart_item.get("id") == 99999:
                 continue
-
+            item_id = int(cart_item["id"])
+            requested_by_item[item_id] = requested_by_item.get(item_id, 0.0) + float(cart_item["qty"])
+        for item_id, requested_qty in requested_by_item.items():
             stock_row = conn.execute(
-                """
-                SELECT
-                    id,
-                    item_name,
-                    quantity
-                FROM items
-                WHERE id = ?
-                  AND branch_id = ?
-                FOR UPDATE
-                """,
-                (
-                    cart_item["id"],
-                    b_id
-                )
+                "SELECT id, item_name, quantity FROM items WHERE id=? AND branch_id=? FOR UPDATE",
+                (item_id, b_id)
             ).fetchone()
-
             if not stock_row:
-                raise ValueError(
-                    f"الصنف "
-                    f"({cart_item['name']}) "
-                    "غير موجود في هذا الفرع."
-                )
-
-            total_stock_qty = float(
-                stock_row["quantity"] or 0
-            )
-
-            expired_tracked_qty = get_expired_tracked_quantity(
-                conn,
-                cart_item["id"],
-                b_id
-            )
-
-            available_qty = max(
-                0.0,
-                total_stock_qty - expired_tracked_qty
-            )
-
-            requested_qty = float(
-                cart_item["qty"]
-            )
-
-            if requested_qty > available_qty:
-
-                expiry_note = (
-                    f" ويوجد {expired_tracked_qty:,.2f} "
-                    "منتهي الصلاحية وغير متاح للبيع."
-                    if expired_tracked_qty > 0
-                    else ""
-                )
-
-                if st.session_state.get("role", "") in [
-                    "Admin",
-                    "General_Supervisor",
-                    "Branch_Supervisor"
-                ]:
-                    raise ValueError(
-                        f"الكمية غير كافية للصنف "
-                        f"({cart_item['name']}). "
-                        f"المتاح للبيع: "
-                        f"{available_qty:,.2f}"
-                        f"{expiry_note}"
-                    )
-
-                raise ValueError(
-                    f"الكمية المطلوبة غير متاحة للصنف "
-                    f"({cart_item['name']}). "
-                    "يرجى تقليل الكمية أو مراجعة المشرف."
-                )
+                raise ValueError("الصنف غير مسجل في الفرع المختار.")
+            total_stock_qty = float(stock_row["quantity"] or 0)
+            expired_tracked_qty = get_expired_tracked_quantity(conn, item_id, b_id)
+            available_qty = max(0.0, total_stock_qty - expired_tracked_qty)
+            if requested_qty > available_qty + 1e-8:
+                stock_exceptions.append({
+                    "item_id": item_id,
+                    "item_name": stock_row["item_name"],
+                    "requested_qty": requested_qty,
+                    "available_qty": available_qty,
+                    "shortfall_qty": round(requested_qty - available_qty, 6),
+                    "branch_id": b_id,
+                    "user_id": st.session_state.get("user_id", 1),
+                    "recorded_at": datetime.now().isoformat(timespec="seconds"),
+                })
 
         # ====================================================
         # بيانات الأصناف والخصم داخل notes
         # ====================================================
 
+        from views.invoice_qr_image import selected_snapshot, company_name
+        qr_asset_key, qr_image = selected_snapshot(conn)
         invoice_details = {
+            "invoice_qr_asset": qr_asset_key,
+            "_non_financial":bool(getattr(conn,"virtual_pos",False)),
+            "_pos_policy_version":21,
             "items":
                 st.session_state[
                     "cart"
@@ -891,9 +1211,16 @@ def checkout_payment_dialog(
                 float(discount_amount),
 
             "final_total":
-                float(final_tot)
+                float(final_tot),
+            "stock_exceptions": stock_exceptions
         }
 
+        if not getattr(conn,'virtual_pos',False):
+            from branch_auth import local_device_info
+            invoice_details['_source_device_number']=local_device_info().get('device_number')
+        if selected_account_id and pay_method == "آجل (على الحساب)":
+            invoice_details["customer_id"] = int(selected_account_id)
+            invoice_details["account_statement"] = credit_balance_snapshot(conn, selected_account_id, final_tot)
         invoice_json = json.dumps(
             invoice_details,
             ensure_ascii=False
@@ -911,7 +1238,7 @@ def checkout_payment_dialog(
         clean_phone = final_customer_phone
         clean_name = final_customer_name
 
-        if clean_phone:
+        if clean_phone and not (selected_account_id and pay_method == "آجل (على الحساب)"):
             existing_customer = conn.execute(
                 "SELECT id FROM customers WHERE phone = ? LIMIT 1",
                 (clean_phone,)
@@ -977,6 +1304,33 @@ def checkout_payment_dialog(
         ).fetchone()
 
         inv_id = invoice_row["id"]
+        from offline_store import claim_windows_invoice_number
+        from sherif_local_identity import MODE_KEY, authorized_branch
+        local_marker=conn.execute('SELECT 1 FROM local_meta WHERE key=?',(MODE_KEY,)).fetchone()
+        if getattr(conn,'virtual_pos',False): reserved_number=conn.next_number()
+        elif local_marker:
+            binding=authorized_branch(conn,st.session_state.get('user_id'))
+            generated=conn.execute('SELECT invoice_number,source_device_id FROM invoices WHERE id=?',(inv_id,)).fetchone()
+            if binding['branch_id']!=int(b_id) or not generated or not generated['invoice_number'] or generated['source_device_id']!=binding['device_id']: raise ValueError('تعذر تأكيد رقم الفاتورة أو هوية الجهاز المحلي؛ لم يحفظ البيع.')
+            reserved_number=generated['invoice_number']
+        else: reserved_number=claim_windows_invoice_number(conn,b_id)
+        conn.execute('UPDATE invoices SET invoice_number=? WHERE id=?',(reserved_number,inv_id))
+        conn.execute('UPDATE invoices SET sold_at=? WHERE id=?', (datetime.now().astimezone().isoformat(timespec='seconds'),inv_id))
+        invoice_number_row = conn.execute(
+            "SELECT invoice_number FROM invoices WHERE id=?", (inv_id,)
+        ).fetchone()
+        invoice_number = invoice_number_row["invoice_number"] if invoice_number_row else None
+
+        # سجل رقابي محلي لا يحتاج إلى صلاحية من الكاشير.
+        # نقل التنبيه للسيرفر يتم مع نفس الفاتورة أثناء المزامنة.
+        for exception in stock_exceptions:
+            conn.execute(
+                """INSERT INTO negative_sales_logs
+                   (branch_id, user_id, item_name, sale_qty, log_time)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (b_id, exception["user_id"], exception["item_name"],
+                 exception["shortfall_qty"], exception["recorded_at"])
+            )
 
         # ====================================================
         # خصم المخزون
@@ -1040,20 +1394,17 @@ def checkout_payment_dialog(
                 )
             )
 
-        conn.commit()
-
-        # ====================================================
-        # حفظ آخر فاتورة للطباعة
-        # ====================================================
-
-        st.session_state[
-            "last_invoice"
-        ] = {
+        _draft_print_data = {
+            "invoice_qr_image": qr_image,
+            "company_name": company_name(conn),
+            "_non_financial":bool(getattr(conn,"virtual_pos",False)),
             "inv_id":
                 inv_id,
 
             "daily_inv_num":
                 daily_inv_num,
+
+            "invoice_number": invoice_number,
 
             "branch":
                 branch_name_str,
@@ -1093,11 +1444,27 @@ def checkout_payment_dialog(
                 float(final_tot),
 
             "method":
-                pay_method
+                pay_method,
+            "account_statement": invoice_details.get("account_statement")
         }
+        if not getattr(conn,'virtual_pos',False):
+            from offline_store import complete_sale_draft
+            complete_sale_draft(conn, _draft_scope, _checkout_draft, inv_id, _draft_print_data)
+        conn.commit()
+        st.session_state['_sale_draft_record'] = None
+        if not getattr(conn,'virtual_pos',False):_request_background_sync('invoice_saved')
 
-        # لا نمسح بيانات العملية فوراً؛ نعرض نافذة نجاح إلزامية أولاً.
-        # التنظيف يتم فقط عند ضغط المستخدم على "موافق".
+        # ====================================================
+        # حفظ آخر فاتورة للطباعة
+        # ====================================================
+
+        st.session_state[
+            "last_invoice"
+        ] = _draft_print_data
+
+        st.session_state["cart"] = []
+        # الفاتورة محفوظة في last_invoice للعرض والطباعة.
+        # تعاد الحقول إلى قيمها الافتراضية عند ضغط المستخدم على "موافق".
         st.session_state["pos_success_pending"] = True
         st.session_state["pos_success_message"] = (
             f"تم إصدار الفاتورة رقم #{inv_id} بنجاح."
@@ -1122,17 +1489,49 @@ def checkout_payment_dialog(
             "❌ حدث خطأ أثناء إصدار الفاتورة."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/pos.py:1462')
 
     finally:
 
-        if conn:
-            conn.close()
+        try:
+            if conn:
+                conn.close()
+        finally:
+            if _pos_priority_held:
+                from offline_store import end_pos_priority
+                end_pos_priority()
 
 
 # ============================================================
 # معالجة باركود الميزان
 # ============================================================
+
+def _request_background_sync(reason):
+    try:
+        from auto_sync import request_sync
+        request_sync(reason)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('Could not schedule background sync')
+
+
+def _pos_optional_rows(conn, query):
+    """Only a missing optional table may fall back; preserve the caller transaction."""
+    import sqlite3
+    ddl=getattr(conn, '_conn', conn)
+    ddl.execute('SAVEPOINT pos_optional_read')
+    try:
+        rows=conn.execute(query).fetchall()
+    except Exception as exc:
+        ddl.execute('ROLLBACK TO SAVEPOINT pos_optional_read')
+        ddl.execute('RELEASE SAVEPOINT pos_optional_read')
+        if getattr(exc, 'pgcode', None)=='42P01' or (isinstance(exc,sqlite3.OperationalError) and 'no such table:' in str(exc)):
+            import logging
+            logging.getLogger(__name__).warning('Optional POS table missing; read isolated at savepoint')
+            return []
+        raise
+    ddl.execute('RELEASE SAVEPOINT pos_optional_read')
+    return rows
 
 def _scale_settings(conn):
     defaults = {
@@ -1141,14 +1540,10 @@ def _scale_settings(conn):
         "scale_value_start": "7", "scale_value_length": "5",
         "scale_value_mode": "price", "scale_divisor": "100",
     }
-    try:
-        rows = conn.execute(
-            "SELECT setting_key, setting_value FROM app_settings WHERE setting_key LIKE 'scale_%'"
-        ).fetchall()
-        for row in rows:
-            defaults[row["setting_key"]] = str(row["setting_value"] or "")
-    except Exception:
-        pass
+    rows = _pos_optional_rows(conn,
+        "SELECT setting_key, setting_value FROM app_settings WHERE setting_key LIKE 'scale_%'")
+    for row in rows:
+        defaults[row["setting_key"]] = str(row["setting_value"] or "")
     return defaults
 
 
@@ -1206,9 +1601,7 @@ def process_barcode_scan():
     if not code:
         return
 
-    b_id = st.session_state.get(
-        "branch_id"
-    )
+    b_id = _pos_branch()
 
     if not b_id:
         st.error(
@@ -1220,72 +1613,31 @@ def process_barcode_scan():
 
     try:
 
-        conn, _pos_mode = get_pos_connection()
+        conn, _pos_mode = get_pos_connection(actor_id=st.session_state.get('user_id'))
 
-        item = None
-
-        # ====================================================
-        # باركود الميزان - الصيغة يحددها الأدمن من الإعدادات
-        # ====================================================
-
-        scale_data = _parse_scale_barcode(conn, code)
+        from views.item_barcodes import resolve_plain,resolve_scale,parse_scale
+        cfg=_scale_settings(conn)
+        # Exact manufacturer/primary/alias match wins only when unambiguous.
+        item=resolve_plain(conn,b_id,code)
+        if item is None and code.isascii() and code.isdigit() and len(code)<=18:
+            item=conn.execute('SELECT * FROM items WHERE id=? AND branch_id=?', (int(code),b_id)).fetchone()
+        try:scale_data=parse_scale(code,cfg)
+        except ValueError:
+            if item is None:raise
+            scale_data=None
         if scale_data:
-            item_code = scale_data["item_code"]
-            alt_item_code = item_code.lstrip("0") or "0"
-            item = conn.execute(
-                """
-                SELECT *
-                FROM items
-                WHERE branch_id = ?
-                  AND (scale_code = ? OR scale_code = ? OR item_code = ? OR item_code = ?)
-                ORDER BY CASE
-                    WHEN scale_code = ? THEN 0
-                    WHEN scale_code = ? THEN 1
-                    WHEN item_code = ? THEN 2
-                    ELSE 3 END
-                LIMIT 1
-                """,
-                (b_id, item_code, alt_item_code, item_code, alt_item_code,
-                 item_code, alt_item_code, item_code)
-            ).fetchone()
-
-            if not item:
-                raise ValueError(
-                    f"باركود ميزان صحيح، لكن كود الميزان {item_code} غير مربوط بأي صنف في هذا الفرع. "
-                    "اربطه من المخازن والأصناف ← كود الميزان / PLU."
-                )
-
-            if item:
-                embedded_value = float(scale_data["value"])
-                if scale_data["mode"] == "price":
-                    sale_price = float(item["sale_price"] or 0)
-                    if sale_price <= 0:
-                        raise ValueError("لا يمكن حساب كمية صنف الميزان لأن سعر البيع صفر")
-                    qty_to_add = embedded_value / sale_price
-                else:
-                    qty_to_add = embedded_value
-
-                if qty_to_add <= 0:
-                    raise ValueError("الوزن الناتج من باركود الميزان يجب أن يكون أكبر من صفر")
-
-        # ====================================================
-        # باركود عادي
-        # ====================================================
-
-        if not item:
-
-            item = conn.execute(
-                """
-                SELECT *
-                FROM items
-                WHERE item_code = ?
-                  AND branch_id = ?
-                """,
-                (
-                    code,
-                    b_id
-                )
-            ).fetchone()
+            scale_item=resolve_scale(conn,b_id,scale_data['item_code'],int(cfg.get('scale_item_length',5)))
+            if item is not None:
+                if scale_item is not None and int(scale_item['id'])!=int(item['id']):
+                    raise ValueError('الباركود يطابق صنف مصنع وصنف ميزان مختلفين؛ يلزم تصحيح الربط قبل البيع')
+                scale_data=None
+            else:item=scale_item
+        if scale_data:
+            if item is None:raise ValueError('كود الميزان غير مربوط بصنف في هذا الفرع')
+            from views.scale_prices import measurement
+            measured_weight,scale_measurement=measurement(scale_data,item,cfg.get('scale_divisor',100))
+            qty_to_add=float(measured_weight)
+            if qty_to_add<=0:raise ValueError('كمية الميزان يجب أن تكون موجبة')
 
         if item:
 
@@ -1331,6 +1683,9 @@ def process_barcode_scan():
 
                         "name":
                             item["item_name"],
+                        "scale_measurement": scale_measurement if scale_data else None,
+                        "unit": item["unit"] if "unit" in item.keys() else "",
+                        "description": item["description"] if "description" in item.keys() else "",
 
                         "price":
                             unit_price,
@@ -1346,6 +1701,7 @@ def process_barcode_scan():
                     }
                 )
 
+            _persist_sale_draft()
             # تنبيه إجباري فور إضافة الصنف للسلة، وليس في آخر نافذة الدفع.
             cart_total_qty = 0.0
             for _cart_item in st.session_state["cart"]:
@@ -1365,7 +1721,7 @@ def process_barcode_scan():
             ] = 1.0
 
             if _stock_expiry_alert:
-                stock_expiry_warning_dialog(_stock_expiry_alert)
+                st.session_state["pos_stock_alert"] = _stock_expiry_alert
                 return
 
         else:
@@ -1373,10 +1729,7 @@ def process_barcode_scan():
             conn.close()
             conn = None
 
-            add_missing_item_dialog(
-                code,
-                b_id
-            )
+            st.session_state["pos_missing_item"] = (code, b_id)
 
             return
 
@@ -1386,13 +1739,14 @@ def process_barcode_scan():
             "❌ حدث خطأ أثناء قراءة الباركود."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/pos.py:1707')
 
     finally:
 
         if conn:
             conn.close()
 
+        st.session_state["pos_focus_barcode"] = True
         st.session_state[
             "barcode_scan_input"
         ] = ""
@@ -1483,6 +1837,18 @@ def summarize_invoice_rows(rows):
         if method in payment_totals:
             payment_totals[method] += net
 
+        # تضمين البيع الاستثنائي في تقارير الوردية والإغلاق اليومي.
+        for ex in details.get("stock_exceptions", []) or []:
+            if not isinstance(ex, dict):
+                continue
+            item_name = str(ex.get("item_name") or "صنف غير محدد")
+            qty = float(ex.get("requested_qty") or 0)
+            shortfall = float(ex.get("shortfall_qty") or 0)
+            status = str(ex.get("review_status") or "بانتظار المراجعة")
+            exceptions.append(
+                f"بيع استثنائي: {item_name} | كمية {qty:.2f} | عجز {shortfall:.2f} | {status}"
+            )
+
         if discount > 0:
             discounted_count += 1
             exceptions.append(f"خصم على فاتورة بقيمة {discount:,.2f} د.ل")
@@ -1522,12 +1888,13 @@ def make_printable_html(body_html, title="طباعة"):
         <meta charset="utf-8">
         <title>{title}</title>
         <style>
-            @page {{ size: 80mm auto; margin: 3mm; }}
+            @page {{ margin: 3mm; }}
             body {{
                 font-family: Arial, sans-serif;
                 direction: rtl;
                 text-align: center;
-                width: 72mm;
+                width: 100%;
+                max-width: 72mm;
                 margin: 0 auto;
                 color: #000;
                 background: #fff;
@@ -1558,6 +1925,8 @@ def make_printable_html(body_html, title="طباعة"):
 
 
 def build_invoice_print_html(inv):
+    from views.invoice_qr_image import invoice_qr_html
+    from html import escape
     items_html = "".join(
         [
             (
@@ -1584,12 +1953,12 @@ def build_invoice_print_html(inv):
         """
 
     body = f"""
-        <h2>مجموعة أبو زيد التجارية</h2>
+        <h2>{escape(str(inv.get('company_name') or 'المنشأة'))}</h2>
         <p>فرع: {inv.get('branch', '-')}</p>
         <hr>
         <p style="text-align:right;">
             <b>رقم فاتورة اليوم:</b> #{inv.get('daily_inv_num', '-')}<br>
-            <b>رقم الفاتورة:</b> #{inv.get('inv_id', '-')}<br>
+            <b>رقم الفاتورة:</b> {inv.get('invoice_number') or ('#' + str(inv.get('inv_id', '-')))}<br>
             <b>التاريخ:</b> {inv.get('date_time', '-')}<br>
             <b>الكاشير:</b> {inv.get('cashier', '-')}<br>
             <b>الوردية:</b> {inv.get('shift', '-')}<br>
@@ -1605,14 +1974,47 @@ def build_invoice_print_html(inv):
         {discount_html}
         <h3 class="left">الصافي: {total:,.2f} د.ل</h3>
         <p>شكراً لتسوقكم معنا 🥜</p>
+        {invoice_qr_html(inv.get('invoice_qr_image'))}
     """
-    return make_printable_html(body, f"Invoice {inv.get('inv_id', '')}")
+    from views.pos_policy import document_html
+    return document_html(make_printable_html(body, f"Invoice {inv.get('inv_id', '')}"),inv)
+
+
+def get_shift_user_sales(conn, invoice_rows):
+    grouped = {}
+    for row in invoice_rows:
+        uid = row["user_id"]
+        key = str(uid) if uid is not None else "unknown"
+        grouped.setdefault(key, []).append(row)
+    names = {}
+    for u in _pos_optional_rows(conn, "SELECT id, username FROM users"):
+        names[str(u["id"])] = str(u["username"])
+    result = []
+    for key, rows in grouped.items():
+        subtotal = summarize_invoice_rows(rows)
+        result.append({"name": names.get(key, f"مستخدم رقم {key}"), "count": subtotal["invoice_count"], "gross": subtotal["gross_total"], "discount": subtotal["discount_total"], "net": subtotal["net_total"]})
+    return sorted(result, key=lambda x: (-x["net"], x["name"]))
 
 
 def build_shift_report_html(
     report_title, branch_name, username, shift_num, summary,
-    supplier_payments_total=0.0
+    supplier_payments_total=0.0, user_sales=None
 ):
+    from html import escape
+    user_sales = user_sales or []
+    user_rows_html = "".join(
+        "<tr><td>" + escape(u["name"]) + "</td>"
+        + f'<td>{u["count"]}</td><td>{u["gross"]:,.2f}</td>'
+        + f'<td>{u["discount"]:,.2f}</td><td>{u["net"]:,.2f}</td></tr>'
+        for u in user_sales
+    )
+    users_html = (
+        '<h4>مبيعات المستخدمين خلال الوردية</h4><table>'
+        '<thead><tr><th>المستخدم</th><th>الفواتير</th><th>قبل الخصم</th>'
+        '<th>الخصومات</th><th>الصافي</th></tr></thead><tbody>'
+        + user_rows_html + '</tbody></table>'
+        if user_sales else '<p>لا توجد مبيعات مستخدمين لهذه الوردية.</p>'
+    )
     exceptions = summary.get("exceptions", [])
     exceptions_html = (
         "<br>".join(f"• {x}" for x in exceptions)
@@ -1620,7 +2022,7 @@ def build_shift_report_html(
     )
 
     body = f"""
-        <h2>مجموعة أبو زيد التجارية</h2>
+        <h2>{__import__('views.company_brand',fromlist=['company_label']).company_label()}</h2>
         <p>فرع: {branch_name}</p>
         <hr>
         <h3>{report_title}</h3>
@@ -1643,6 +2045,8 @@ def build_shift_report_html(
             {summary.get("manual_item_total", 0):,.2f} د.ل</p>
         <h3 class="left">صافي المبيعات: {summary["net_total"]:,.2f} د.ل</h3>
         <hr>
+        {users_html}
+        <hr>
         <h4>⚠️ الحركات والاستثناءات أثناء الوردية</h4>
         <p style="text-align:right;">{exceptions_html}</p>
     """
@@ -1652,20 +2056,17 @@ def build_shift_report_html(
 
 
 def get_shift_supplier_payments_total(conn, branch_id, shift_num, report_date):
-    try:
-        row = conn.execute(
-            """
-            SELECT COALESCE(SUM(amount), 0) AS total
-            FROM supplier_payments
-            WHERE branch_id = ?
-              AND DATE(created_at) = ?
-              AND shift_number = ?
-            """,
-            (branch_id, report_date, int(shift_num))
-        ).fetchone()
-        return float(row["total"] or 0) if row else 0.0
-    except Exception:
-        return 0.0
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM supplier_payments
+        WHERE branch_id = ?
+          AND DATE(created_at) = ?
+          AND shift_number = ?
+        """,
+        (branch_id, report_date, int(shift_num))
+    ).fetchone()
+    return float(row["total"] or 0) if row else 0.0
 
 
 def _ensure_shift_finance_schema(conn):
@@ -1680,17 +2081,24 @@ def _ensure_shift_finance_schema(conn):
     conn.execute("""CREATE TABLE IF NOT EXISTS treasury_movements(
         id INTEGER PRIMARY KEY AUTOINCREMENT, treasury_id INTEGER NOT NULL, movement_type TEXT NOT NULL, amount REAL NOT NULL,
         voucher_no TEXT, description TEXT, user_id INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+    closure_cols={r['name'] for r in conn.execute('PRAGMA table_info(shift_closures)').fetchall()}
+    for col,typ in [('shift_uuid','TEXT'),('device_id','TEXT')]:
+        if col not in closure_cols:conn.execute(f'ALTER TABLE shift_closures ADD COLUMN {col} {typ}')
     cols={r['name'] for r in conn.execute('PRAGMA table_info(treasury_movements)').fetchall()}
     for col,typ in [('branch_id','INTEGER'),('payment_method','TEXT'),('movement_date','TEXT'),('source_type','TEXT'),('source_ref','TEXT')]:
         if col not in cols: conn.execute(f'ALTER TABLE treasury_movements ADD COLUMN {col} {typ}')
 
 def _post_shift_close_to_treasury(conn, branch_id, branch_name, shift_date, shift_num, summary, user_id):
     _ensure_shift_finance_schema(conn)
-    existing=conn.execute('SELECT id FROM shift_closures WHERE branch_id=? AND shift_date=? AND shift_number=?',(branch_id,shift_date,int(shift_num))).fetchone()
+    existing=conn.execute('SELECT id FROM shift_closures WHERE branch_id=? AND shift_number=?',(branch_id,int(shift_num))).fetchone()
     if existing: return existing['id']
     cur=conn.execute("""INSERT INTO shift_closures(branch_id,shift_date,shift_number,gross_sales,net_sales,cash_amount,card_amount,transfer_amount,credit_amount,other_amount,closed_by,notes)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(branch_id,shift_date,int(shift_num),summary['gross_total'],summary['net_total'],summary['cash_total'],summary['card_total'],summary['transfer_total'],summary['credit_total'],summary['other_total'],user_id,'إغلاق وردية تلقائي'))
     closure_id=cur.lastrowid
+    identity=conn.execute('SELECT shift_uuid,source_device_id FROM invoices WHERE branch_id=? AND local_shift_number=? AND shift_uuid IS NOT NULL LIMIT 1',(branch_id,int(shift_num))).fetchone()
+    if identity:
+        conn.execute('UPDATE shift_closures SET shift_uuid=?,device_id=? WHERE id=?',(identity['shift_uuid'],identity['source_device_id'],closure_id))
+    conn.execute("INSERT OR REPLACE INTO local_meta(key,value) VALUES(?,?)",('last_shift_number:'+str(branch_id),str(int(shift_num))))
     # كل الفروع ترحّل إلى خزينة مركزية واحدة في المخزن الرئيسي،
     # مع الاحتفاظ بالفرع المصدر داخل حركة الخزينة.
     tr=conn.execute("SELECT id FROM treasuries WHERE treasury_type='company' ORDER BY id LIMIT 1").fetchone()
@@ -1751,7 +2159,7 @@ def build_historical_z_html(
     summary = summarize_invoice_rows(rows)
 
     body = f"""
-        <h2>مجموعة أبو زيد التجارية</h2>
+        <h2>{__import__('views.company_brand',fromlist=['company_label']).company_label()}</h2>
         <p>فرع: {branch_name}</p>
         <hr>
         <h3>إغلاق وردية سابق</h3>
@@ -1776,40 +2184,143 @@ def build_historical_z_html(
 # الصفحة الرئيسية
 # ============================================================
 
+def _invoice_display_number(full_number):
+    """Short screen label only; never use it for storage, printing or sync."""
+    import re
+    value = str(full_number or '')
+    match = re.fullmatch(r'(B\d+-D\d+-\d+)-[0-9a-fA-F]{32}', value)
+    return match.group(1) if match else value
+
+
 def show_page():
-    role = st.session_state.get("role", "")
+    if st.session_state.get('document_correction_mode')=='sale':
+        from views.document_corrections_ui import show_page as show_corrections
+        return show_corrections('sale')
+    from views.pos_policy import clear_disposed_state
+    clear_disposed_state(st.session_state)
+    _validated_role()
+    role = _pos_actor()['role']
     is_cashier = role == "Cashier"
 
     # الكاشير يعمل داخل نقطة البيع مباشرة بدون زر رجوع يشتته عن شاشة البيع.
     # بقية الأدوار تحتفظ بزر الرجوع المعتاد.
-    if not is_cashier:
-        back_button(key="back_pos")
+    # Toolbar rendered after page styles, beside sync and connection indicator.
 
-    item_alerts(st.session_state.get("branch_id"), key="alerts_pos")
+    item_alerts(_pos_branch(), key="alerts_pos")
 
-    # إذا اكتملت فاتورة في التشغيل السابق، تبقى نافذة النجاح ظاهرة
-    # حتى يضغط المستخدم "موافق".
+    # نجاح بيع جديد في الجلسة الحالية فقط؛ لا نسترجع معاينة من المسودة المحفوظة.
     if st.session_state.get("pos_success_pending"):
         _pos_success_dialog()
         st.stop()
 
+    if st.session_state.get("pos_stock_alert"):
+        stock_expiry_warning_dialog(st.session_state["pos_stock_alert"])
+        st.stop()
+    if st.session_state.get("pos_missing_item"):
+        add_missing_item_dialog(*st.session_state["pos_missing_item"])
+        st.stop()
+
+
+    # تنبيه سري لأدوار الإدارة عند الدخول إلى نقطة البيع، بما في ذلك
+    # الحالات التي يكون فيها المدير نفسه هو مُصدر الفاتورة.
+    if role in ("Super_Admin", "Admin", "Manager") and _pos_server_reachable():
+        try:
+            alert_conn = get_db_connection()
+            try:
+                recent = alert_conn.execute(
+                    "SELECT inv.id, inv.notes, br.branch_name FROM invoices inv LEFT JOIN branches br ON br.id=inv.branch_id ORDER BY inv.id DESC LIMIT 200"
+                ).fetchall()
+            finally:
+                alert_conn.close()
+            pending_sales = []
+            for inv_row in recent:
+                try:
+                    inv_details = parse_invoice_notes(inv_row["notes"], 0)
+                    for ex in inv_details.get("stock_exceptions", []) or []:
+                        if isinstance(ex, dict) and not ex.get("review_status"):
+                            pending_sales.append((inv_row["id"], dict(ex, _branch_name=inv_row["branch_name"] or "فرع غير محدد")))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+            alert_signature = tuple(sorted(
+                (str(inv_id), str(ex.get("item_id")))
+                for inv_id, ex in pending_sales
+            ))
+            if (pending_sales and
+                    st.session_state.get("pos_exception_alert_seen") != alert_signature):
+                st.session_state["pos_exception_alert_seen"] = alert_signature
+
+                @st.dialog("تنبيه إداري — بيع استثنائي")
+                def _pos_exception_manager_dialog():
+                    st.warning(f"يوجد {len(pending_sales)} بند بيع استثنائي يحتاج مراجعة الإدارة.")
+                    for inv_id, ex in pending_sales[:8]:
+                        st.write(
+                            f"فاتورة {inv_id} | الفرع: {ex['_branch_name']} | {ex.get('item_name', '-')} | "
+                            f"العجز {float(ex.get('shortfall_qty') or 0):.2f}"
+                        )
+                    if st.button("اطلعت على التنبيه", key="pos_exception_alert_ack"):
+                        st.rerun()
+
+                _pos_exception_manager_dialog()
+        except Exception:
+            pass  # فشل التنبيه لا يعطل نقطة البيع.
 
     ensure_cart()
 
     # تحسين أداء: تجهيز مخطط إضافات POS مرة واحدة فقط لكل جلسة،
     # بدلاً من إرسال أوامر DDL إلى PostgreSQL/Supabase مع كل rerun في Streamlit.
-    if server_available() and not st.session_state.get("pos_schema_ready", False):
+    if is_cashier and not st.session_state.get("pos_schema_ready", False) and _pos_server_reachable():
         try:
             ensure_pos_extensions_schema()
             st.session_state["pos_schema_ready"] = True
         except Exception as e:
             st.error("❌ تعذر تجهيز إضافات نقطة البيع.")
-            st.code(str(e))
+            show_operation_error(e, announce=False, context='views/pos.py:2235')
             return
 
     st.markdown(
         """
         <style>
+
+        /* Compact cashier layout; preserve the original three-column design. */
+        /* Reserve space below the fixed toolbar in both Streamlit layouts. */
+        [data-testid="stAppViewContainer"] [data-testid="stMainBlockContainer"],
+        [data-testid="stAppViewContainer"] .block-container,
+        .stMainBlockContainer {
+            padding-top: 0.35rem !important;
+            padding-bottom: 0.7rem !important;
+        }
+        [data-testid="stMain"],
+        [data-testid="stAppViewContainer"] section.main {
+            scroll-padding-top: 1.3rem;
+        }
+        [data-testid="stAlert"], .cashier-hero {
+            scroll-margin-top: 1.3rem;
+        }
+        [data-testid="stAppViewContainer"] [data-testid="stVerticalBlock"] {
+            gap: 0.55rem;
+        }
+        .cashier-hero {
+            margin-top: 0 !important;
+            margin-bottom: 4px !important;
+            padding: 11px 16px !important;
+        }
+        .cashier-hero .title {font-size: 21px !important;}
+        .cashier-hero .meta {font-size: 12px !important;}
+        .customer-display {gap: 9px !important; margin-top: 8px !important;}
+        .customer-display .cell {padding: 9px 8px !important;}
+        .top-panel {margin-bottom: 0 !important;}
+        [data-testid="stAppViewContainer"] [data-testid="stMarkdownContainer"] hr {
+            margin-top: 0.55rem !important;
+            margin-bottom: 0.55rem !important;
+        }
+        [data-testid="stAppViewContainer"] [data-testid="stButton"] > button {
+            min-height: 42px;
+        }
+        [data-testid="stAppViewContainer"] label,
+        [data-testid="stAppViewContainer"] .stMarkdown p {
+            direction: rtl;
+            text-align: right;
+        }
 
         .top-panel {
             background-color: #e2e8f0;
@@ -1849,6 +2360,14 @@ def show_page():
         }
         .cashier-hero .title {font-size: 22px; font-weight: 900; margin-bottom: 4px;}
         .cashier-hero .meta {font-size: 13px; opacity: .86;}
+        .cashier-summary-meta {
+            display:flex; justify-content:space-between; align-items:center;
+            flex-wrap:wrap; gap:8px; font-size:13px; font-weight:800;
+        }
+        .cashier-summary .customer-display {margin-top:8px;}
+        .cashier-summary .cell {padding:9px 10px;}
+        .cashier-summary .cell .value {font-size:19px;}
+        .cashier-summary .cell.grand .value {font-size:23px;}
         .customer-display {
             direction: rtl;
             display: grid;
@@ -1882,18 +2401,69 @@ def show_page():
             border-radius: 12px !important;
         }
 
+        /* POS action buttons: readable single-line text on dark red. */
+        [data-testid="stMain"] div[data-testid="stButton"] > button {
+            background-color: #a00010 !important;
+            border-color: #8c0010 !important;
+            color: #ffffff !important;
+            font-weight: 800 !important;
+            font-size: clamp(11px, 1.12vw, 16px) !important;
+            white-space: nowrap !important;
+            min-height: 52px !important;
+            padding-inline: 6px !important;
+        }
+        [data-testid="stMain"] div[data-testid="stButton"] > button p,
+        [data-testid="stMain"] div[data-testid="stButton"] > button span {
+            color: #ffffff !important;
+            white-space: nowrap !important;
+            overflow: visible !important;
+            font-size: inherit !important;
+        }
+        [data-testid="stMain"] div[data-testid="stButton"] > button:hover {
+            background-color: #85000c !important;
+            color: #ffffff !important;
+        }
+
+        /* Invoice abbreviation affects screen presentation only. */
+        .cashier-summary .invoice-id {
+            direction:ltr; unicode-bidi:isolate; white-space:nowrap;
+            font-variant-numeric:tabular-nums;
+        }
         </style>
         """,
         unsafe_allow_html=True
     )
 
-    if is_cashier:
-        st.markdown(
-            """<div class="cashier-hero"><div class="title">🛒 البيع السريع</div>
-            <div class="meta">واجهة الكاشير — امسح الباركود وابدأ البيع مباشرة</div></div>""",
-            unsafe_allow_html=True,
-        )
-    else:
+    # Right-aligned compact toolbar. Avoid nested columns in ui_common.back_button:
+    # that helper allocates only 11.5% of its parent width and clips the label.
+    tool_space, tool_status, tool_back = st.columns([6.35, 0.4, 1.45], gap="small")
+    with tool_back:
+        if not is_cashier and st.button("⬅️ رجوع", key="back_pos", use_container_width=True):
+            _hist = st.session_state.get("_nav_history", [])
+            if _hist:
+                _target = _hist.pop()
+                st.session_state["_nav_history"] = _hist
+                st.session_state["page"] = _target
+            else:
+                st.session_state["page"] = "🏠 الرئيسية واللوحة"
+            st.rerun()
+    with tool_status:
+        # Cashier already has connection status in the sidebar.
+        # Keep the original indicator for other roles only.
+        if not is_cashier:
+            try:
+                _online = bool(_pos_server_reachable())
+            except Exception:
+                _online = False
+            _color = "#16a34a" if _online else "#dc2626"
+            st.markdown(
+                f'<div title="حالة اتصال السيرفر" style="padding-top:10px;text-align:center">'
+                f'<span style="display:inline-block;width:17px;height:17px;'
+                f'border-radius:50%;background:{_color};"></span></div>',
+                unsafe_allow_html=True,
+            )
+
+    if not is_cashier:
         st.markdown('<h2 class="rtl-container">🛒 نقطة البيع (POS)</h2>', unsafe_allow_html=True)
 
     username = st.session_state.get(
@@ -1901,133 +2471,57 @@ def show_page():
         ""
     )
 
-    user_branch_id = st.session_state.get(
-        "branch_id"
-    )
+    user_branch_id = _pos_branch()
 
-    current_shift_num = (
-        get_current_shift_number()
-    )
+    current_shift_num = None
 
     conn = None
 
     try:
 
-        conn, _pos_mode = get_pos_connection()
-
-        if st.button("🔄 مزامنة الآن مع السيرفر", key="pos_sync_now"):
-            try:
-                with st.spinner("جاري رفع المبيعات وتنزيل أحدث البيانات..."):
-                    result = sync_now()
-                if result.get("failed", 0):
-                    st.warning(f"تمت المزامنة جزئيًا: {result.get('synced', 0)} ناجحة، {result.get('failed', 0)} فشلت.")
-                elif result.get("download_ok"):
-                    st.success(f"✅ تمت المزامنة بنجاح. تم رفع {result.get('synced', 0)} عملية.")
-                    st.rerun()
-                else:
-                    st.warning(f"تم رفع المبيعات، لكن تعذر تحديث البيانات المحلية: {result.get('error') or 'خطأ غير معروف'}")
-            except Exception as e:
-                st.error("❌ تعذرت المزامنة مع السيرفر. البيع المحلي ما زال متاحًا.")
-                st.code(str(e))
+        conn, _pos_mode = get_pos_connection(actor_id=st.session_state.get('user_id'))
 
         # ====================================================
         # تحديد الفرع
         # ====================================================
 
-        if role in [
-            "Admin",
-            "General_Supervisor"
-        ]:
-
-            branches_data = conn.execute(
-                """
-                SELECT
-                    id,
-                    branch_name,
-                    branch_type
-                FROM branches
-                ORDER BY id ASC
-                """
-            ).fetchall()
-
-            if not branches_data:
-                st.warning(
-                    "لا توجد فروع مسجلة."
-                )
-                return
-
-            b_dict = {
-                b["branch_name"]: b["id"]
-                for b in branches_data
-            }
-
-            default_index = 0
-
-            for idx, branch in enumerate(
-                branches_data
-            ):
-
-                if (
-                    branch["branch_type"]
-                    == "مخزن"
-                ):
-                    default_index = idx
-                    break
-
-            sel_pos = st.selectbox(
-                "اختر الفرع الحالي للبيع:",
-                list(b_dict.keys()),
-                index=default_index
-            )
-
-            b_id = b_dict[sel_pos]
-
-            branch_name_display = (
-                sel_pos
-            )
-
+        if not is_cashier:
+            branches=conn.execute('SELECT id,branch_name FROM branches WHERE is_active=1 ORDER BY branch_name').fetchall()
+            if not branches:st.error('لا توجد فروع متاحة لهذا الحساب');return
+            labels={int(row['id']):str(row['branch_name']) for row in branches}
+            b_id=st.selectbox('الفرع',list(labels),format_func=lambda value:labels[value],key='pos_branch_selection')
+            branch_name_display=labels[b_id]
         else:
+            from views.branch_shift_state import registered_pos_branch
+            b_id,branch_name_display=registered_pos_branch(conn,st.session_state.get('user_id'))
+            st.caption('فرع هذا الجهاز: '+branch_name_display)
+            st.session_state['branch_id']=b_id
+        st.session_state['_pos_branch_id']=b_id
 
-            b_id = user_branch_id
-
-            if not b_id:
-
-                st.error(
-                    "⚠️ المستخدم الحالي "
-                    "غير مرتبط بفرع."
-                )
+        current_shift_num = get_current_shift_number(conn, b_id)
+        if is_cashier:
+            from views.branch_shift_state import sale_hold_reason
+            shift_hold=sale_hold_reason(conn,b_id,current_shift_num)
+            if shift_hold:
+                st.error(shift_hold)
+                st.caption('لا تُعد إصدار الفواتير ولا تغلق الوردية مرة أخرى؛ السلة والفواتير المعلقة تبقى محفوظة.')
+                _watch_current_shift(b_id,current_shift_num)
                 return
-
-            b_row = conn.execute(
-                """
-                SELECT branch_name
-                FROM branches
-                WHERE id = ?
-                """,
-                (b_id,)
-            ).fetchone()
-
-            branch_name_display = (
-                b_row["branch_name"]
-                if b_row
-                else "الفرع الحالي"
-            )
-
-        st.session_state[
-            "branch_id"
-        ] = b_id
+        _bind_sale_draft(conn, b_id)
+        _watch_current_shift(b_id,current_shift_num)
+        if st.session_state.get("_sale_draft_save_failed"):
+            _persist_sale_draft()
 
         # ====================================================
         # إشعارات التزويد
         # ====================================================
 
-        pending_logs = conn.execute(
+        pending_logs = [] if getattr(conn,"virtual_pos",False) else conn.execute(
             """
             SELECT *
             FROM transfer_logs
             WHERE to_branch_id = ?
-              AND status NOT LIKE
-                  'مكتملة ومستلمة%'
+              AND status = 'بانتظار تأكيد الكاشير'
             ORDER BY id DESC
             """,
             (b_id,)
@@ -2067,38 +2561,16 @@ def show_page():
                 use_container_width=True
             ):
 
+                from offline_store import acknowledge_transfers
                 try:
+                    acknowledge_transfers([pt['id'] for pt in pending_logs], b_id, username)
+                except Exception as e:
+                    show_operation_error(e, announce=True, context='views/pos.py:2526')
+                    st.stop()
 
-                    for pt in pending_logs:
-
-                        conn.execute(
-                            """
-                            UPDATE transfer_logs
-                            SET status = ?
-                            WHERE id = ?
-                            """,
-                            (
-                                (
-                                    "مكتملة ومستلمة "
-                                    "بواسطة الكاشير: "
-                                    f"{username}"
-                                ),
-                                pt["id"]
-                            )
-                        )
-
-                    conn.commit()
-
-                    st.success(
-                        "✅ تم تأكيد الاستلام."
-                    )
-
-                    st.rerun()
-
-                except Exception:
-
-                    conn.rollback()
-                    raise
+                _request_background_sync('transfer_receipt')
+                notify_success('تم حفظ تأكيد الاستلام محلياً؛ المزامنة تعمل في الخلفية.')
+                st.rerun()
 
             st.stop()
 
@@ -2128,6 +2600,13 @@ def show_page():
             + 1
         )
 
+        # Preview the next branch invoice number. The database trigger assigns
+        # the authoritative number when the invoice is actually saved.
+        from offline_store import next_invoice_number
+        next_invoice_number_display = conn.next_number() if getattr(conn,'virtual_pos',False) else next_invoice_number(conn,b_id)
+        short_invoice_number_display = _invoice_display_number(next_invoice_number_display)
+
+
         # تقارير X و Z تم نقلها إلى زر "التقارير والإغلاق"
         # لتبقى شاشة البيع الرئيسية خفيفة وغير مزدحمة.
 
@@ -2139,6 +2618,7 @@ def show_page():
 
             inv = st.session_state["last_invoice"]
             html_file_content = build_invoice_print_html(inv)
+            show_invoice_a4(inv, key='a4_saved_2_'+str(inv['inv_id']))
 
             st.success("✅ تمت عملية الدفع بنجاح.")
             st.info(
@@ -2170,6 +2650,8 @@ def show_page():
                     use_container_width=True
                 ):
                     st.session_state["last_invoice"] = None
+                    st.session_state["pos_active_view"] = "الكاشير السريع"
+                    st.session_state["pos_focus_barcode"] = True
                     st.rerun()
 
         # ====================================================
@@ -2178,6 +2660,7 @@ def show_page():
 
         if "pos_active_view" not in st.session_state:
             st.session_state["pos_active_view"] = "الكاشير السريع"
+            st.session_state["pos_focus_barcode"] = True
         if st.session_state.get("pos_active_view") == "الكاشير":
             st.session_state["pos_active_view"] = "الكاشير السريع"
 
@@ -2187,47 +2670,64 @@ def show_page():
         cart_total_qty = sum(float(item.get("qty", 0) or 0) for item in cart_summary_items)
         cart_total_value = sum(float(item.get("total", 0) or 0) for item in cart_summary_items)
 
-        st.markdown("---")
-        left_services, center_status, right_services = st.columns([1.15, 2.7, 1.15], gap="medium")
+        # Same cashier layout on Windows and Contabo: full-width summary,
+        # followed by one horizontal row of four navigation buttons.
+        st.markdown(
+            "\n".join(line.strip() for line in f"""<div class="top-panel cashier-summary" style="text-align:center; border-radius:12px; padding:10px;">
+            <div class="cashier-summary-meta">
+                <span>🏪 {branch_name_display}</span>
+                <span>🕒 الوردية رقم {current_shift_num} — 👤 {username}</span>
+                <span class="invoice-preview">🧾 رقم الفاتورة المتوقع <bdi class="invoice-id" title="{next_invoice_number_display}">{short_invoice_number_display}</bdi></span>
+            </div>
+            <div class="customer-display">
+                <div class="cell"><div class="label">🧾 رقم الفاتورة المتوقع</div><div class="value invoice-id" dir="ltr" title="{next_invoice_number_display}">{short_invoice_number_display}</div></div>
+                <div class="cell"><div class="label">📦 أصناف السلة</div><div class="value">{cart_distinct_items}</div></div>
+                <div class="cell"><div class="label">⚖️ إجمالي الكمية</div><div class="value">{cart_total_qty:,.3f}</div></div>
+                <div class="cell grand"><div class="label">💰 إجمالي الفاتورة</div><div class="value">{cart_total_value:,.2f} د.ل</div></div>
+            </div>
+            </div>""".splitlines()),
+            unsafe_allow_html=True,
+        )
 
-        with right_services:
-            st.markdown("#### ⚡ البيع")
-            if st.button("🛒 البيع السريع", key="pos_nav_quick", use_container_width=True,
-                         type="primary" if st.session_state["pos_active_view"] == "الكاشير السريع" else "secondary"):
-                st.session_state["pos_active_view"] = "الكاشير السريع"
-                st.rerun()
-            if st.button("🔎 بحث / بيع يدوي", key="pos_nav_manual", use_container_width=True,
-                         type="primary" if st.session_state["pos_active_view"] == "البحث اليدوي" else "secondary"):
-                st.session_state["pos_active_view"] = "البحث اليدوي"
-                st.rerun()
 
-        with center_status:
-            st.markdown(
-                f"""<div class="top-panel" style="text-align:center; border-radius:16px; padding:14px;">
-                <b style="font-size:18px;">🏪 {branch_name_display}</b><br>
-                <span>👤 {username} &nbsp; • &nbsp; 🕒 وردية {current_shift_num} &nbsp; • &nbsp; 🧾 فاتورة اليوم #{daily_inv_num}</span>
-                <div class="customer-display">
-                    <div class="cell"><div class="label">🧾 رقم الفاتورة</div><div class="value">{daily_inv_num}</div></div>
-                    <div class="cell"><div class="label">📦 عدد الأصناف</div><div class="value">{cart_distinct_items}</div></div>
-                    <div class="cell"><div class="label">⚖️ إجمالي الكمية</div><div class="value">{cart_total_qty:,.3f}</div></div>
-                    <div class="cell grand"><div class="label">💰 إجمالي الفاتورة</div><div class="value">{cart_total_value:,.2f} د.ل</div></div>
-                </div>
-                </div>""",
-                unsafe_allow_html=True,
-            )
+        # Display reports/closing only for users authorized to view or close a shift.
+        # This is a UI visibility check; the existing server-side permission checks remain.
+        _shift_privileged = role in (
+            "Super_Admin", "Admin", "Manager", "Supervisor",
+            "General_Supervisor", "Branch_Supervisor"
+        )
+        _shift_allowed = _shift_privileged
+        if not _shift_allowed:
+            try:
+                _shift_allowed = bool(
+                    has_scoped_permission(conn, st.session_state.get("user_id"), b_id, "shift_view")
+                    or has_scoped_permission(conn, st.session_state.get("user_id"), b_id, "shift_close")
+                )
+            except Exception:
+                _shift_allowed = False
+        if st.session_state.get("pos_active_view") == "التقارير" and not _shift_allowed:
+            st.session_state["pos_active_view"] = "الكاشير السريع"
 
-        with left_services:
-            st.markdown("#### 🧰 الخدمات")
-            if st.button("🗂️ الأرشيف والطباعة", key="pos_nav_archive", use_container_width=True,
-                         type="primary" if st.session_state["pos_active_view"] == "الأرشيف" else "secondary"):
-                st.session_state["pos_active_view"] = "الأرشيف"
-                st.rerun()
-            if st.button("📊 التقارير والإغلاق", key="pos_nav_reports", use_container_width=True,
-                         type="primary" if st.session_state["pos_active_view"] == "التقارير" else "secondary"):
-                st.session_state["pos_active_view"] = "التقارير"
-                st.rerun()
-
-        st.markdown("---")
+        # Navigation stays available when opening archive, search or reports.
+        if st.session_state["pos_active_view"] != "الكاشير السريع":
+            nav_reports, nav_archive, nav_manual, nav_quick = st.columns(4, gap="small")
+            with nav_quick:
+                if st.button("🛒 البيع السريع", key="pos_nav_quick", use_container_width=True):
+                    st.session_state["pos_active_view"] = "الكاشير السريع"
+                    st.rerun()
+            with nav_manual:
+                if st.button("🔎 بحث / بيع يدوي", key="pos_nav_manual", use_container_width=True):
+                    st.session_state["pos_active_view"] = "البحث اليدوي"
+                    st.rerun()
+            with nav_archive:
+                if st.button("🗂️ الأرشيف والطباعة", key="pos_nav_archive", use_container_width=True):
+                    st.session_state["pos_active_view"] = "الأرشيف"
+                    st.rerun()
+            with nav_reports:
+                if _shift_allowed:
+                    if st.button("📊 التقارير والإغلاق", key="pos_nav_reports", use_container_width=True):
+                        st.session_state["pos_active_view"] = "التقارير"
+                        st.rerun()
 
         # ====================================================
         # الكاشير السريع
@@ -2240,185 +2740,152 @@ def show_page():
             == "الكاشير السريع"
         ):
 
-            col_qty, col_bar = (
-                st.columns(
-                    [1, 3]
-                )
-            )
-
-            with col_qty:
-
-                st.number_input(
-                    "الكمية (كجم/وحدة):",
-                    min_value=0.01,
-                    value=1.0,
-                    step=0.5,
-                    key="barcode_qty_input"
-                )
-
-            with col_bar:
-
-                st.text_input(
-                    "🔍 مسح الباركود "
-                    "الفوري (Enter):",
-                    key="barcode_scan_input",
-                    on_change=(
-                        process_barcode_scan
-                    )
-                )
-
-                # بعد إنهاء الفاتورة والضغط على «موافق» نعيد الـFocus
-                # تلقائياً إلى حقل الباركود ليستقبل السكانر مباشرة.
-                if st.session_state.pop("pos_focus_barcode", False):
-                    st.components.v1.html(
-                        """
-                        <script>
-                        (function focusBarcode(attempt) {
-                            const doc = window.parent.document;
-                            const inputs = Array.from(doc.querySelectorAll('input'));
-                            const target = inputs.find((el) => {
-                                const aria = el.getAttribute('aria-label') || '';
-                                return aria.includes('مسح الباركود');
-                            });
-                            if (target) {
-                                target.focus();
-                                target.select();
-                                return;
-                            }
-                            if (attempt < 12) {
-                                setTimeout(() => focusBarcode(attempt + 1), 80);
-                            }
-                        })(0);
-                        </script>
-                        """,
-                        height=0,
-                        width=0
-                    )
-
-            st.markdown(
-                "### 🧾 محتويات "
-                "سلة المبيعات"
-            )
-
-            cart_items_list = (
-                st.session_state[
-                    "cart"
-                ]
-            )
-
-            # الملخص ظاهر أعلى الشاشة بشكل دائم؛ لا نكرره هنا.
-            total_cart_qty = cart_total_qty
-            total_cart_val = cart_total_value
-
-            st.markdown("---")
-
-            if not cart_items_list:
-
-                st.info(
-                    "السلة فارغة حالياً."
-                )
-
-            else:
-
-                for index, cart_item in enumerate(
-                    cart_items_list
+            # Windows POS: lower labels slightly below the summary cards.
+            st.markdown("""
+            <style>
+            .st-key-barcode_qty_input, .st-key-barcode_scan_input {
+                margin-top: 8px !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            # Image-matched cashier: navigation / central cart / controls.
+            pos_left, pos_center, pos_right = st.columns([1.65, 4.6, 1.65], gap="small")
+            with pos_left:
+                st.markdown("<div style='padding-top:8px;font-weight:700'>⚙️ العمليات</div>", unsafe_allow_html=True)
+                if st.button("🔎 بحث / بيع يدوي", key="pos_nav_manual", use_container_width=True):
+                    st.session_state["pos_active_view"] = "البحث اليدوي"
+                    st.rerun()
+                if st.button("🗂️ الأرشيف والطباعة", key="pos_nav_archive", use_container_width=True):
+                    st.session_state["pos_active_view"] = "الأرشيف"
+                    st.rerun()
+                if not is_cashier and st.button("🔄 مزامنة الآن", key="pos_sync_now", use_container_width=True):
+                    _request_background_sync('manual')
+                    st.info('تم طلب المزامنة في الخلفية؛ يمكنك متابعة العمل.')
+                if _shift_allowed:
+                    if st.button("📊 التقارير والإغلاق", key="pos_nav_reports", use_container_width=True):
+                        st.session_state["pos_active_view"] = "التقارير"
+                        st.rerun()
+            with pos_right:
+                st.markdown("<div style='padding-top:8px;font-weight:700'>💳 الدفع والتحكم</div>", unsafe_allow_html=True)
+                if st.button(
+                    "❌ تفريغ السلة بالكامل",
+                    use_container_width=True
                 ):
 
-                    (
-                        c_col1,
-                        c_col2,
-                        c_col3,
-                        c_col4,
-                        c_col5
-                    ) = st.columns(
-                        [2, 1, 1, 1, 0.6]
+                    st.session_state[
+                        "cart"
+                    ] = []
+                    _persist_sale_draft()
+
+                    st.rerun()
+
+            with pos_center:
+                col_qty, col_bar = (
+                    st.columns(
+                        [1, 3]
+                    )
+                )
+
+                with col_qty:
+
+                    ui_field(st.number_input, "pos:2274", 
+                        "الكمية (كجم/وحدة):",
+                        min_value=0.01,
+                        value=1.0,
+                        step=0.5,
+                        key="barcode_qty_input"
                     )
 
-                    c_col1.write(
-                        f"🏷️ "
-                        f"{cart_item['name']}"
-                    )
+                with col_bar:
 
-                    c_col2.write(
-                        f"كمية: "
-                        f"{cart_item['qty']}"
-                    )
-
-                    c_col3.write(
-                        f"سعر: "
-                        f"{cart_item['price']:.2f}"
-                    )
-
-                    c_col4.write(
-                        f"إجمالي: "
-                        f"{cart_item['total']:.2f}"
-                    )
-
-                    if c_col5.button(
-                        "🗑️",
-                        key=(
-                            f"del_cart_"
-                            f"{index}"
+                    ui_field(st.text_input, "pos:2284", 
+                        "🔍 مسح الباركود "
+                        "الفوري (Enter):",
+                        key="barcode_scan_input",
+                        on_change=(
+                            process_barcode_scan
                         )
+                    )
+
+                    focus_barcode()
+                    _cashier_checkout_keyboard()
+
+                st.markdown(
+                    "### 🧾 محتويات "
+                    "سلة المبيعات"
+                )
+
+                cart_items_list = (
+                    st.session_state[
+                        "cart"
+                    ]
+                )
+
+                # الملخص ظاهر أعلى الشاشة بشكل دائم؛ لا نكرره هنا.
+                total_cart_qty = cart_total_qty
+                total_cart_val = cart_total_value
+
+                st.markdown("---")
+
+                if not cart_items_list:
+
+                    st.info(
+                        "السلة فارغة حالياً."
+                    )
+
+                else:
+
+                    for index, cart_item in enumerate(
+                        cart_items_list
                     ):
 
-                        st.session_state[
-                            "cart"
-                        ].pop(index)
+                        (
+                            c_col1,
+                            c_col2,
+                            c_col3,
+                            c_col4,
+                            c_col5
+                        ) = st.columns(
+                            [2, 1, 1, 1, 0.6]
+                        )
 
-                        st.rerun()
+                        c_col1.write(
+                            f"🏷️ "
+                            f"{cart_item['name']}"
+                        )
 
-            g_tot = total_cart_val
+                        c_col2.write(
+                            f"كمية: "
+                            f"{cart_item['qty']}"
+                        )
 
-            st.markdown(
-                f"""
-                <div class="totals-panel">
-                    إجمالي السلة:
-                    <b>
-                    {g_tot:,.2f} د.ل
-                    </b>
-                    <br>
-                    الخصم يتم تحديده
-                    عند الضغط على الدفع
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+                        c_col3.write(
+                            f"سعر: "
+                            f"{cart_item['price']:.2f}"
+                        )
 
-            st.write("")
+                        c_col4.write(
+                            f"إجمالي: "
+                            f"{cart_item['total']:.2f}"
+                        )
 
-            if st.button(
-                "📱 إضافة بيانات العميل",
-                use_container_width=True,
-                key="pos_customer_data_btn"
-            ):
-                st.session_state["pos_show_customer_data"] = not st.session_state.get(
-                    "pos_show_customer_data", False
-                )
+                        if c_col5.button(
+                            "🗑️",
+                            key=(
+                                f"del_cart_"
+                                f"{index}"
+                            )
+                        ):
 
-            if st.session_state.get("pos_show_customer_data", False):
-                cc1, cc2 = st.columns(2)
-                st.session_state["pos_customer_name"] = cc1.text_input(
-                    "اسم العميل (اختياري):",
-                    value=st.session_state.get("pos_customer_name", ""),
-                    key="pos_customer_name_input"
-                )
-                st.session_state["pos_customer_phone"] = cc2.text_input(
-                    "رقم هاتف العميل:",
-                    value=st.session_state.get("pos_customer_phone", ""),
-                    key="pos_customer_phone_input"
-                )
-                st.session_state["pos_marketing_consent"] = st.checkbox(
-                    "يوافق على استقبال العروض والرسائل التسويقية",
-                    value=bool(st.session_state.get("pos_marketing_consent", False)),
-                    key="pos_marketing_consent_input"
-                )
+                            st.session_state[
+                                "cart"
+                            ].pop(index)
+                            _persist_sale_draft()
 
-            c_btn1, c_btn2 = (
-                st.columns([2, 1])
-            )
+                            st.rerun()
 
-            with c_btn1:
+                g_tot = total_cart_val
+
 
                 if st.button(
                     "💰 دفع واعتماد الفاتورة",
@@ -2445,19 +2912,34 @@ def show_page():
                             "السلة فارغة."
                         )
 
-            with c_btn2:
 
+            with pos_left:
                 if st.button(
-                    "❌ تفريغ السلة بالكامل",
-                    use_container_width=True
+                    "📱 إضافة بيانات العميل",
+                    use_container_width=True,
+                    key="pos_customer_data_btn"
                 ):
+                    st.session_state["pos_show_customer_data"] = not st.session_state.get(
+                        "pos_show_customer_data", False
+                    )
 
-                    st.session_state[
-                        "cart"
-                    ] = []
-
-                    st.rerun()
-
+                if st.session_state.get("pos_show_customer_data", False):
+                    cc1, cc2 = st.columns(2)
+                    st.session_state["pos_customer_name"] = ui_field(cc1.text_input, "pos:2424", 
+                        "اسم العميل (اختياري):",
+                        value=st.session_state.get("pos_customer_name", ""),
+                        key="pos_customer_name_input"
+                    )
+                    st.session_state["pos_customer_phone"] = ui_field(cc2.text_input, "pos:2429", 
+                        "رقم هاتف العميل:",
+                        value=st.session_state.get("pos_customer_phone", ""),
+                        key="pos_customer_phone_input"
+                    )
+                    st.session_state["pos_marketing_consent"] = ui_field(st.checkbox, "pos:2434", 
+                        "يوافق على استقبال العروض والرسائل التسويقية",
+                        value=bool(st.session_state.get("pos_marketing_consent", False)),
+                        key="pos_marketing_consent_input"
+                    )
         # ====================================================
         # التقارير والإغلاق
         # ====================================================
@@ -2469,15 +2951,46 @@ def show_page():
 
             st.markdown("### 📊 التقارير والإغلاق المالي")
 
-            if role not in [
-                "Admin",
-                "General_Supervisor",
-                "Branch_Supervisor"
-            ]:
+            actor_id = st.session_state.get("user_id")
+            privileged = role in ("Super_Admin", "Admin", "Manager", "Supervisor", "General_Supervisor", "Branch_Supervisor")
+            branch_options = conn.execute("SELECT id, branch_name FROM branches ORDER BY branch_name").fetchall()
+            permitted = [b for b in branch_options if privileged or
+                         has_scoped_permission(conn, actor_id, b["id"], "shift_view") or
+                         has_scoped_permission(conn, actor_id, b["id"], "shift_close")]
+            if not permitted:
                 st.warning("🔒 لا توجد صلاحية لعرض تقارير الإغلاق.")
-
             else:
-                report_action = st.selectbox(
+                branch_labels = {f"{b['branch_name']} (#{b['id']})": b for b in permitted}
+                choices = list(branch_labels)
+                default_choice = next((i for i, k in enumerate(choices)
+                                       if branch_labels[k]["id"] == b_id), 0)
+                report_branch = branch_labels[st.selectbox("فرع التقرير والإغلاق", choices,
+                    index=default_choice, key="shift_report_branch")]
+                report_b_id = report_branch["id"]
+                report_shift_num = get_current_shift_number(conn, report_b_id)
+                report_branch_name = report_branch["branch_name"]
+                can_close = privileged or has_scoped_permission(conn, actor_id, report_b_id, "shift_close")
+                # Central figures are read-only; local Z stays as the device audit record.
+                from datetime import date as _z_date
+                z_day = st.date_input("تاريخ إجمالي مبيعات الفرع", value=_z_date.today(), key="central_z_day")
+                if st.button("🔄 عرض إجمالي الفرع من السيرفر", key="central_z_refresh", use_container_width=True):
+                    try:
+                        central_z = get_central_shift_summary(report_b_id, z_day.isoformat())
+                        st.session_state['central_z_result'] = central_z
+                    except Exception as exc:
+                        st.session_state.pop('central_z_result', None)
+                        st.warning("تعذر جلب الإجمالي المركزي. تقرير الجهاز المحلي متاح بدون إنترنت.")
+                        st.caption(str(exc))
+                central_z = get_cached_central_shift_summary(report_b_id, z_day.isoformat())
+                if central_z and central_z.get('branch_id') == report_b_id and central_z.get('shift_date') == z_day.isoformat():
+                    st.metric("آخر إجمالي مؤكد لمبيعات الفرع", f"{central_z['net_sales']:,.2f} د.ل")
+                    st.caption(f"آخر تحديث من السيرفر: {central_z.get('cached_at', 'غير معروف')} — عند انقطاع الإنترنت قد لا يشمل المبيعات الجديدة.")
+                    st.caption(f"عدد الورديات المغلقة: {central_z['shift_count']} | فواتير Z على السيرفر: {central_z['invoice_count']} | إجمالي الفواتير: {central_z['invoices_total']:,.2f} د.ل")
+                    if abs(central_z['net_sales'] - central_z['invoices_total']) > 0.01:
+                        st.warning("تنبيه: إجمالي الإغلاق لا يطابق مجموع فواتير Z على السيرفر. يلزم تسوية قبل اعتماد التقرير المالي.")
+                st.caption("تقرير Z المحلي يخص هذا الجهاز؛ الإجمالي أعلاه يخص الفرع كله ولا ينقل فواتير أو يخصم مخزونًا.")
+
+                report_action = ui_field(st.selectbox, "pos:2503", 
                     "اختر التقرير أو العملية:",
                     [
                         "📊 ملخص الوردية الحالية",
@@ -2490,17 +3003,15 @@ def show_page():
 
                     shift_invoice_rows = conn.execute(
                         """
-                        SELECT total_amount, notes, payment_method
+                        SELECT total_amount, notes, payment_method, user_id
                         FROM invoices
                         WHERE branch_id = ?
-                          AND DATE(created_at) = ?
                           AND shift_status = ?
                         ORDER BY id ASC
                         """,
                         (
-                            b_id,
-                            today_date,
-                            str(current_shift_num)
+                            report_b_id,
+                            str(report_shift_num)
                         )
                     ).fetchall()
 
@@ -2523,16 +3034,17 @@ def show_page():
                     )
 
                     supplier_payments_total = get_shift_supplier_payments_total(
-                        conn, b_id, current_shift_num, today_date
+                        conn, report_b_id, report_shift_num, today_date
                     )
 
                     x_html = build_shift_report_html(
                         "ملخص الوردية الحالية",
-                        branch_name_display,
+                        report_branch_name,
                         username,
-                        current_shift_num,
+                        report_shift_num,
                         x_summary,
-                        supplier_payments_total
+                        supplier_payments_total,
+                        get_shift_user_sales(conn, shift_invoice_rows)
                     )
 
                     st.components.v1.html(
@@ -2545,14 +3057,13 @@ def show_page():
 
                     z_invoice_rows = conn.execute(
                         """
-                        SELECT total_amount, notes, payment_method
+                        SELECT id, total_amount, notes, payment_method, user_id
                         FROM invoices
                         WHERE branch_id = ?
-                          AND DATE(created_at) = ?
                           AND shift_status = ?
                         ORDER BY id ASC
                         """,
-                        (b_id, today_date, str(current_shift_num))
+                        (report_b_id, str(report_shift_num))
                     ).fetchall()
 
                     z_summary = summarize_invoice_rows(
@@ -2574,16 +3085,17 @@ def show_page():
                     )
 
                     supplier_payments_total = get_shift_supplier_payments_total(
-                        conn, b_id, current_shift_num, today_date
+                        conn, report_b_id, report_shift_num, today_date
                     )
 
                     z_html = build_shift_report_html(
                         "إغلاق الوردية",
-                        branch_name_display,
+                        report_branch_name,
                         username,
-                        current_shift_num,
+                        report_shift_num,
                         z_summary,
-                        supplier_payments_total
+                        supplier_payments_total,
+                        get_shift_user_sales(conn, z_invoice_rows)
                     )
 
                     st.components.v1.html(
@@ -2596,6 +3108,8 @@ def show_page():
                         st.info(
                             "لا توجد فواتير غير مغلقة لهذه الوردية."
                         )
+                    elif not can_close:
+                        st.warning("لا توجد صلاحية لإغلاق وردية هذا الفرع.")
                     elif st.button(
                         "🔒 تنفيذ إغلاق الوردية",
                         type="primary",
@@ -2606,22 +3120,35 @@ def show_page():
                                 "last_z_report_html"
                             ] = z_html
 
+                            if not (role in ("Super_Admin", "Admin", "Manager", "Supervisor", "General_Supervisor", "Branch_Supervisor") or
+                                    has_scoped_permission(conn, actor_id, report_b_id, "shift_close")):
+                                raise PermissionError("لا توجد صلاحية لإغلاق وردية هذا الفرع")
+                            if _pos_actor()['role']=='Cashier' and st.session_state.get('cart'):raise ValueError('أكمل الفاتورة المفتوحة قبل إغلاق الوردية')
+                            _ensure_shift_finance_schema(conn)
+                            prior = conn.execute("SELECT id FROM shift_closures WHERE branch_id=? AND shift_number=?",
+                                (report_b_id, int(report_shift_num))).fetchone()
+                            if prior:
+                                st.error("هذه الوردية مغلقة بالفعل؛ لن تُرحّل مرة أخرى.")
+                                st.stop()
+                            from views.shift_closing import prepare_close
+                            prepare_close(conn,report_b_id,report_shift_num,z_invoice_rows,get_current_shift_number,actor_id)
                             conn.execute(
                                 """
                                 UPDATE invoices
                                 SET shift_status = 'Z_Closed'
                                 WHERE branch_id = ?
-                                  AND DATE(created_at) = ?
-                                  AND shift_status = ?
+                                          AND shift_status = ?
                                 """,
-                                (b_id, today_date, str(current_shift_num))
+                                (report_b_id, str(report_shift_num))
                             )
                             _post_shift_close_to_treasury(
-                                conn, b_id, branch_name_display, today_date, current_shift_num, z_summary,
+                                conn, report_b_id, report_branch_name, today_date, report_shift_num, z_summary,
                                 st.session_state.get("user_id")
                             )
                             conn.commit()
-                            st.success(
+                            _request_background_sync('shift_closed')
+                            st.session_state['_logout_handler']()
+                            notify_success(
                                 "✅ تم إغلاق الوردية "
                                 "وحفظها في الأرشيف وترحيل المقبوضات تلقائياً إلى خزينة الفرع."
                             )
@@ -2647,6 +3174,14 @@ def show_page():
                 "عن الأصناف"
             )
 
+            if st.button(
+                "🛒 الرجوع للسلة",
+                key="pos_manual_return_cart",
+                use_container_width=True,
+            ):
+                st.session_state["pos_active_view"] = "الكاشير السريع"
+                st.rerun()
+
             all_items_db = conn.execute(
                 """
                 SELECT *
@@ -2662,14 +3197,14 @@ def show_page():
                 # الكاشير لا يرى رصيد المخزون؛ يظل التحقق من الكمية
                 # والخصم من المخزون يعملان في الخلفية عند اعتماد الفاتورة.
                 hide_stock_quantity = role not in [
-                    "Admin",
+                    "Super_Admin", "Admin",
                     "General_Supervisor",
                     "Branch_Supervisor"
                 ]
 
                 # سعر التكلفة يظهر فقط للإدارة/المشرفين، ولا يظهر للكاشير.
                 can_view_cost = role in [
-                    "Admin",
+                    "Super_Admin", "Admin",
                     "General_Supervisor",
                     "Branch_Supervisor"
                 ]
@@ -2712,7 +3247,7 @@ def show_page():
                     }
 
                 selected_manual_item_str = (
-                    st.selectbox(
+                    ui_field(st.selectbox, "pos:2738", 
                         "اختر الصنف يدوياً:",
                         list(
                             item_names_dict.keys()
@@ -2743,7 +3278,7 @@ def show_page():
                         f"{(selected_sale - selected_cost):,.2f} د.ل"
                     )
 
-                manual_qty = st.number_input(
+                manual_qty = ui_field(st.number_input, "pos:2769", 
                     "الكمية المطلوبة:",
                     min_value=0.01,
                     value=1.0,
@@ -2775,6 +3310,8 @@ def show_page():
                                 selected_item_obj[
                                     "item_name"
                                 ],
+                            "unit": selected_item_obj["unit"] if "unit" in selected_item_obj.keys() else "",
+                            "description": selected_item_obj["description"] if "description" in selected_item_obj.keys() else "",
 
                             "code":
                                 selected_item_obj[
@@ -2800,11 +3337,13 @@ def show_page():
                         }
                     )
 
-                    st.success(
+                    _persist_sale_draft()
+                    notify_success(
                         "✅ تمت إضافة "
                         "الصنف للسلة."
                     )
 
+                    st.session_state["pos_active_view"] = "الكاشير السريع"
                     st.rerun()
 
             else:
@@ -2825,13 +3364,13 @@ def show_page():
                 st.columns(3)
             )
 
-            free_name = col_f1.text_input(
+            free_name = ui_field(col_f1.text_input, "pos:2851", 
                 "اسم الصنف:",
                 value="صنف عام / خدمة"
             )
 
             free_price = (
-                col_f2.number_input(
+                ui_field(col_f2.number_input, "pos:2857", 
                     "السعر (د.ل):",
                     min_value=0.0,
                     step=1.0,
@@ -2840,7 +3379,7 @@ def show_page():
             )
 
             free_qty = (
-                col_f3.number_input(
+                ui_field(col_f3.number_input, "pos:2866", 
                     "الكمية:",
                     min_value=0.01,
                     value=1.0,
@@ -2885,11 +3424,13 @@ def show_page():
                         }
                     )
 
-                    st.success(
+                    _persist_sale_draft()
+                    notify_success(
                         "✅ تمت إضافة "
                         "الصنف الحر."
                     )
 
+                    st.session_state["pos_active_view"] = "الكاشير السريع"
                     st.rerun()
 
                 else:
@@ -2910,7 +3451,7 @@ def show_page():
 
             st.markdown("### 🗂️ الأرشيف وإعادة الطباعة")
 
-            archive_action = st.selectbox(
+            archive_action = ui_field(st.selectbox, "pos:2936", 
                 "ماذا تريد عرض أو إعادة طباعته؟",
                 [
                     "🧾 فاتورة مبيعات سابقة",
@@ -2924,11 +3465,18 @@ def show_page():
             # فواتير المبيعات
             # ------------------------------------------------
             if archive_action == "🧾 فاتورة مبيعات سابقة":
+                _history_row=conn.execute('SELECT value FROM local_meta WHERE key=?',('replacement_history:'+str(int(b_id)),)).fetchone()
+                if _history_row:
+                    _history=json.loads(_history_row[0])
+                    with st.expander('فواتير الجهاز السابق المؤكدة قبل الاستبدال'):
+                        st.caption('سجل مركزي محفوظ للقراءة، لا يُعاد إرساله كمبيعات الجهاز البديل. آخر100 فاتورة؛ التاريخ الكامل محفوظ على السيرفر.')
+                        st.dataframe([{'رقم الفاتورة':i['invoice_number'],'التاريخ':i['created_at'],'الجهاز الأصلي':i['source_device_id'],'الإجمالي':i['total_amount'],'الوردية المسجلة':i['shift_status']} for i in _history['invoices']],hide_index=True,width='stretch')
+
 
                 recent_invs = conn.execute(
                     """
                     SELECT
-                        id,
+                        id, invoice_number, sync_status,
                         customer_name,
                         total_amount,
                         created_at
@@ -2946,15 +3494,15 @@ def show_page():
                 else:
                     inv_dict = {
                         (
-                            f"فاتورة #{r['id']} | "
+                            f"فاتورة {r['invoice_number'] or chr(35)+str(r['id'])} | "
                             f"{r['customer_name']} | "
                             f"{float(r['total_amount'] or 0):,.2f} د.ل | "
-                            f"{r['created_at']}"
+                            f"{r['created_at']} | {'وصلت للسيرفر' if r['sync_status']=='synced' else 'محفوظة محلياً'}"
                         ): r["id"]
                         for r in recent_invs
                     }
 
-                    sel_inv_str = st.selectbox(
+                    sel_inv_str = ui_field(st.selectbox, "pos:2980", 
                         "اختر الفاتورة:",
                         ["-- اختر الفاتورة --"]
                         + list(inv_dict.keys()),
@@ -2981,7 +3529,10 @@ def show_page():
                                 inv_data["total_amount"]
                             )
 
+                            from views.invoice_qr_image import load_snapshot, company_name
                             archive_print_inv = {
+                                "invoice_qr_image": load_snapshot(conn, details.get("invoice_qr_asset")),
+                                "company_name": company_name(conn),
                                 "inv_id": inv_data["id"],
                                 "daily_inv_num": "-",
                                 "branch": branch_name_display,
@@ -3005,8 +3556,11 @@ def show_page():
                                 "total": float(
                                     inv_data["total_amount"] or 0
                                 ),
-                                "method": inv_data["payment_method"]
+                                "method": inv_data["payment_method"],
+                                    "account_statement": details.get("account_statement")
                             }
+
+                            show_invoice_a4(archive_print_inv, key='a4_archive_'+str(target_inv_id))
 
                             html_reprint_content = (
                                 build_invoice_print_html(
@@ -3059,7 +3613,7 @@ def show_page():
                         for r in z_dates
                     }
 
-                    selected_z_label = st.selectbox(
+                    selected_z_label = ui_field(st.selectbox, "pos:3085", 
                         "اختر إغلاق الوردية السابق:",
                         ["-- اختر إغلاق وردية --"]
                         + list(z_options.keys()),
@@ -3094,6 +3648,33 @@ def show_page():
                             "الفواتير",
                             historical_summary["invoice_count"]
                         )
+
+                        # Read-only central summary for the same archived date.
+                        # This is distinct from the local device's historical Z.
+                        if st.button(
+                            "🌐 عرض إجمالي فرع الجزيرة/الفرع من السيرفر لهذا التاريخ",
+                            key=f"archive_central_summary_{b_id}_{selected_z_date}",
+                            use_container_width=True,
+                        ):
+                            try:
+                                st.session_state["archive_central_summary"] = (
+                                    get_central_shift_summary(b_id, selected_z_date)
+                                )
+                            except Exception as exc:
+                                st.session_state.pop("archive_central_summary", None)
+                                show_operation_error(exc, announce=True, context='views/pos.py:3620')
+                        _central = get_cached_central_shift_summary(b_id, selected_z_date)
+                        if (_central and _central.get("branch_id") == b_id
+                                and _central.get("shift_date") == selected_z_date):
+                            st.markdown("#### آخر إجمالي مركزي محفوظ — نفس تاريخ الإغلاق")
+                            st.caption(f"آخر تحديث: {_central.get('cached_at', 'غير معروف')} | عند انقطاع الإنترنت هذه آخر نسخة مؤكدة وليست إجماليًا مباشرًا.")
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric("إجمالي الإغلاقات المركزي", f"{_central['net_sales']:,.2f} د.ل")
+                            c2.metric("إجمالي فواتير Z المركزي", f"{_central['invoices_total']:,.2f} د.ل")
+                            c3.metric("عدد فواتير Z المركزية", _central["invoice_count"])
+                            st.caption("التقرير أدناه خاص بالجهاز المحلي فقط؛ الإجمالي المركزي معروض أعلاه ولا يعيد ترحيل المبيعات أو المخزون.")
+                            if abs(_central['net_sales'] - _central['invoices_total']) > 0.01:
+                                st.warning("هناك فرق بين إجمالي الإغلاقات وإجمالي فواتير Z على السيرفر؛ يلزم مراجعة التسوية قبل اعتماد الإجمالي.")
 
                         st.components.v1.html(
                             historical_z_html,
@@ -3148,7 +3729,7 @@ def show_page():
                         for r in branch_transfers
                     }
 
-                    selected_transfer_label = st.selectbox(
+                    selected_transfer_label = ui_field(st.selectbox, "pos:3174", 
                         "اختر حركة التزويد:",
                         ["-- اختر حركة التزويد --"]
                         + list(transfer_options.keys()),
@@ -3164,7 +3745,7 @@ def show_page():
                         ]
 
                         transfer_body = f"""
-                            <h2>مجموعة أبو زيد التجارية</h2>
+                            <h2>{__import__('views.company_brand',fromlist=['company_label']).company_label()}</h2>
                             <p>فرع: {branch_name_display}</p>
                             <hr>
                             <h3>إيصال تزويد #{transfer_row['id']}</h3>
@@ -3212,7 +3793,7 @@ def show_page():
             "نقطة البيع."
         )
 
-        st.code(str(e))
+        show_operation_error(e, announce=False, context='views/pos.py:3751')
 
     finally:
 
