@@ -28,7 +28,12 @@ def connection_url(secrets=None, environ=None):
         query = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
     except ValueError:
         raise CloudConfigurationError('Invalid SHERIF Cloud database connection') from None
-    valid_host = (host.endswith('.supabase.co') or host.endswith('.pooler.supabase.com'))
+    expected_host = environ.get('SHERIF_CLOUD_DATABASE_HOST')
+    if not expected_host and isinstance(secrets, Mapping):
+        expected_host = secrets.get('SHERIF_CLOUD_DATABASE_HOST')
+    expected_host = str(expected_host or '').strip().lower()
+    valid_host = (host.endswith('.supabase.co') or host.endswith('.pooler.supabase.com')
+                  or bool(expected_host and host == expected_host))
     valid_query = all(key == 'sslmode' and val == 'verify-full' for key, val in query)
     if (parsed.scheme not in ('postgres', 'postgresql') or not valid_host
             or not parsed.username or not parsed.password or not parsed.path.strip('/')
