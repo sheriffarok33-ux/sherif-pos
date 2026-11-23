@@ -766,7 +766,8 @@ def _browser_cookie_script(token=None, delete=False, cookie_name=None):
         js = f"document.cookie={json.dumps(cookie_name + '=; Path=/; Max-Age=0; SameSite=Lax')};"
     else:
         js = f"document.cookie={json.dumps(cookie_name + '=' + token + '; Path=/; Max-Age=' + str(_AUTH_LIFETIME) + '; SameSite=Lax')};"
-    st.html("<script>" + js + "window.parent.location.reload();</script>", unsafe_allow_javascript=True)
+    reload_target = 'window.parent' if os.name == 'nt' else 'window'
+    st.html("<script>" + js + reload_target + ".location.reload();</script>", unsafe_allow_javascript=True)
     st.info("جارٍ تحديث جلسة الدخول...")
     st.stop()
 
