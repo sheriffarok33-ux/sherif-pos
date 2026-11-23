@@ -773,6 +773,9 @@ def _browser_cookie_script(token=None, delete=False, cookie_name=None):
 
 
 def _remember_login():
+    # Cloud test sessions stay in Streamlit state; do not reload the embedded page.
+    if os.name != 'nt':
+        st.rerun()
     if not re.fullmatch(r'[0-9a-f]{64}',str(st.session_state.get('_auth_window_id',''))):
         st.rerun()  # Session-only fallback; no unsafe persistent restore.
     token = secrets.token_urlsafe(32)
