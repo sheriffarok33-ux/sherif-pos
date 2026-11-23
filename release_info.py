@@ -49,6 +49,14 @@ def status_text(release,confirmed=False,state='',available=None):
         message='تحديث جديد جاهز؛ ينتظر انتهاء العمل المفتوح للتثبيت الآمن'
     elif type(available) is int and available>release['release_seq']:
         message='يوجد تحديث أحدث لم يُثبّت بعد'
+    elif state == 'trust_not_configured':
+        message='مفاتيح التحقق من التحديث غير مهيأة؛ العمل المحلي مستمر'
+    elif state == 'device_required':
+        message='هوية الجهاز للتحديث غير مهيأة؛ العمل المحلي مستمر'
+    elif state == 'outside_distribution':
+        message='لا يوجد تحديث موقّع متاح لهذا الجهاز'
+    elif state in ('exe_requires_supervisor','helper_required','bootstrap_required'):
+        message='التحديث يحتاج مكونات تثبيت معتمدة؛ العمل المحلي مستمر'
     elif state in ('offline_or_rejected','channel_behind'):
         message='تعذر تأكيد آخر تحديث معتمد؛ العمل المحلي مستمر'
     else:message='جارٍ التحقق من تثبيت آخر تحديث معتمد'

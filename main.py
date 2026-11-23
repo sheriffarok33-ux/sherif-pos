@@ -950,8 +950,13 @@ if not _workstation_info():
 if not st.session_state["logged_in"]:
     st.markdown('<div dir="ltr" style="text-align:center;font-family:Arial,sans-serif;font-size:16px;font-weight:600;line-height:1.6;padding:6px 14px;margin:4px auto 10px;width:fit-content;max-width:95%;color:#f8fafc;background:rgba(15,23,42,.82);border-radius:8px">Developed by Eng. Sherif Farouk | 0931050639</div>', unsafe_allow_html=True)
     import base64
-    _login_image = Path(__file__).with_name("login_background.jpg")
-    if _login_image.is_file():
+    import sys
+    _login_resources = [Path(__file__).resolve().parent]
+    if getattr(sys, '_MEIPASS', None):
+        _login_resources.append(Path(sys._MEIPASS))
+    _login_image = next((root / 'login_background.jpg' for root in _login_resources
+                         if (root / 'login_background.jpg').is_file()), None)
+    if _login_image is not None:
         _login_image_b64 = base64.b64encode(_login_image.read_bytes()).decode("ascii")
         st.markdown(f"""
         <style>
@@ -1035,8 +1040,6 @@ if not st.session_state["logged_in"]:
 
         </style>
         """, unsafe_allow_html=True)
-    else:
-        st.warning("صورة واجهة الدخول login_background.jpg غير موجودة بجوار main.py")
 
     _device_before_login = _workstation_info()
     if _device_before_login:
