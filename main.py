@@ -110,6 +110,13 @@ st.markdown("""
     
     [data-testid="stSidebar"] { background-color: #0f172a; }
     [data-testid="stSidebar"] *, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p { color: #ffffff !important; font-size: 17px !important; }
+    [data-testid="stSidebar"] input, [data-testid="stSidebar"] textarea {
+        color: #111827 !important; background-color: #ffffff !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stAlert"] p,
+    [data-testid="stSidebar"] [data-testid="stAlert"] span {
+        color: #111827 !important;
+    }
     [data-testid="stSidebar"] .stButton>button {
         background-color: #1e293b; color: #ffffff !important; border: 1px solid #334155;
         border-radius: 10px; padding: 12px 15px; text-align: right; font-weight: 900 !important;
@@ -1241,7 +1248,7 @@ st.sidebar.markdown("---")
 
 # Reauthenticate the same identity without interrupting local/offline operation.
 from offline_store import API_TOKEN as _current_api_token
-if not _current_api_token and st.session_state.get("role") == "Super_Admin":
+if server_enabled() and not _current_api_token and st.session_state.get("role") == "Super_Admin":
     st.session_state['connection_mode'] = 'offline'
     with st.sidebar.expander('🔐 استعادة اتصال المزامنة', expanded=True):
         st.caption('الدخول المحلي متاح. يلزم دخول أونلاين لاستعادة تنزيل البيانات والمزامنة.')
@@ -1433,36 +1440,10 @@ def _abuzaid_server_reachable():
     return bool(auto_sync_status().get('server_reachable'))
 
 
-def _restore_sync_authentication():
-    """A remembered local session is not an API login after a process restart."""
-    import offline_store
-    if st.session_state.get('role') != 'Super_Admin' or offline_store.API_TOKEN:
-        return
-    st.sidebar.info("المزامنة تحتاج تأكيد الدخول بعد استعادة الجلسة؛ البيع المحلي مستمر.")
-    with st.sidebar.form("restore_sync_authentication", clear_on_submit=True):
-        password = st.text_input("كلمة مرور الحساب الحالي لتفعيل المزامنة", type="password")
-        submitted = st.form_submit_button("تفعيل المزامنة")
-    if not submitted:
-        return
-    if not password:
-        st.sidebar.error("اكتب كلمة مرور الحساب الحالي.")
-        return
-    try:
-        from branch_auth import online_login
-        # Fixed username: this form cannot silently switch the signed-in account.
-        online_login(st.session_state["username"], password)
-    except Exception as exc:
-        st.sidebar.error("تعذر تفعيل المزامنة: " + str(exc))
-        return
-    st.session_state["connection_mode"] = "online"
-    st.sidebar.success("تم تأكيد الدخول؛ ستُعاد محاولة مزامنة المعاملات المعلقة تلقائيًا.")
-    st.rerun()
-
-
-_restore_sync_authentication()
-
-
 def _show_branch_connection_status():
+    if not server_enabled():
+        st.sidebar.info('العمل المحلي متاح؛ المزامنة غير مهيأة.')
+        return
     if st.session_state.get('role') not in ('Super_Admin','Admin'):
         from auto_sync import auto_sync_status
         if auto_sync_status().get('server_reachable'):
