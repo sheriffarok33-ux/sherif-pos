@@ -104,7 +104,6 @@ def show_page():
         return
 
     st.title("🎨 تخصيص مظهر النظام")
-    st.caption("الإعدادات تُحفظ في قاعدة البيانات وتظهر لجميع مستخدمي النظام.")
 
     settings = _get_settings()
 
@@ -200,7 +199,6 @@ def show_page():
         updated["font_size"] = size_map[size_choice]
         updated["font_weight"] = weight_map[weight_choice]
 
-        st.info("يتم تطبيق حجم وسمك الخط على البرنامج والقوائم والأزرار.")
 
     elif st.session_state["appearance_section"] == "company" and current_role == "Super_Admin":
         st.subheader("🏢 هوية المنشأة — Super Admin فقط")

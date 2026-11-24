@@ -159,7 +159,6 @@ def show_page():
     if role not in ALL:
         _refusal_dialog()
         return
-    st.caption('اسأل عن طريقة استخدام البرنامج. الإجابات إرشادية ومحلية وتراعي دور المستخدم، ولا تنفذ عمليات أو تغيّر البيانات.')
     question = st.text_input('كيف أقدر أساعدك؟', placeholder='مثلاً: إزاي أضيف مستخدم جديد؟', key='abuzaid_help_question')
     if st.button('اسأل المساعد', type='primary', use_container_width=True):
         st.session_state['abuzaid_ai_sync_answer'] = False

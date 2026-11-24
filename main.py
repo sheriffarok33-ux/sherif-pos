@@ -1581,7 +1581,6 @@ if choice == "__MENU_ORDER_SETTINGS__":
         st.error("غير مصرح بالدخول.")
         st.stop()
     st.title("⚙️ ترتيب القوائم الجانبية")
-    st.caption("استخدم الأسهم لترتيب المجموعات والشاشات، ثم اضغط حفظ.")
     if "_menu_order_draft" not in st.session_state:
         prefs = _read_menu_order()
         st.session_state["_menu_order_draft"] = {

@@ -630,7 +630,6 @@ def show_page():
         } for r in rows])
 
         st.dataframe(df, use_container_width=True, hide_index=True)
-        st.caption("يمكن تحديد الخلايا من الجدول ونسخها مباشرة.")
 
         st.download_button(
             "📥 تنزيل سجل الحركات Excel",

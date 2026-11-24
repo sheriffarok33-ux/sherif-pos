@@ -94,13 +94,11 @@ def _purchase_html(conn, source_id):
 def show_page():
     back_button(key='back_documents')
     st.header('🔎 البحث عن مستند')
-    st.caption('اكتب رقم مستند النظام مباشرة مثل PUR أو PAY أو REC، ويمكن كذلك البحث برقم فاتورة المورد أو اسم الجهة.')
     q=st.text_input('رقم المستند / الرقم الخارجي / الجهة', placeholder='مثال: PUR-... أو PAY-000001')
     conn=get_db_connection()
     try:
         _backfill(conn)
         if not q.strip():
-            st.info('أدخل رقم المستند للوصول إليه مباشرة بدون البحث اليدوي داخل الأرشيفات.')
             return
         like=f"%{q.strip()}%"
         rows=conn.execute("""SELECT d.*,COALESCE(b.branch_name,'') branch_name FROM document_registry d LEFT JOIN branches b ON b.id=d.branch_id WHERE d.document_number LIKE ? OR COALESCE(d.external_number,'') LIKE ? OR COALESCE(d.party_name,'') LIKE ? ORDER BY d.id DESC LIMIT 100""",(like,like,like)).fetchall()

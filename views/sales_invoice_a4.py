@@ -162,7 +162,6 @@ def show_invoice_a4(invoice,key):
     try:branding=read_branding(conn)
     finally:conn.close()
     html=build_invoice_a4_html(invoice,branding)
-    st.caption('نسخة طباعة من الفاتورة المحفوظة؛ لا تنشئ بيعًا أو حركة مخزون جديدة.')
     if hasattr(st,'iframe'):st.iframe(html,height=740,alt='فاتورة مبيعات الشركات والأسواق A4')
     else:st.components.v1.html(html,height=740,scrolling=True)
     st.download_button('تحميل فاتورة A4',data=html.encode('utf-8'),file_name='Invoice_A4_'+str(invoice.get('inv_id',''))+'.html',mime='text/html',key=key+'_download',on_click='ignore',width='stretch')

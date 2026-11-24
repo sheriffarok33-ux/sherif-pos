@@ -226,7 +226,6 @@ def show_page():
 
         if mode == "add":
             st.subheader("➕ إضافة مورد / جهة تعامل")
-            st.caption("سيتم إنشاء الجهة مرة واحدة للاستخدام في الشراء والبيع الآجل معاً.")
             with ui_form("party_add_form", clear_on_submit=False):
                 c1, c2 = st.columns(2)
                 name = ui_field(c1.text_input, "parties:224", "اسم الجهة / المورد:")
