@@ -563,6 +563,60 @@ def _sherif_verified_original(root, journal, keys):
     return content
 
 
+def stage_sherif_candidate(root, envelope, previous_envelope, package_url, device_id=None):
+    """Verify and stage a GitHub-hosted candidate; does not schedule or install it."""
+    from urllib.parse import urlsplit
+    root=Path(root).resolve()
+    url=urlsplit(package_url)
+    if (url.scheme != 'https' or url.hostname != 'raw.githubusercontent.com'
+            or url.username or url.password or url.port not in (None, 443)
+            or url.query or url.fragment):
+        raise ValueError('Invalid GitHub update package URL')
+    stage=checked_path(root,'.updates/sherif')
+    keys=read_json(checked_path(root,'update_public_keys.json'))
+    candidate=verify_envelope(envelope,keys)
+    previous=verify_envelope(previous_envelope,keys)
+    if type(previous.get('release_seq')) is not int:
+        raise ValueError('Signed previous release sequence is required')
+    if candidate.get('audience') == 'devices' and not device_id:
+        raise ValueError('Device identity required for targeted update')
+    validate_manifest(candidate,{'release_seq':previous['release_seq']},device_id=device_id,sherif_exe=True)
+    item=_sherif_exe_item(candidate)
+    original=_sherif_exe_item(previous)
+    if compatibility_contract(candidate)['format'] != compatibility_contract(previous)['format']:
+        raise ValueError('Database format differs; update stopped')
+    installed=checked_path(root,'pos.exe')
+    if not installed.is_file() or installed.stat().st_size != original['size']:
+        raise ValueError('Installed executable has no signed rollback identity')
+    if hashlib.sha256(installed.read_bytes()).hexdigest() != original['sha256']:
+        raise ValueError('Installed executable has no signed rollback identity')
+    stage.mkdir(parents=True,exist_ok=True)
+    lock=lock_file(checked_path(root,'.updates/sherif/worker.lock'),timeout=0)
+    try:
+        if (stage/'transaction.json').exists() or (stage/'request.json').exists():
+            raise RuntimeError('Existing update transaction requires recovery')
+        part=checked_path(root,'.updates/sherif/candidate.part')
+        package=checked_path(root,'.updates/sherif/candidate.zip')
+        try:
+            count=fetch(package_url,candidate['package_size'],part)
+            if count != candidate['package_size'] or hashlib.sha256(part.read_bytes()).hexdigest()!=candidate['package_sha256']:
+                raise ValueError('Package digest differs')
+            with zipfile.ZipFile(part) as archive:
+                entries=archive.infolist()
+                if len(entries)!=1 or entries[0].filename!='pos.exe' or entries[0].flag_bits & 1 or entries[0].file_size!=item['size']:
+                    raise ValueError('Invalid SHERIF package inventory')
+                content=archive.read(entries[0])
+            if len(content)!=item['size'] or not content.startswith(b'MZ') or hashlib.sha256(content).hexdigest()!=item['sha256']:
+                raise ValueError('SHERIF executable integrity check failed')
+            os.replace(part,package)
+            atomic_json(stage/'request.json',{'envelope':envelope,'previous_envelope':previous_envelope})
+        finally:
+            part.unlink(missing_ok=True)
+        return {'state':'staged','release_seq':candidate['release_seq']}
+    finally:
+        lock.close()
+
+
 def _recover_sherif_update(root):
     """Offline rollback of a signed previous executable; never touch customer data."""
     root=Path(root).resolve();journal_path=checked_path(root,'.updates/sherif/transaction.json')
