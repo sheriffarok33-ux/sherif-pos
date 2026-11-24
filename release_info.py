@@ -39,28 +39,33 @@ def installed_source_release(root):
     return installed_release(root,component)
 
 def display_update_number(value):
-    if value.get('release_seq') in (59,60,61,63,64,65,66,68):return 5
-    return 4 if value.get('release_seq') in (53,54,55,56,58) else update_number(value)
+    return update_number(value)
+
 
 def status_text(release,confirmed=False,state='',available=None):
     number=display_update_number(release)
-    if confirmed:return 'SHERIF POS | تحديث '+str(number)+' 🟢','النظام محدّث وجاهز للعمل'
-    if state in ('ready_after_exit','restarting_for_update','shutdown_waiting_for_safe_exit'):
-        message='تحديث جديد جاهز؛ ينتظر انتهاء العمل المفتوح للتثبيت الآمن'
+    prefix='SHERIF POS | إصدار '+str(release['version'])+' | تحديث '+str(number)
+    if confirmed:
+        return prefix+' 🟢','البرنامج محدث'
+    if state in ('install_failed','offline_or_rejected','blocked_release'):
+        return prefix+' 🔴','تعذر التحديث'
+    if state == 'downloading':
+        message='جارٍ تنزيل التحديث'
+    elif state in ('installing','restarting_for_update'):
+        message='جارٍ تثبيت التحديث'
+    elif state in ('ready_after_exit','shutdown_waiting_for_safe_exit'):
+        message='التحديث جاهز بعد إغلاق البرنامج'
+    elif state in ('trust_not_configured','device_required','outside_distribution',
+                   'exe_requires_supervisor','helper_required','bootstrap_required'):
+        message='التحديث غير مهيأ'
     elif type(available) is int and available>release['release_seq']:
-        message='يوجد تحديث أحدث لم يُثبّت بعد'
-    elif state == 'trust_not_configured':
-        message='مفاتيح التحقق من التحديث غير مهيأة؛ العمل المحلي مستمر'
-    elif state == 'device_required':
-        message='هوية الجهاز للتحديث غير مهيأة؛ العمل المحلي مستمر'
-    elif state == 'outside_distribution':
-        message='لا يوجد تحديث موقّع متاح لهذا الجهاز'
-    elif state in ('exe_requires_supervisor','helper_required','bootstrap_required'):
-        message='التحديث يحتاج مكونات تثبيت معتمدة؛ العمل المحلي مستمر'
-    elif state in ('offline_or_rejected','channel_behind'):
-        message='تعذر تأكيد آخر تحديث معتمد؛ العمل المحلي مستمر'
-    else:message='جارٍ التحقق من تثبيت آخر تحديث معتمد'
-    return 'SHERIF POS | تحديث '+str(number)+' ⚠️',message
+        message='تحديث متاح'
+    elif state == 'channel_behind':
+        message='حالة التحديث غير متاحة'
+    else:
+        message='جارٍ التحقق من التحديث'
+    return prefix+' 🟠',message
+
 
 def server_installation_confirmed(root,release):
     try:
@@ -87,5 +92,6 @@ def login_footer(root,component):
     import html
     import streamlit as st
     try:label,message=release_badge(root,component)
-    except (OSError,ValueError,TypeError):label,message='SHERIF POS | ⚠️','تعذر التحقق من إصدار البرنامج'
-    st.markdown('<div style="position:fixed;bottom:10px;left:0;width:100%;text-align:center;font-size:11px;color:#94a3b8;font-weight:400;line-height:1.4;direction:rtl;pointer-events:none;z-index:25">'+html.escape(label)+'<br>'+html.escape(message)+'</div>',unsafe_allow_html=True)
+    except (OSError,ValueError,TypeError):label,message='SHERIF POS | 🔴','حالة الإصدار غير متاحة'
+    color = '#15803d' if '🟢' in label else '#b91c1c' if '🔴' in label else '#b45309'
+    st.markdown('<div style="position:fixed;bottom:10px;left:0;width:100%;text-align:center;font-size:16px;color:'+color+';font-weight:700;line-height:1.5;direction:rtl;pointer-events:none;z-index:25">'+html.escape(label)+'<br>'+html.escape(message)+'</div>',unsafe_allow_html=True)
