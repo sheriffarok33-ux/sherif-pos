@@ -1644,7 +1644,6 @@ if choice.startswith("__GROUP__::"):
         f"{group_name}</h2>",
         unsafe_allow_html=True
     )
-    st.caption("اختر العملية المطلوبة من الأزرار التالية.")
 
     if not entries:
         st.warning("⚠️ لا توجد عمليات متاحة لك داخل هذا القسم حسب صلاحياتك.")

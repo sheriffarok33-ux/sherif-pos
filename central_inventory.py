@@ -204,7 +204,7 @@ def render_dashboard(username,role,branch_id=None):
     force=st.button('تحديث بيانات كل الفروع' if role in GLOBAL_ROLES else 'تحديث بيانات الفرع',key='central_inventory_refresh')
     try:data,stamp,state=load_overview(st.session_state.get('user_id'),role,force,branch_id)
     except Exception:
-        st.error('تعذر قراءة لوحة البيانات المركزية؛ لن نعرض بيانات نقطة البيع كأنها إجمالي السيرفر.');return
+        st.error('البيانات المركزية غير متاحة.');return
     if data is None:
         st.warning('يلزم تأكيد دخول المستخدم أونلاين لتنزيل لوحة الفروع والتنبيهات لأول مرة.' if state=='authentication_required' else 'البيانات المركزية غير متاحة للحساب الحالي.');return
     st.caption('آخر مزامنة ناجحة للوحة والتنبيهات: '+datetime.fromisoformat(stamp).astimezone().strftime('%Y-%m-%d %H:%M:%S'))
