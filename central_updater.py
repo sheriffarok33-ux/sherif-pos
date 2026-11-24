@@ -563,6 +563,47 @@ def _sherif_verified_original(root, journal, keys):
     return content
 
 
+def discover_sherif_github_release(owner, repository):
+    """Discover explicit release assets; the caller must verify the signed envelope."""
+    from urllib.parse import urlsplit
+    if not isinstance(owner,str) or not isinstance(repository,str):
+        raise ValueError('Invalid GitHub repository')
+    if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?',owner):
+        raise ValueError('Invalid GitHub repository')
+    if not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}',repository) or repository in ('.','..'):
+        raise ValueError('Invalid GitHub repository')
+    endpoint='https://api.github.com/repos/'+owner+'/'+repository+'/releases/latest'
+    payload=fetch(endpoint,512*1024,headers={'Accept':'application/vnd.github+json','User-Agent':'SHERIF-updater'})
+    release=json.loads(payload)
+    if not isinstance(release,dict) or release.get('draft') is not False or release.get('prerelease') is not False:
+        raise ValueError('Invalid GitHub release')
+    tag=release.get('tag_name')
+    if not isinstance(tag,str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,128}',tag) or tag in ('.','..'):
+        raise ValueError('Invalid GitHub release tag')
+    assets=release.get('assets')
+    if not isinstance(assets,list):
+        raise ValueError('Invalid GitHub release assets')
+    expected={'sherif-windows-envelope.json','sherif-windows.zip'}
+    found={}
+    for asset in assets:
+        if not isinstance(asset,dict) or asset.get('name') not in expected:
+            continue
+        name=asset['name']
+        if name in found or not isinstance(asset.get('browser_download_url'),str):
+            raise ValueError('Duplicate or invalid release asset')
+        url=asset['browser_download_url']
+        parts=urlsplit(url)
+        path='/'+owner+'/'+repository+'/releases/download/'+tag+'/'+name
+        if (parts.scheme!='https' or parts.hostname!='github.com' or parts.port not in (None,443)
+                or parts.username or parts.password or parts.query or parts.fragment or parts.path!=path):
+            raise ValueError('Release asset outside configured repository')
+        found[name]=url
+    if set(found)!=expected:
+        raise ValueError('Required release assets missing')
+    return {'tag':tag,'envelope_url':found['sherif-windows-envelope.json'],
+            'package_url':found['sherif-windows.zip']}
+
+
 def stage_sherif_candidate(root, envelope, previous_envelope, package_url, device_id=None):
     """Verify and stage a GitHub-hosted candidate; does not schedule or install it."""
     from urllib.parse import urlsplit
