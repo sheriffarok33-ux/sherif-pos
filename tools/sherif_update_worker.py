@@ -56,6 +56,12 @@ def run(root, timeout=45):
                     updater.atomic_json(stage/'last-good-envelope.json',request['envelope'])
                     updater.checked_path(root,'.updates/sherif/transaction.json').unlink()
                     marker.unlink(missing_ok=True)
+                    # Successful updates must not block staging the next release.
+                    try:
+                        (stage/'request.json').unlink(missing_ok=True)
+                        (stage/'candidate.zip').unlink(missing_ok=True)
+                    except OSError:
+                        return {'state':'installed_cleanup_pending','release_seq':result['release_seq']}
                     return {'state':'installed','release_seq':result['release_seq']}
             time.sleep(.2)
     except Exception:
@@ -65,8 +71,12 @@ def run(root, timeout=45):
         updater.atomic_json(stage/'status.json',{'state':'recovery_waiting_shutdown','release_seq':result['release_seq']})
         # Never terminate a user session: restore automatically once the image closes.
         process.wait()
-    updater.recover_sherif_update(root)
+    if not updater.recover_sherif_update(root):
+        raise RuntimeError('Update recovery was not confirmed')
     marker.unlink(missing_ok=True)
+    # Keep the signed last-good record, but permit a corrected future candidate.
+    (stage/'request.json').unlink(missing_ok=True)
+    (stage/'candidate.zip').unlink(missing_ok=True)
     return {'state':'rolled_back','release_seq':result['release_seq']}
 
 
