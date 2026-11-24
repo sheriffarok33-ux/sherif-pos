@@ -28,8 +28,15 @@ def run(root, timeout=45):
         raise ValueError('Signed previous release sequence is required')
     if updater.installed_pos_image_present(root,'pos.exe'):
         raise RuntimeError('SHERIF is still running; update deferred')
+    device_id=None
+    if candidate.get('audience') == 'devices':
+        identity=updater.device_identity(root)
+        if not identity or not identity.get('device_id'):
+            raise ValueError('Device identity required for targeted update')
+        device_id=identity['device_id']
     result=updater.install_sherif_candidate(root,stage/'candidate.zip',request['envelope'],
-                                            request['previous_envelope'],{'release_seq':previous['release_seq']})
+                                            request['previous_envelope'],{'release_seq':previous['release_seq']},
+                                            device_id=device_id)
     nonce=secrets.token_hex(16)
     marker=updater.checked_path(root,'.updates/sherif/health-'+nonce+'.json')
     env=dict(os.environ,SHERIF_UPDATE_HEALTH_NONCE=nonce)

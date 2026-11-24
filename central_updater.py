@@ -587,6 +587,9 @@ def _install_sherif_candidate(root, package, envelope, previous_envelope, curren
         raise ValueError('Candidate must be inside the local update staging directory')
     keys=read_json(checked_path(root,'update_public_keys.json'))
     manifest=verify_envelope(envelope,keys)
+    # A device-targeted release must never become unrestricted when identity is absent.
+    if manifest.get('audience') == 'devices' and not device_id:
+        raise ValueError('Device identity required for targeted update')
     validate_manifest(manifest,current,device_id=device_id,sherif_exe=True)
     item=_sherif_exe_item(manifest);previous=verify_envelope(previous_envelope,keys)
     previous_item=_sherif_exe_item(previous)
