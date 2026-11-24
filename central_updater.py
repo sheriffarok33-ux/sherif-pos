@@ -233,6 +233,47 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ValueError("Update redirects are forbidden")
 
 
+class GitHubAssetRedirect(urllib.request.HTTPRedirectHandler):
+    """Only allow HTTPS redirects to GitHub's release asset storage."""
+    max_redirections=3
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        from urllib.parse import urlsplit
+        target=urlsplit(newurl)
+        if (target.scheme!='https' or target.hostname not in
+                ('release-assets.githubusercontent.com','objects.githubusercontent.com')
+                or target.port not in (None,443) or target.username or target.password
+                or target.fragment):
+            raise ValueError('Untrusted GitHub asset redirect')
+        return super().redirect_request(req,fp,code,msg,headers,newurl)
+
+
+def fetch_github_asset(url, limit, destination=None):
+    """Fetch public GitHub release asset over verified HTTPS with bounded redirects."""
+    from urllib.parse import urlsplit
+    parts=urlsplit(url)
+    if (parts.scheme!='https' or parts.hostname!='github.com' or parts.port not in (None,443)
+            or parts.username or parts.password or parts.query or parts.fragment
+            or not re.fullmatch(r'/[A-Za-z0-9-]+/[A-Za-z0-9_.-]+/releases/download/[A-Za-z0-9_.-]+/(?:sherif-windows\.zip|sherif-windows-envelope\.json)',parts.path)):
+        raise ValueError('Invalid GitHub release asset URL')
+    request=urllib.request.Request(url,headers={'User-Agent':'SHERIF-updater'})
+    with urllib.request.build_opener(GitHubAssetRedirect()).open(request,timeout=30) as response:
+        if destination is None:
+            data=response.read(limit+1)
+            if len(data)>limit:raise ValueError('Oversized response')
+            return data
+        count=0
+        with destination.open('wb') as stream:
+            while True:
+                chunk=response.read(min(128*1024,limit+1-count))
+                if not chunk:break
+                count+=len(chunk)
+                if count>limit:raise ValueError('Oversized download')
+                stream.write(chunk)
+            stream.flush();os.fsync(stream.fileno())
+        if count!=limit:raise OSError('Incomplete update download')
+        return count
+
+
 def api_base(root):
     from urllib.parse import urlsplit
     value = (Path(root) / "SERVER_URL.txt").read_text(encoding="utf-8-sig").strip().rstrip("/")
@@ -609,7 +650,7 @@ def stage_sherif_candidate(root, envelope, previous_envelope, package_url, devic
     from urllib.parse import urlsplit
     root=Path(root).resolve()
     url=urlsplit(package_url)
-    if (url.scheme != 'https' or url.hostname != 'raw.githubusercontent.com'
+    if (url.scheme != 'https' or url.hostname not in ('raw.githubusercontent.com','github.com')
             or url.username or url.password or url.port not in (None, 443)
             or url.query or url.fragment):
         raise ValueError('Invalid GitHub update package URL')
@@ -639,7 +680,8 @@ def stage_sherif_candidate(root, envelope, previous_envelope, package_url, devic
         part=checked_path(root,'.updates/sherif/candidate.part')
         package=checked_path(root,'.updates/sherif/candidate.zip')
         try:
-            count=fetch(package_url,candidate['package_size'],part)
+            count=(fetch_github_asset(package_url,candidate['package_size'],part) if url.hostname=='github.com'
+                   else fetch(package_url,candidate['package_size'],part))
             if count != candidate['package_size'] or hashlib.sha256(part.read_bytes()).hexdigest()!=candidate['package_sha256']:
                 raise ValueError('Package digest differs')
             with zipfile.ZipFile(part) as archive:
@@ -656,6 +698,22 @@ def stage_sherif_candidate(root, envelope, previous_envelope, package_url, devic
         return {'state':'staged','release_seq':candidate['release_seq']}
     finally:
         lock.close()
+
+
+def discover_and_stage_sherif_release(root, owner, repository, device_id=None):
+    """Discover a release and stage it after verification; never install automatically."""
+    root=Path(root).resolve()
+    previous=read_json(checked_path(root,'.updates/sherif/last-good-envelope.json'))
+    if not previous:
+        raise ValueError('Signed installed baseline is not configured')
+    keys=read_json(checked_path(root,'update_public_keys.json'))
+    if not keys:
+        raise ValueError('Update trust is not configured')
+    # Reject an untrusted baseline before contacting the release channel.
+    verify_envelope(previous,keys)
+    release=discover_sherif_github_release(owner,repository)
+    envelope=json.loads(fetch_github_asset(release['envelope_url'],512*1024))
+    return stage_sherif_candidate(root,envelope,previous,release['package_url'],device_id=device_id)
 
 
 def _recover_sherif_update(root):
