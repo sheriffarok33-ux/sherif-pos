@@ -832,7 +832,9 @@ def _check_and_stage(root):
     available=manifest.get('release_seq')
     if type(available) is not int or manifest.get('component')!='windows':
         raise ValueError('Invalid release sequence')
-    validate_manifest(manifest,dict(current,release_seq=-1),device_id=identity['device_id'])
+    files=manifest.get('files')
+    is_sherif_pos=isinstance(files,list) and any(isinstance(item,dict) and item.get('path')=='pos.exe' for item in files)
+    validate_manifest(manifest,dict(current,release_seq=-1),device_id=identity['device_id'],sherif_exe=is_sherif_pos)
     if revision!=identity_revision(device_identity(root)):
         _STATUS.update(state='checking_updates',checked_identity=None)
         raise UpdateDeferred('device_registration_changed')
@@ -855,6 +857,11 @@ def _check_and_stage(root):
             _STATUS.update(state='install_failed',phase='failed_package_retry_wait' if transient else 'failed_package_suppressed',
                 error_type=failed.get('error_type'),reason='Temporary failure; retry scheduled' if transient else 'Signed package failed validation; awaiting a corrected approved package')
             return
+    # The legacy scheduler cannot safely install a onefile SHERIF update.
+    # Keep it blocked until the independent worker is wired into the lifecycle.
+    if is_sherif_pos:
+        _STATUS.update(state='exe_requires_supervisor',phase='worker_not_connected')
+        return
     if manifest["kind"] == "exe" and (read_json(root / "update_launcher.json").get("supervised") is not True or not automatic_policy(root)['enabled']):
         _STATUS.update(state="exe_requires_supervisor")
         return
