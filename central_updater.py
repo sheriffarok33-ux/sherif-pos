@@ -1502,7 +1502,7 @@ def finish_stopped_update(root, runtime):
     """
     root=Path(root).resolve()
     if (os.name!='nt' or not getattr(sys,'frozen',False)
-            or Path(sys.executable).resolve()!=root/'AbuZaidPOS.exe'
+            or Path(sys.executable).resolve() not in (root/'AbuZaidPOS.exe',root/'pos.exe')
             or not quiescing()):return False
     import builtins
     if not _SCHEDULED and not getattr(builtins,'_abuzaid_program_exit_requested',False):return False
