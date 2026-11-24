@@ -269,7 +269,7 @@ st.markdown(
 st.html(r"""<script>
 // Message text only: retain original semantic backgrounds and all geometry.
 (() => {
-  const w = window.parent, d = w.document;
+  const w = window, d = w.document;
   if (w.__abuzaidMessageContrast) w.__abuzaidMessageContrast.disconnect();
   const selector = '[data-testid="stAlertContainer"], [data-testid="stToast"], [data-baseweb="notification"], [data-testid="stCaptionContainer"], [data-testid="stWidgetLabel"], [data-testid="stMarkdownContainer"], [data-testid="stHeading"], button, input, textarea, [role="option"], [data-baseweb="select"]';
   const parse = value => {
@@ -1445,7 +1445,7 @@ def _abuzaid_server_reachable():
 
 def _show_branch_connection_status():
     if not server_enabled():
-        st.sidebar.info('العمل المحلي متاح؛ المزامنة غير مهيأة.')
+        st.sidebar.info('المزامنة غير مهيأة.')
         return
     if st.session_state.get('role') not in ('Super_Admin','Admin'):
         from auto_sync import auto_sync_status

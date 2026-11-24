@@ -122,4 +122,4 @@ def render_installation_dashboard():
             if rows:st.dataframe(device_status_rows(rows),hide_index=True,use_container_width=True)
             else:st.info('لا توجد أجهزة مسجلة')
         except Exception:
-            st.warning('تعذر تحميل إيصالات التثبيت الآن؛ لم نعتبر أي جهاز محدثًا دون دليل.')
+            st.warning('حالة التحديث غير متاحة.')
